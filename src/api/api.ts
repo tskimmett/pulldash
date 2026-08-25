@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import semantic from "./semantic";
 
 // ============================================================================
 // GitHub OAuth App Configuration
@@ -17,6 +18,9 @@ const GITHUB_CLIENT_ID = "Ov23ct2e5eDCkITh5xlh";
 
 const api = new Hono()
   .basePath("/api")
+
+  // Semantic review (local-agent-powered; self-disables when hosted)
+  .route("/semantic", semantic)
 
   // Device Authorization - Step 1: Request device code
   // Proxies to GitHub since their endpoint doesn't support CORS
