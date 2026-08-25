@@ -47,6 +47,7 @@ import {
 } from "../ui/tooltip";
 import { cn } from "../cn";
 import { PRHeader } from "./pr-header";
+import { SemanticReviewButton } from "./semantic-review-button";
 import { FileTree } from "./file-tree";
 import { isTestFile } from "@/browser/lib/test-file";
 import { FileHeader } from "./file-header";
@@ -423,7 +424,12 @@ function PRReviewLayout() {
         owner={owner}
         repo={repo}
         onToggleSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
-        rightContent={canWrite ? <SubmitReviewDropdown /> : undefined}
+        rightContent={
+          <>
+            <SemanticReviewButton />
+            {canWrite && <SubmitReviewDropdown />}
+          </>
+        }
       />
 
       <div className="flex flex-1 overflow-hidden min-h-0">

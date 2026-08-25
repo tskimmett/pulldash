@@ -19,6 +19,15 @@ import {
 } from "@/browser/ui/markdown";
 import { isTestFile } from "@/browser/lib/test-file";
 import {
+  cancelSemanticJob,
+  fetchCachedSemanticReview,
+  fetchSemanticProviders,
+  startSemanticAnalysis as apiStartSemanticAnalysis,
+  streamSemanticJob,
+  type ProviderInfo,
+} from "@/browser/lib/semantic-client";
+import type { SemanticReview } from "@/semantic/schema";
+import {
   type GitHubStore,
   type Review,
   type IssueComment,
@@ -236,6 +245,17 @@ interface PRReviewState {
   focusedPendingCommentId: string | null;
   editingPendingCommentId: string | null;
 
+  // Semantic review (local-agent-powered; hidden when no providers)
+  semanticProviders: ProviderInfo[] | null; // null = not yet loaded
+  semanticStatus: "idle" | "running" | "done" | "error";
+  semanticReview: SemanticReview | null;
+  semanticWarnings: string[];
+  semanticProgress: string[];
+  semanticError: string | null;
+  viewMode: "files" | "semantic";
+  reviewedLayers: Set<string>; // "cohortId/layerId", persisted per PR
+  selectedLayerId: string | null; // "cohortId/layerId"
+
   // Review
   pendingReviewId: number | null;
   reviewBody: string;
@@ -292,6 +312,9 @@ export class PRReviewStore {
   private github: GitHubStore;
   // Track recently approved workflow IDs to filter out stale API responses
   private recentlyApprovedWorkflowIds = new Set<number>();
+  // Semantic analysis job tracking (SSE subscription lifecycle)
+  private semanticJobId: string | null = null;
+  private semanticUnsubscribe: (() => void) | null = null;
 
   constructor(
     github: GitHubStore,
@@ -333,6 +356,15 @@ export class PRReviewStore {
       const stored = localStorage.getItem(`${this.storageKey}-body`);
       if (stored) {
         reviewBody = stored;
+      }
+    } catch {}
+
+    // Load reviewed semantic layers from localStorage
+    let reviewedLayers = new Set<string>();
+    try {
+      const stored = localStorage.getItem(`${this.storageKey}-semantic-layers`);
+      if (stored) {
+        reviewedLayers = new Set(JSON.parse(stored));
       }
     } catch {}
 
@@ -402,6 +434,15 @@ export class PRReviewStore {
       replyingToCommentId: null,
       focusedPendingCommentId: null,
       editingPendingCommentId: null,
+      semanticProviders: null,
+      semanticStatus: "idle",
+      semanticReview: null,
+      semanticWarnings: [],
+      semanticProgress: [],
+      semanticError: null,
+      viewMode: "files",
+      reviewedLayers,
+      selectedLayerId: null,
       pendingReviewId: null,
       pendingComments,
       reviewBody,
@@ -706,6 +747,145 @@ export class PRReviewStore {
   toggleDiffViewMode = () => {
     const newMode = this.state.diffViewMode === "unified" ? "split" : "unified";
     this.setDiffViewMode(newMode);
+  };
+
+  // ---------------------------------------------------------------------------
+  // Semantic Review Actions
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Load available providers and any cached review for this PR's head SHA.
+   * Called once on mount; no-op on repeat calls. When no providers exist
+   * (hosted deployment, no local agents) the UI hides the feature.
+   */
+  initSemanticReview = async () => {
+    if (this.state.semanticProviders !== null) return;
+    const { owner, repo, pr } = this.state;
+    const [providers, cached] = await Promise.all([
+      fetchSemanticProviders(),
+      fetchCachedSemanticReview(owner, repo, pr.number, pr.head.sha),
+    ]);
+    this.set({
+      semanticProviders: providers,
+      ...(cached
+        ? { semanticReview: cached, semanticStatus: "done" as const }
+        : {}),
+    });
+  };
+
+  startSemanticAnalysis = async (providerId: string) => {
+    if (this.state.semanticStatus === "running") return;
+    const { owner, repo, pr, files } = this.state;
+    this.set({
+      semanticStatus: "running",
+      semanticProgress: [],
+      semanticError: null,
+    });
+
+    try {
+      const jobId = await apiStartSemanticAnalysis(providerId, {
+        owner,
+        repo,
+        number: pr.number,
+        headSha: pr.head.sha,
+        title: pr.title,
+        body: pr.body ?? "",
+        files: files.map((f) => ({
+          filename: f.filename,
+          status: f.status,
+          additions: f.additions,
+          deletions: f.deletions,
+          patch: f.patch,
+        })),
+      });
+      this.semanticJobId = jobId;
+      this.semanticUnsubscribe = streamSemanticJob(jobId, {
+        onProgress: (message) => {
+          this.set({
+            semanticProgress: [...this.state.semanticProgress, message],
+          });
+        },
+        onDone: ({ review, warnings }) => {
+          this.semanticJobId = null;
+          this.semanticUnsubscribe = null;
+          this.set({
+            semanticStatus: "done",
+            semanticReview: review,
+            semanticWarnings: warnings ?? [],
+          });
+        },
+        onError: (error) => {
+          this.semanticJobId = null;
+          this.semanticUnsubscribe = null;
+          this.set({ semanticStatus: "error", semanticError: error });
+        },
+      });
+    } catch (err) {
+      this.set({
+        semanticStatus: "error",
+        semanticError: (err as Error).message,
+      });
+    }
+  };
+
+  cancelSemanticAnalysis = () => {
+    const jobId = this.semanticJobId;
+    this.semanticUnsubscribe?.();
+    this.semanticUnsubscribe = null;
+    this.semanticJobId = null;
+    if (jobId) void cancelSemanticJob(jobId);
+    // Keep any previous review; just stop the in-flight run.
+    this.set({
+      semanticStatus: this.state.semanticReview ? "done" : "idle",
+      semanticProgress: [],
+    });
+  };
+
+  /** Tear down any live SSE subscription (called when the PR page unmounts). */
+  disposeSemantic = () => {
+    this.semanticUnsubscribe?.();
+    this.semanticUnsubscribe = null;
+    this.semanticJobId = null;
+  };
+
+  setViewMode = (mode: "files" | "semantic") => {
+    if (this.state.viewMode === mode) return;
+    if (mode === "semantic" && !this.state.semanticReview) return;
+    const partial: Partial<PRReviewState> = { viewMode: mode };
+    // Entering semantic mode with no selection: select the first layer.
+    if (mode === "semantic" && !this.state.selectedLayerId) {
+      const first = this.state.semanticReview?.cohorts[0];
+      if (first?.layers[0]) {
+        partial.selectedLayerId = `${first.id}/${first.layers[0].id}`;
+      }
+    }
+    this.set(partial);
+  };
+
+  selectSemanticLayer = (layerKey: string) => {
+    this.set({
+      selectedLayerId: layerKey,
+      focusedLine: null,
+      focusedLineSide: null,
+      selectionAnchor: null,
+      selectionAnchorSide: null,
+    });
+  };
+
+  toggleLayerReviewed = (layerKey: string) => {
+    const next = new Set(this.state.reviewedLayers);
+    if (next.has(layerKey)) {
+      next.delete(layerKey);
+    } else {
+      next.add(layerKey);
+    }
+    try {
+      localStorage.setItem(
+        `${this.storageKey}-semantic-layers`,
+        JSON.stringify([...next])
+      );
+    } catch {}
+    this.set({ reviewedLayers: next });
   };
 
   // ---------------------------------------------------------------------------
