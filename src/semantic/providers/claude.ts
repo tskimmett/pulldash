@@ -59,21 +59,30 @@ export const claudeProvider: SemanticProvider = {
         },
       });
 
+      let model: string | null = null;
       for await (const message of stream) {
         if (options.signal.aborted) break;
         const m = message as {
           type: string;
           subtype?: string;
           result?: string;
+          model?: string;
           message?: { content?: Array<{ type: string; text?: string }> };
         };
-        if (m.type === "assistant") {
+        if (m.type === "system" && m.subtype === "init" && m.model) {
+          model = m.model;
+          options.onProgress(`starting Claude agent (${model})`);
+        } else if (m.type === "assistant") {
           for (const block of m.message?.content ?? []) {
             if (block.type === "text" && block.text) {
               assistantText += block.text;
             }
           }
-          options.onProgress("Claude is analyzing the diff");
+          options.onProgress(
+            model
+              ? `Claude (${model}) is analyzing the diff`
+              : "Claude is analyzing the diff"
+          );
         } else if (m.type === "result") {
           if (typeof m.result === "string") {
             resultText = m.result;

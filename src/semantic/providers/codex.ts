@@ -7,10 +7,28 @@
  * pull in the SDK.
  */
 
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import type { SemanticProvider, ProviderRunOptions } from "./types";
+
+/**
+ * The SDK's events never report which model served the turn, so read the
+ * user's configured default from the Codex CLI config. Best-effort: absent
+ * or unparseable config just means we log without a model name.
+ */
+function detectCodexModel(): string | null {
+  try {
+    const config = readFileSync(
+      join(homedir(), ".codex", "config.toml"),
+      "utf8"
+    );
+    const match = config.match(/^model\s*=\s*"([^"]+)"/m);
+    return match?.[1] ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export const codexProvider: SemanticProvider = {
   id: "codex",
@@ -30,7 +48,10 @@ export const codexProvider: SemanticProvider = {
   async run(prompt: string, options: ProviderRunOptions): Promise<string> {
     const { Codex } = await import("@openai/codex-sdk");
 
-    options.onProgress("starting Codex agent");
+    const model = detectCodexModel();
+    options.onProgress(
+      model ? `starting Codex agent (${model})` : "starting Codex agent"
+    );
     const thread = new Codex().startThread({
       // Pure analysis over an inlined diff: no repo or network access needed.
       sandboxMode: "read-only",
