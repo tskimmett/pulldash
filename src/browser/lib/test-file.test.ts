@@ -21,6 +21,11 @@ test("test-file: matches common test naming conventions", () => {
     "test_utils.py",
     "conftest.py",
     "cypress/fixtures/user.json",
+    "src/components/CardList.unit.ts",
+    "ClientApp/scripts/grid.unit.js",
+    "MyProject.Tests/FooFixture.cs",
+    "Server/Cognito.UnitTests/GridTests.cs",
+    "src/Tests/Helpers.cs",
   ];
   for (const p of testPaths) {
     expect(isTestFile(p), p).toBe(true);

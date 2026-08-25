@@ -22,7 +22,7 @@ const TEST_DIRS = new Set([
 
 // Filename patterns for test files across common ecosystems.
 const TEST_FILE_RE =
-  /(\.(test|spec)\.[^./]+|_test\.[^./]+|Test\.(java|kt|cs|scala|groovy)|Spec\.(java|kt|cs|scala|groovy)|\.snap)$/;
+  /(\.(test|spec|unit)\.[^./]+|_test\.[^./]+|Test\.(java|kt|cs|scala|groovy)|Spec\.(java|kt|cs|scala|groovy)|\.snap)$/;
 
 // Python convention: test_*.py
 const PYTHON_TEST_RE = /^test_[^/]*\.py$/;
@@ -35,7 +35,11 @@ export function isTestFile(path: string): boolean {
   const basename = segments[segments.length - 1]!;
 
   for (let i = 0; i < segments.length - 1; i++) {
-    if (TEST_DIRS.has(segments[i]!)) return true;
+    // Case-insensitive: C#/Java projects use `Tests/`, `Test/`, etc.
+    const segment = segments[i]!.toLowerCase();
+    if (TEST_DIRS.has(segment)) return true;
+    // .NET test-project folders: `MyProject.Tests/`, `MyProject.UnitTests/`.
+    if (/\.[a-z0-9]*tests?$/.test(segment)) return true;
   }
 
   return (
