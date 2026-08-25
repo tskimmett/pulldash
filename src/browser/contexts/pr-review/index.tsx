@@ -26,7 +26,12 @@ import {
   streamSemanticJob,
   type ProviderInfo,
 } from "@/browser/lib/semantic-client";
-import type { SemanticReview } from "@/semantic/schema";
+import type {
+  SemanticCohort,
+  SemanticLayer,
+  SemanticRange,
+  SemanticReview,
+} from "@/semantic/schema";
 import {
   type GitHubStore,
   type Review,
@@ -851,25 +856,70 @@ export class PRReviewStore {
   setViewMode = (mode: "files" | "semantic") => {
     if (this.state.viewMode === mode) return;
     if (mode === "semantic" && !this.state.semanticReview) return;
-    const partial: Partial<PRReviewState> = { viewMode: mode };
-    // Entering semantic mode with no selection: select the first layer.
+    this.set({ viewMode: mode });
+    // Entering semantic mode with no selection: open the first layer.
     if (mode === "semantic" && !this.state.selectedLayerId) {
-      const first = this.state.semanticReview?.cohorts[0];
-      if (first?.layers[0]) {
-        partial.selectedLayerId = `${first.id}/${first.layers[0].id}`;
-      }
+      const keys = this.semanticLayerKeys();
+      if (keys.length > 0) this.selectSemanticLayer(keys[0]);
     }
-    this.set(partial);
+  };
+
+  /** Ordered "cohortId/layerId" keys across the whole review. */
+  private semanticLayerKeys(): string[] {
+    const review = this.state.semanticReview;
+    if (!review) return [];
+    return review.cohorts.flatMap((c) =>
+      c.layers.map((l) => `${c.id}/${l.id}`)
+    );
+  }
+
+  getSemanticLayer = (
+    layerKey: string
+  ): { cohort: SemanticCohort; layer: SemanticLayer } | null => {
+    const review = this.state.semanticReview;
+    if (!review) return null;
+    const slash = layerKey.indexOf("/");
+    const cohort = review.cohorts.find(
+      (c) => c.id === layerKey.slice(0, slash)
+    );
+    const layer = cohort?.layers.find(
+      (l) => l.id === layerKey.slice(slash + 1)
+    );
+    return cohort && layer ? { cohort, layer } : null;
   };
 
   selectSemanticLayer = (layerKey: string) => {
+    const found = this.getSemanticLayer(layerKey);
+    if (!found) return;
+    this.set({ selectedLayerId: layerKey });
+    const range = found.layer.ranges[0];
+    if (range) this.jumpToSemanticRange(range);
+  };
+
+  /** Open the range's file and focus its first line (diff auto-scrolls). */
+  jumpToSemanticRange = (range: SemanticRange) => {
+    if (!this.state.files.some((f) => f.filename === range.file)) return;
+    this.selectFile(range.file);
     this.set({
-      selectedLayerId: layerKey,
-      focusedLine: null,
-      focusedLineSide: null,
-      selectionAnchor: null,
-      selectionAnchorSide: null,
+      focusedLine: range.startLine,
+      focusedLineSide: range.side === "old" ? "old" : "new",
     });
+  };
+
+  /** j/k in semantic mode: move between layers (wraps around). */
+  navigateSemanticLayer = (direction: "next" | "prev") => {
+    const keys = this.semanticLayerKeys();
+    if (keys.length === 0) return;
+    const idx = this.state.selectedLayerId
+      ? keys.indexOf(this.state.selectedLayerId)
+      : -1;
+    const next =
+      idx === -1
+        ? direction === "next"
+          ? 0
+          : keys.length - 1
+        : (idx + (direction === "next" ? 1 : -1) + keys.length) % keys.length;
+    this.selectSemanticLayer(keys[next]);
   };
 
   toggleLayerReviewed = (layerKey: string) => {
@@ -886,7 +936,51 @@ export class PRReviewStore {
       );
     } catch {}
     this.set({ reviewedLayers: next });
+    this.syncViewedFromLayers(next);
   };
+
+  /**
+   * A file whose every range sits inside reviewed layers is marked viewed in
+   * the normal file view. One-way: un-reviewing a layer never un-views a file.
+   */
+  private syncViewedFromLayers(reviewedLayers: Set<string>) {
+    const review = this.state.semanticReview;
+    if (!review) return;
+    const layersByFile = new Map<string, Set<string>>();
+    for (const cohort of review.cohorts) {
+      for (const layer of cohort.layers) {
+        const key = `${cohort.id}/${layer.id}`;
+        for (const range of layer.ranges) {
+          let set = layersByFile.get(range.file);
+          if (!set) {
+            set = new Set();
+            layersByFile.set(range.file, set);
+          }
+          set.add(key);
+        }
+      }
+    }
+    const viewed = new Set(this.state.viewedFiles);
+    let changed = false;
+    for (const [file, keys] of layersByFile) {
+      if (viewed.has(file)) continue;
+      let all = true;
+      for (const key of keys) {
+        if (!reviewedLayers.has(key)) {
+          all = false;
+          break;
+        }
+      }
+      if (all) {
+        viewed.add(file);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.persistViewedFiles(viewed);
+      this.set({ viewedFiles: viewed });
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Diff Loading Actions

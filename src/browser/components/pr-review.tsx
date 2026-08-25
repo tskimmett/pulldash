@@ -48,6 +48,7 @@ import {
 import { cn } from "../cn";
 import { PRHeader } from "./pr-header";
 import { SemanticReviewButton } from "./semantic-review-button";
+import { SemanticLayerBar, SemanticSidebar } from "./semantic-panel";
 import { FileTree } from "./file-tree";
 import { isTestFile } from "@/browser/lib/test-file";
 import { FileHeader } from "./file-header";
@@ -323,6 +324,8 @@ function PRReviewLayout() {
     setMobileSidebarOpen(false);
   }, []);
 
+  const viewMode = usePRReviewSelector((s) => s.viewMode);
+
   // Initialize hooks that load data
   useKeyboardNavigation();
   useHashNavigation();
@@ -440,12 +443,20 @@ function PRReviewLayout() {
             onClick={() => setMobileSidebarOpen(false)}
           />
         )}
-        <FilePanel
-          onOpenSearch={openCommandPalette}
-          mobileOpen={mobileSidebarOpen}
-          onMobileClose={() => setMobileSidebarOpen(false)}
-          onFileSelect={handleMobileFileSelect}
-        />
+        {viewMode === "semantic" ? (
+          <SemanticSidebar
+            mobileOpen={mobileSidebarOpen}
+            onMobileClose={() => setMobileSidebarOpen(false)}
+            onLayerSelect={handleMobileFileSelect}
+          />
+        ) : (
+          <FilePanel
+            onOpenSearch={openCommandPalette}
+            mobileOpen={mobileSidebarOpen}
+            onMobileClose={() => setMobileSidebarOpen(false)}
+            onFileSelect={handleMobileFileSelect}
+          />
+        )}
         <DiffPanel />
       </div>
 
@@ -687,6 +698,8 @@ const DiffPanel = memo(function DiffPanel() {
   const showOverview = usePRReviewSelector((s) => s.showOverview);
   const diffViewMode = usePRReviewSelector((s) => s.diffViewMode);
 
+  const viewMode = usePRReviewSelector((s) => s.viewMode);
+
   const currentFile = useCurrentFile();
   const parsedDiff = useCurrentDiff();
   const isLoading = useIsCurrentFileLoading();
@@ -708,6 +721,8 @@ const DiffPanel = memo(function DiffPanel() {
   return (
     <main className="flex-1 overflow-hidden flex flex-col">
       <ReadOnlyBanner />
+
+      {viewMode === "semantic" && <SemanticLayerBar />}
 
       {currentFile ? (
         <div className="flex flex-col flex-1 min-h-0">
