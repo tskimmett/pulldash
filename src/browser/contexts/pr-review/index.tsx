@@ -250,6 +250,11 @@ interface PRReviewState {
   focusedPendingCommentId: string | null;
   editingPendingCommentId: string | null;
 
+  // Comment collapse: global default (persisted) + per-thread in-memory overrides.
+  // Effective collapsed = override ?? (allCommentsCollapsed || threadIsResolved)
+  allCommentsCollapsed: boolean;
+  collapsedThreadOverrides: Map<string, boolean>;
+
   // Semantic review (local-agent-powered; hidden when no providers)
   semanticProviders: ProviderInfo[] | null; // null = not yet loaded
   semanticStatus: "idle" | "running" | "done" | "error";
@@ -308,6 +313,48 @@ function setStoredHideTestFiles(hide: boolean): void {
   try {
     localStorage.setItem(HIDE_TEST_FILES_KEY, String(hide));
   } catch {}
+}
+
+// Global storage key for collapsing all inline comments (user preference)
+const COLLAPSE_ALL_COMMENTS_KEY = "pulldash_collapse_all_comments";
+
+function getStoredCollapseAllComments(): boolean {
+  try {
+    return localStorage.getItem(COLLAPSE_ALL_COMMENTS_KEY) === "true";
+  } catch {}
+  return false;
+}
+
+function setStoredCollapseAllComments(collapsed: boolean): void {
+  try {
+    localStorage.setItem(COLLAPSE_ALL_COMMENTS_KEY, String(collapsed));
+  } catch {}
+}
+
+/**
+ * Stable key for a comment thread: the review thread id when available,
+ * otherwise the id of the first (root) comment in the thread.
+ */
+export function commentThreadKey(
+  comments: { id: number; pull_request_review_thread_id?: string | null }[]
+): string {
+  const first = comments[0];
+  if (!first) return "";
+  return first.pull_request_review_thread_id ?? `c${first.id}`;
+}
+
+/** Effective collapsed state for a thread given store state. */
+export function isThreadCollapsed(
+  state: Pick<
+    PRReviewState,
+    "allCommentsCollapsed" | "collapsedThreadOverrides"
+  >,
+  key: string,
+  isResolved: boolean
+): boolean {
+  const override = state.collapsedThreadOverrides.get(key);
+  if (override !== undefined) return override;
+  return state.allCommentsCollapsed || isResolved;
 }
 
 export class PRReviewStore {
@@ -439,6 +486,8 @@ export class PRReviewStore {
       replyingToCommentId: null,
       focusedPendingCommentId: null,
       editingPendingCommentId: null,
+      allCommentsCollapsed: getStoredCollapseAllComments(),
+      collapsedThreadOverrides: new Map(),
       semanticProviders: null,
       semanticStatus: "idle",
       semanticReview: null,
@@ -749,6 +798,52 @@ export class PRReviewStore {
       this.selectOverview();
     }
   };
+
+  // ---------------------------------------------------------------------------
+  // Comment Collapse Actions
+  // ---------------------------------------------------------------------------
+
+  /** Collapse or expand every comment thread at once, dropping per-thread overrides. */
+  setAllCommentsCollapsed = (collapsed: boolean) => {
+    setStoredCollapseAllComments(collapsed);
+    this.set({
+      allCommentsCollapsed: collapsed,
+      collapsedThreadOverrides: new Map(),
+    });
+  };
+
+  toggleAllCommentsCollapsed = () => {
+    this.setAllCommentsCollapsed(!this.state.allCommentsCollapsed);
+  };
+
+  /** Toggle a single thread, recording an override when it differs from the default. */
+  setThreadCollapsed = (
+    key: string,
+    collapsed: boolean,
+    isResolved = false
+  ) => {
+    const next = new Map(this.state.collapsedThreadOverrides);
+    const defaultCollapsed = this.state.allCommentsCollapsed || isResolved;
+    if (collapsed === defaultCollapsed) {
+      if (!next.has(key)) return;
+      next.delete(key);
+    } else {
+      if (next.get(key) === collapsed) return;
+      next.set(key, collapsed);
+    }
+    this.set({ collapsedThreadOverrides: next });
+  };
+
+  toggleThreadCollapsed = (key: string, isResolved = false) => {
+    this.setThreadCollapsed(
+      key,
+      !isThreadCollapsed(this.state, key, isResolved),
+      isResolved
+    );
+  };
+
+  isThreadCollapsed = (key: string, isResolved = false) =>
+    isThreadCollapsed(this.state, key, isResolved);
 
   // ---------------------------------------------------------------------------
   // Diff View Mode Actions

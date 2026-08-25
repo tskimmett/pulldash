@@ -1,6 +1,11 @@
 import { test, expect, beforeEach } from "bun:test";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
-import { PRReviewStore, sortFilesLikeTree } from "./index";
+import {
+  PRReviewStore,
+  commentThreadKey,
+  isThreadCollapsed,
+  sortFilesLikeTree,
+} from "./index";
 import type { GitHubStore } from "@/browser/contexts/github";
 import {
   SEMANTIC_REVIEW_VERSION,
@@ -785,4 +790,87 @@ test("selectFile leaves the layer alone for files no layer covers", () => {
 
   expect(store.getSnapshot().selectedFile).toBe("README.md");
   expect(store.getSnapshot().selectedLayerId).toBe("c1/l1");
+});
+
+// ============================================================================
+// Comment Collapse
+// ============================================================================
+
+test("commentThreadKey prefers the review thread id over the root comment id", () => {
+  const rooted = createMockComment(1, "src/index.ts", 10);
+  expect(commentThreadKey([rooted])).toBe("c1");
+
+  const threaded = {
+    ...rooted,
+    pull_request_review_thread_id: "PRRT_abc",
+  } as ReviewComment;
+  expect(
+    commentThreadKey([threaded, createMockComment(2, "src/index.ts", 10)])
+  ).toBe("PRRT_abc");
+});
+
+test("toggleAllCommentsCollapsed flips the global default and persists it", () => {
+  const store = createStore();
+
+  expect(store.getSnapshot().allCommentsCollapsed).toBe(false);
+
+  store.toggleAllCommentsCollapsed();
+
+  expect(store.getSnapshot().allCommentsCollapsed).toBe(true);
+  expect(storage.get("pulldash_collapse_all_comments")).toBe("true");
+
+  // A fresh store picks up the persisted preference.
+  expect(createStore().getSnapshot().allCommentsCollapsed).toBe(true);
+});
+
+test("toggleThreadCollapsed overrides the global default per thread", () => {
+  const store = createStore();
+
+  store.toggleThreadCollapsed("t1");
+  expect(store.isThreadCollapsed("t1")).toBe(true);
+  expect(store.isThreadCollapsed("t2")).toBe(false);
+
+  store.toggleThreadCollapsed("t1");
+  expect(store.isThreadCollapsed("t1")).toBe(false);
+  // Returning to the default drops the override entirely.
+  expect(store.getSnapshot().collapsedThreadOverrides.size).toBe(0);
+});
+
+test("resolved threads collapse by default but stay expandable", () => {
+  const store = createStore();
+
+  expect(store.isThreadCollapsed("t1", true)).toBe(true);
+
+  store.toggleThreadCollapsed("t1", true);
+
+  expect(store.isThreadCollapsed("t1", true)).toBe(false);
+  expect(store.getSnapshot().collapsedThreadOverrides.get("t1")).toBe(false);
+});
+
+test("collapse-all clears per-thread overrides", () => {
+  const store = createStore();
+
+  store.toggleThreadCollapsed("t1");
+  expect(store.getSnapshot().collapsedThreadOverrides.size).toBe(1);
+
+  store.setAllCommentsCollapsed(true);
+
+  expect(store.getSnapshot().collapsedThreadOverrides.size).toBe(0);
+  expect(store.isThreadCollapsed("t1")).toBe(true);
+  expect(store.isThreadCollapsed("t2")).toBe(true);
+
+  // Expanding a single thread while the global default is collapsed works.
+  store.toggleThreadCollapsed("t2");
+  expect(store.isThreadCollapsed("t2")).toBe(false);
+  expect(store.isThreadCollapsed("t1")).toBe(true);
+});
+
+test("isThreadCollapsed reads state without the store instance", () => {
+  const store = createStore();
+  store.setAllCommentsCollapsed(true);
+  store.toggleThreadCollapsed("t1");
+
+  const state = store.getSnapshot();
+  expect(isThreadCollapsed(state, "t1", false)).toBe(false);
+  expect(isThreadCollapsed(state, "other", false)).toBe(true);
 });

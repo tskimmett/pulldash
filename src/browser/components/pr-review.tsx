@@ -87,6 +87,8 @@ import {
   useCommentingRange,
   useCommentRangeLookup,
   getTimeAgo,
+  commentThreadKey,
+  isThreadCollapsed,
   type LocalPendingComment,
   type ParsedDiff,
   type DiffLine,
@@ -697,6 +699,11 @@ const DiffPanel = memo(function DiffPanel() {
   const selectedFiles = usePRReviewSelector((s) => s.selectedFiles);
   const showOverview = usePRReviewSelector((s) => s.showOverview);
   const diffViewMode = usePRReviewSelector((s) => s.diffViewMode);
+  const allCommentsCollapsed = usePRReviewSelector(
+    (s) => s.allCommentsCollapsed
+  );
+  const currentFileComments = useCurrentFileComments();
+  const currentFileCommentCount = currentFileComments.length;
 
   const viewMode = usePRReviewSelector((s) => s.viewMode);
 
@@ -739,6 +746,9 @@ const DiffPanel = memo(function DiffPanel() {
                 onNextFile={() => store.navigateToNextUnviewedFile()}
                 diffViewMode={diffViewMode}
                 onToggleDiffViewMode={() => store.toggleDiffViewMode()}
+                commentCount={currentFileCommentCount}
+                allCommentsCollapsed={allCommentsCollapsed}
+                onToggleAllComments={() => store.toggleAllCommentsCollapsed()}
               />
             </div>
           </div>
@@ -1077,6 +1087,12 @@ const DiffViewer = memo(function DiffViewer({
     (s) => s.editingPendingCommentId
   );
   const replyingToCommentId = usePRReviewSelector((s) => s.replyingToCommentId);
+  const allCommentsCollapsed = usePRReviewSelector(
+    (s) => s.allCommentsCollapsed
+  );
+  const collapsedThreadOverrides = usePRReviewSelector(
+    (s) => s.collapsedThreadOverrides
+  );
 
   // Helper to get expanded lines for a skip block
   const getExpandedLines = useCallback(
@@ -1432,13 +1448,21 @@ const DiffViewer = memo(function DiffViewer({
           return 180;
         case "pending-comment":
           return 100;
-        case "comment-thread":
-          return 80 + row.comments.length * 60;
+        case "comment-thread": {
+          // Collapsed threads render as a single-line stub.
+          const first = row.comments[0];
+          const collapsed = isThreadCollapsed(
+            store.getSnapshot(),
+            commentThreadKey(row.comments),
+            first?.is_resolved ?? false
+          );
+          return collapsed ? 40 : 80 + row.comments.length * 60;
+        }
         default:
           return 20;
       }
     },
-    [virtualRows]
+    [virtualRows, store, allCommentsCollapsed, collapsedThreadOverrides]
   );
 
   const virtualizer = useVirtualizer({
@@ -2550,6 +2574,21 @@ const InlineCommentForm = memo(function InlineCommentForm({
 // Comment Thread
 // ============================================================================
 
+/** Collapse a comment body to a short single-line preview. */
+function summarizeCommentBody(
+  body: string | undefined,
+  maxLength = 80
+): string {
+  if (!body) return "";
+  const flat = body
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/[#>*_`~-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (flat.length <= maxLength) return flat;
+  return `${flat.slice(0, maxLength).trimEnd()}…`;
+}
+
 interface CommentThreadProps {
   comments: ReviewComment[];
   focusedCommentId: number | null;
@@ -2571,7 +2610,6 @@ const CommentThread = memo(function CommentThread({
   const { resolveThread, unresolveThread } = useThreadActions();
   const [replyText, setReplyText] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const [resolving, setResolving] = useState(false);
 
   const replyingTo =
@@ -2581,6 +2619,38 @@ const CommentThread = memo(function CommentThread({
   const firstComment = comments[0];
   const isResolved = firstComment?.is_resolved ?? false;
   const threadId = firstComment?.pull_request_review_thread_id;
+
+  // Collapse state lives in the store: a global default plus per-thread overrides.
+  const threadKey = commentThreadKey(comments);
+  const allCommentsCollapsed = usePRReviewSelector(
+    (s) => s.allCommentsCollapsed
+  );
+  const collapsedThreadOverrides = usePRReviewSelector(
+    (s) => s.collapsedThreadOverrides
+  );
+  const isCollapsed = isThreadCollapsed(
+    { allCommentsCollapsed, collapsedThreadOverrides },
+    threadKey,
+    isResolved
+  );
+  // Never collapse a thread the reviewer is actively replying to (unsaved
+  // input), editing in, or navigating to via the keyboard.
+  const forceExpanded =
+    replyingTo !== null ||
+    comments.some(
+      (c) => c.id === focusedCommentId || c.id === editingCommentId
+    );
+  const collapsed = isCollapsed && !forceExpanded;
+
+  const toggleCollapsed = useCallback(() => {
+    store.toggleThreadCollapsed(threadKey, isResolved);
+  }, [store, threadKey, isResolved]);
+
+  // One-line preview shown while collapsed so context isn't lost.
+  const summary = useMemo(
+    () => summarizeCommentBody(firstComment?.body),
+    [firstComment?.body]
+  );
 
   const handleSubmitReply = useCallback(async () => {
     if (!replyText.trim() || !replyingTo) return;
@@ -2619,30 +2689,23 @@ const CommentThread = memo(function CommentThread({
     setResolving(true);
     try {
       await resolveThread(threadId);
-      // Auto-collapse when resolved
-      setIsCollapsed(true);
+      // Auto-collapse when resolved (clears any manual override)
+      store.setThreadCollapsed(threadKey, true, true);
     } finally {
       setResolving(false);
     }
-  }, [threadId, resolveThread]);
+  }, [threadId, resolveThread, store, threadKey]);
 
   const handleUnresolve = useCallback(async () => {
     if (!threadId) return;
     setResolving(true);
     try {
       await unresolveThread(threadId);
-      setIsCollapsed(false);
+      store.setThreadCollapsed(threadKey, false, false);
     } finally {
       setResolving(false);
     }
-  }, [threadId, unresolveThread]);
-
-  // Auto-collapse resolved threads
-  useEffect(() => {
-    if (isResolved) {
-      setIsCollapsed(true);
-    }
-  }, [isResolved]);
+  }, [threadId, unresolveThread, store, threadKey]);
 
   return (
     <div
@@ -2654,17 +2717,27 @@ const CommentThread = memo(function CommentThread({
           : "border-blue-500/50 bg-card/80"
       )}
     >
-      {/* Thread header with resolve/unresolve */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border/30">
-        <div className="flex items-center gap-2">
+      {/* Thread header with resolve/unresolve + collapse */}
+      <div
+        className={cn(
+          "flex items-center justify-between px-4 py-2",
+          !collapsed && "border-b border-border/30"
+        )}
+      >
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          title={collapsed ? "Expand thread" : "Collapse thread"}
+          className="flex items-center gap-2 min-w-0 flex-1 text-left cursor-pointer group"
+        >
           {isResolved ? (
-            <CheckCircle2 className="w-4 h-4 text-green-500" />
+            <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
           ) : (
-            <Circle className="w-4 h-4 text-muted-foreground" />
+            <Circle className="w-4 h-4 text-muted-foreground shrink-0" />
           )}
           <span
             className={cn(
-              "text-xs font-medium",
+              "text-xs font-medium shrink-0",
               isResolved ? "text-green-500" : "text-muted-foreground"
             )}
           >
@@ -2672,13 +2745,14 @@ const CommentThread = memo(function CommentThread({
               ? "Resolved"
               : `${comments.length} comment${comments.length !== 1 ? "s" : ""}`}
           </span>
-          {isResolved && isCollapsed && (
-            <span className="text-xs text-muted-foreground">
-              by {firstComment.user.login}
+          {collapsed && firstComment && (
+            <span className="text-xs text-muted-foreground truncate group-hover:text-foreground transition-colors">
+              {firstComment.user.login}
+              {summary ? `: ${summary}` : ""}
             </span>
           )}
-        </div>
-        <div className="flex items-center gap-2">
+        </button>
+        <div className="flex items-center gap-2 shrink-0">
           {canWrite && threadId && (
             <button
               onClick={isResolved ? handleUnresolve : handleResolve}
@@ -2705,23 +2779,23 @@ const CommentThread = memo(function CommentThread({
               )}
             </button>
           )}
-          {isResolved && (
-            <button
-              onClick={() => setIsCollapsed(!isCollapsed)}
-              className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors"
-            >
-              {isCollapsed ? (
-                <ChevronDown className="w-4 h-4" />
-              ) : (
-                <ChevronUp className="w-4 h-4" />
-              )}
-            </button>
-          )}
+          <button
+            onClick={toggleCollapsed}
+            title={collapsed ? "Expand thread" : "Collapse thread"}
+            aria-label={collapsed ? "Expand thread" : "Collapse thread"}
+            className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors"
+          >
+            {collapsed ? (
+              <ChevronDown className="w-4 h-4" />
+            ) : (
+              <ChevronUp className="w-4 h-4" />
+            )}
+          </button>
         </div>
       </div>
 
-      {/* Comment content (collapsible for resolved) */}
-      {!isCollapsed && (
+      {/* Comment content (collapsible) */}
+      {!collapsed && (
         <>
           {comments.map((comment, idx) => (
             <CommentItem

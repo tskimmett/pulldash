@@ -5,7 +5,15 @@ import {
   ChevronRight,
   Columns2,
   AlignJustify,
+  MessagesSquare,
+  MessageSquareOff,
 } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "../ui/tooltip";
 import { cn } from "../cn";
 import { Keycap } from "../ui/keycap";
 import type { PullRequestFile } from "@/api/types";
@@ -22,6 +30,9 @@ interface FileHeaderProps {
   onNextFile?: () => void;
   diffViewMode?: DiffViewMode;
   onToggleDiffViewMode?: () => void;
+  commentCount?: number;
+  allCommentsCollapsed?: boolean;
+  onToggleAllComments?: () => void;
 }
 
 export const FileHeader = memo(function FileHeader({
@@ -34,6 +45,9 @@ export const FileHeader = memo(function FileHeader({
   onNextFile,
   diffViewMode,
   onToggleDiffViewMode,
+  commentCount,
+  allCommentsCollapsed,
+  onToggleAllComments,
 }: FileHeaderProps) {
   const fileStatusBadge = (() => {
     switch (file.status) {
@@ -105,6 +119,44 @@ export const FileHeader = memo(function FileHeader({
       </div>
 
       <div className="flex items-center gap-2">
+        {/* Collapse/expand all inline comments */}
+        {onToggleAllComments && (
+          <TooltipProvider delayDuration={300}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={onToggleAllComments}
+                  aria-label={
+                    allCommentsCollapsed
+                      ? "Expand all comments"
+                      : "Collapse all comments"
+                  }
+                  className={cn(
+                    "flex items-center gap-1 px-2 py-1.5 text-xs rounded-md border border-border transition-colors shrink-0",
+                    allCommentsCollapsed
+                      ? "bg-muted text-foreground"
+                      : "bg-muted/30 text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {allCommentsCollapsed ? (
+                    <MessageSquareOff className="w-3.5 h-3.5" />
+                  ) : (
+                    <MessagesSquare className="w-3.5 h-3.5" />
+                  )}
+                  {commentCount !== undefined && commentCount > 0 && (
+                    <span className="tabular-nums">{commentCount}</span>
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {allCommentsCollapsed
+                  ? "Expand all comments"
+                  : "Collapse all comments"}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
+
         {/* Split/Unified toggle */}
         {onToggleDiffViewMode && (
           <div className="flex items-center rounded-md border border-border bg-muted/30 p-0.5">
