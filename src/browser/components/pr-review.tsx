@@ -33,6 +33,8 @@ import {
   ExternalLink,
   BookOpen,
   Smile,
+  FlaskConical,
+  FlaskConicalOff,
 } from "lucide-react";
 import type { Reaction, ReactionContent } from "../contexts/github";
 import { Skeleton } from "../ui/skeleton";
@@ -46,6 +48,7 @@ import {
 import { cn } from "../cn";
 import { PRHeader } from "./pr-header";
 import { FileTree } from "./file-tree";
+import { isTestFile } from "@/browser/lib/test-file";
 import { FileHeader } from "./file-header";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import {
@@ -471,7 +474,20 @@ const FilePanel = memo(function FilePanel({
   const selectedFiles = usePRReviewSelector((s) => s.selectedFiles);
   const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
   const hideViewed = usePRReviewSelector((s) => s.hideViewed);
+  const hideTestFiles = usePRReviewSelector((s) => s.hideTestFiles);
   const showOverview = usePRReviewSelector((s) => s.showOverview);
+
+  const testFileCount = useMemo(
+    () => files.reduce((n, f) => n + (isTestFile(f.filename) ? 1 : 0), 0),
+    [files]
+  );
+  const visibleFiles = useMemo(
+    () =>
+      hideTestFiles && testFileCount > 0
+        ? files.filter((f) => !isTestFile(f.filename))
+        : files,
+    [files, hideTestFiles, testFileCount]
+  );
 
   const commentCounts = useCommentCountsByFile();
   const pendingCommentCounts = usePendingCommentCountsByFile();
@@ -561,13 +577,45 @@ const FilePanel = memo(function FilePanel({
               {hideViewed ? "Show viewed files" : "Hide viewed files"}
             </TooltipContent>
           </Tooltip>
+          {testFileCount > 0 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={store.toggleHideTestFiles}
+                  className={cn(
+                    "p-1.5 rounded-md border border-border transition-colors",
+                    hideTestFiles
+                      ? "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 border-amber-500/30"
+                      : "text-muted-foreground bg-muted/50 hover:bg-muted"
+                  )}
+                >
+                  {hideTestFiles ? (
+                    <FlaskConicalOff className="w-3.5 h-3.5" />
+                  ) : (
+                    <FlaskConical className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {hideTestFiles
+                  ? `Show ${testFileCount} test file${testFileCount === 1 ? "" : "s"}`
+                  : `Hide ${testFileCount} test file${testFileCount === 1 ? "" : "s"}`}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </TooltipProvider>
       </div>
+
+      {hideTestFiles && testFileCount > 0 && (
+        <div className="mx-2 mb-1 px-2 text-[11px] text-muted-foreground">
+          {testFileCount} test file{testFileCount === 1 ? "" : "s"} hidden
+        </div>
+      )}
 
       <div className="border-t border-border/50" />
 
       <FileTree
-        files={files}
+        files={visibleFiles}
         selectedFile={selectedFile}
         selectedFiles={selectedFiles}
         viewedFiles={viewedFiles}

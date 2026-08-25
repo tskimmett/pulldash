@@ -16,6 +16,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLocation } from "react-router-dom";
 import { cn } from "../cn";
 import { usePRReviewSelector, usePRReviewStore } from "../contexts/pr-review";
+import { isTestFile } from "@/browser/lib/test-file";
 import { Keycap, KeycapGroup } from "../ui/keycap";
 import type { PullRequestFile } from "@/api/types";
 
@@ -196,8 +197,17 @@ export const CommandPalette = memo(function CommandPalette({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const store = usePRReviewStore();
-  const files = usePRReviewSelector((s) => s.files);
+  const allFiles = usePRReviewSelector((s) => s.files);
   const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
+  const hideTestFiles = usePRReviewSelector((s) => s.hideTestFiles);
+
+  const files = useMemo(
+    () =>
+      hideTestFiles
+        ? allFiles.filter((f) => !isTestFile(f.filename))
+        : allFiles,
+    [allFiles, hideTestFiles]
+  );
 
   // Defer the search query so typing stays responsive
   const deferredSearch = useDeferredValue(search);

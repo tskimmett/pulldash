@@ -17,6 +17,7 @@ import {
   MentionSuggestionsProvider,
   type MentionUser,
 } from "@/browser/ui/markdown";
+import { isTestFile } from "@/browser/lib/test-file";
 import {
   type GitHubStore,
   type Review,
@@ -200,6 +201,7 @@ interface PRReviewState {
   // Viewed files
   viewedFiles: Set<string>;
   hideViewed: boolean;
+  hideTestFiles: boolean;
 
   // Diffs
   loadedDiffs: Record<string, ParsedDiff>;
@@ -264,6 +266,22 @@ function getStoredDiffViewMode(): DiffViewMode {
 function setStoredDiffViewMode(mode: DiffViewMode): void {
   try {
     localStorage.setItem(DIFF_VIEW_MODE_KEY, mode);
+  } catch {}
+}
+
+// Global storage key for hiding test files (user preference, not per-PR)
+const HIDE_TEST_FILES_KEY = "pulldash_hide_test_files";
+
+function getStoredHideTestFiles(): boolean {
+  try {
+    return localStorage.getItem(HIDE_TEST_FILES_KEY) === "true";
+  } catch {}
+  return false;
+}
+
+function setStoredHideTestFiles(hide: boolean): void {
+  try {
+    localStorage.setItem(HIDE_TEST_FILES_KEY, String(hide));
   } catch {}
 }
 
@@ -362,6 +380,7 @@ export class PRReviewStore {
       overviewScrollTarget: null,
       viewedFiles,
       hideViewed: true,
+      hideTestFiles: getStoredHideTestFiles(),
       diffViewMode,
       loadedDiffs: {},
       loadingFiles: new Set(),
@@ -528,6 +547,10 @@ export class PRReviewStore {
     }
   };
 
+  // Whether a file is hidden from the tree and skipped during navigation.
+  private isFileHidden = (filename: string): boolean =>
+    this.state.hideTestFiles && isTestFile(filename);
+
   navigateToNextUnviewedFile = () => {
     const { files, selectedFile, viewedFiles } = this.state;
     const currentIdx = selectedFile
@@ -537,6 +560,7 @@ export class PRReviewStore {
     // Search forward then wrap
     for (let i = 0; i < files.length; i++) {
       const idx = (currentIdx + 1 + i) % files.length;
+      if (this.isFileHidden(files[idx].filename)) continue;
       if (!viewedFiles.has(files[idx].filename)) {
         this.selectFile(files[idx].filename);
         return;
@@ -553,6 +577,7 @@ export class PRReviewStore {
     // Search backward then wrap
     for (let i = 0; i < files.length; i++) {
       const idx = (currentIdx - 1 - i + files.length) % files.length;
+      if (this.isFileHidden(files[idx].filename)) continue;
       if (!viewedFiles.has(files[idx].filename)) {
         this.selectFile(files[idx].filename);
         return;
@@ -654,6 +679,18 @@ export class PRReviewStore {
 
   toggleHideViewed = () => {
     this.set({ hideViewed: !this.state.hideViewed });
+  };
+
+  toggleHideTestFiles = () => {
+    const hideTestFiles = !this.state.hideTestFiles;
+    setStoredHideTestFiles(hideTestFiles);
+    // If the currently selected file just became hidden, deselect it so the
+    // reviewer isn't left on a file that no longer exists in the tree.
+    const { selectedFile } = this.state;
+    this.set({ hideTestFiles });
+    if (hideTestFiles && selectedFile && isTestFile(selectedFile)) {
+      this.selectOverview();
+    }
   };
 
   // ---------------------------------------------------------------------------

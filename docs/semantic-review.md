@@ -15,7 +15,7 @@ keyboard-driven review shell; this adds the semantic layer on top.
 
 ## Concepts
 
-- **Cohort** — an independent, logically related group of change *hunks*
+- **Cohort** — an independent, logically related group of change _hunks_
   ("the auth refactor", "the new endpoint", "config plumbing"). Grouping is
   **hunk-level**: one file's hunks can belong to different cohorts.
 - **Layer** — an ordered reading step within a cohort. Layers are dependency-ordered:
@@ -95,19 +95,23 @@ GET  /api/semantic/providers        ◄──  availability detection
 
 ```ts
 interface SemanticProvider {
-  id: string;                       // "claude" | "codex" | ...
+  id: string; // "claude" | "codex" | ...
   displayName: string;
-  available(): Promise<boolean>;    // auth/CLI detection, cheap
+  available(): Promise<boolean>; // auth/CLI detection, cheap
   analyze(
     input: AnalysisInput,
     onProgress: (msg: string) => void,
-    signal: AbortSignal,
+    signal: AbortSignal
   ): Promise<SemanticReview>;
 }
 
 interface AnalysisInput {
-  owner: string; repo: string; number: number; headSha: string;
-  title: string; body: string;
+  owner: string;
+  repo: string;
+  number: number;
+  headSha: string;
+  title: string;
+  body: string;
   files: { filename: string; status: string; patch?: string }[];
 }
 ```
@@ -131,23 +135,28 @@ interface SemanticReview {
   version: 1;
   provider: string;
   headSha: string;
-  generatedAt: string;              // ISO 8601
-  overview: string;                 // markdown, 2–5 sentences
+  generatedAt: string; // ISO 8601
+  overview: string; // markdown, 2–5 sentences
   cohorts: Cohort[];
 }
 interface Cohort {
-  id: string; title: string; summary: string;
+  id: string;
+  title: string;
+  summary: string;
   layers: Layer[];
 }
 interface Layer {
-  id: string; title: string; summary: string;   // markdown
+  id: string;
+  title: string;
+  summary: string; // markdown
   diagram?: { kind: "sequence" | "state" | "er" | "flow"; mermaid: string };
   ranges: Range[];
 }
 interface Range {
   file: string;
-  side: "new" | "old";              // "old" only for pure deletions
-  startLine: number; endLine: number;
+  side: "new" | "old"; // "old" only for pure deletions
+  startLine: number;
+  endLine: number;
   summary?: string;
 }
 ```
@@ -169,12 +178,13 @@ actual hunk are pruned with a warning.
 ### Prompt contract (summary)
 
 The provider prompt instructs the agent to:
+
 1. Read PR title/body and the full unified diff.
 2. Partition all hunks into 2–7 independent cohorts by intent.
 3. Order layers within each cohort foundation-first (contracts → consumers → tests).
 4. Anchor every layer to exact file/line ranges from the diff (new side line
    numbers), covering every hunk exactly once.
-5. Write range/layer summaries in plain language explaining *why*, not restating
+5. Write range/layer summaries in plain language explaining _why_, not restating
    the diff.
 6. Emit a Mermaid diagram only when the layer introduces an API interaction,
    state machine, or schema relationship.
@@ -196,6 +206,7 @@ is a noted future improvement.
 ## Performance notes
 
 Per AGENTS.md, performance is P1:
+
 - Analysis runs entirely out-of-process (local server + external agent); the main
   thread only receives SSE progress strings and one JSON payload.
 - Semantic mode reuses the existing parsed-diff cache, worker highlighting, and
