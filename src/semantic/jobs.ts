@@ -9,10 +9,16 @@
 import type { AnalysisInput } from "./providers/types";
 import { getProvider } from "./providers";
 import {
+  analysisPromptFits,
   buildAnalysisPrompt,
   buildCorrectionPrompt,
+  buildMapPrompt,
+  buildReducePrompt,
   extractJson,
+  parseFragments,
+  partitionFilesForMap,
   DEFAULT_MAX_PROMPT_CHARS,
+  type DiffFragment,
 } from "./prompt";
 import { validateSemanticReview, type SemanticReview } from "./schema";
 import { reconcileCoverage } from "./coverage";
@@ -108,8 +114,23 @@ async function runJob(
 
     log(`analyzing ${input.files.length} files with ${provider.displayName}`);
     let budget = provider.promptBudgetChars ?? DEFAULT_MAX_PROMPT_CHARS;
-    let prompt = buildAnalysisPrompt(input, budget);
     const runOptions = { onProgress: log, signal: job.abort.signal };
+
+    // Small PRs go through a single prompt with the full diff inline. PRs
+    // whose diff exceeds the provider's context budget are map-reduced:
+    // each diff section is annotated with semantic fragments, then a final
+    // pass organizes all fragments into cohorts/layers.
+    let fragments: DiffFragment[] | null = null;
+    let prompt: string;
+    if (analysisPromptFits(input, budget)) {
+      prompt = buildAnalysisPrompt(input, budget);
+    } else {
+      fragments = await runMapPhase(input, budget, provider, runOptions, log);
+      log(
+        `organizing ${fragments.length} fragments into a review guide with ${provider.displayName}`
+      );
+      prompt = buildReducePrompt(input, fragments);
+    }
 
     // Char budgets are estimates of the provider's token window; if the
     // provider still rejects the prompt as too long, shrink and retry.
@@ -124,10 +145,26 @@ async function runJob(
             throw err;
           }
           budget = Math.max(MIN_PROMPT_BUDGET_CHARS, Math.floor(budget / 2));
-          log(
-            `prompt too long for ${provider.displayName}; retrying with the largest patches elided`
-          );
-          prompt = buildAnalysisPrompt(input, budget);
+          if (fragments) {
+            // Reduce prompt overflow: shorten fragment summaries.
+            const cap = Math.max(
+              0,
+              Math.floor(budget / Math.max(1, fragments.length) / 2)
+            );
+            fragments = fragments.map((f) => ({
+              ...f,
+              summary: f.summary.slice(0, cap),
+            }));
+            log(
+              `prompt too long for ${provider.displayName}; retrying with shortened fragment summaries`
+            );
+            prompt = buildReducePrompt(input, fragments);
+          } else {
+            log(
+              `prompt too long for ${provider.displayName}; retrying with the largest patches elided`
+            );
+            prompt = buildAnalysisPrompt(input, budget);
+          }
         }
       }
     };
@@ -189,6 +226,47 @@ async function runJob(
     job.error = (err as Error).message;
     job.progress.push(`error: ${job.error}`);
   }
+}
+
+/**
+ * Map phase for PRs too large for a single prompt: annotate each diff
+ * section with semantic fragments for the reduce pass to organize. Sections
+ * run sequentially — providers are local agents, not parallel API pools.
+ */
+async function runMapPhase(
+  input: AnalysisInput,
+  budget: number,
+  provider: NonNullable<ReturnType<typeof getProvider>>,
+  runOptions: { onProgress: (m: string) => void; signal: AbortSignal },
+  log: (message: string) => void
+): Promise<DiffFragment[]> {
+  // Leave headroom for the map prompt's fixed header and PR description.
+  const batches = partitionFilesForMap(input.files, Math.floor(budget * 0.6));
+  log(
+    `PR too large for one pass: analyzing ${batches.length} diff sections separately`
+  );
+
+  const validFiles = new Set(input.files.map((f) => f.filename));
+  const fragments: DiffFragment[] = [];
+  for (const [i, batch] of batches.entries()) {
+    log(`analyzing section ${i + 1}/${batches.length} (${batch.length} files)`);
+    const raw = await provider.run(
+      buildMapPrompt(input, batch, i + 1, batches.length, budget),
+      runOptions
+    );
+    const parsed = parseFragments(raw, validFiles);
+    if (parsed.length === 0) {
+      log(
+        `section ${i + 1} produced no usable fragments; its hunks will appear under "Uncovered changes"`
+      );
+    }
+    fragments.push(...parsed);
+  }
+
+  if (fragments.length === 0) {
+    throw new Error("map phase produced no usable fragments");
+  }
+  return fragments;
 }
 
 /** Floor for the shrink-and-retry loop; below this the analysis is useless. */

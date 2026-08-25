@@ -190,10 +190,15 @@ The provider prompt instructs the agent to:
    state machine, or schema relationship.
 7. Output only JSON matching the schema.
 
-Very large diffs that exceed the provider's practical context are handled v1 by
-truncating context intelligently (patch bodies of lockfiles/generated files elided
-first, listed by name only); a map-reduce strategy (per-chunk grouping, then merge)
-is a noted future improvement.
+Lockfile/generated-file patch bodies are always elided (listed by name only).
+Each provider declares a prompt budget matched to its context window. Diffs that
+fit the budget run as a single prompt. Larger diffs are map-reduced: the diff is
+partitioned into sections that each fit, a map pass annotates every section's
+hunks with semantic fragments (range + label + summary), and a reduce pass
+organizes all fragments into the final cohort/layer structure without re-reading
+patches. If a provider still rejects a prompt as too long, the job runner halves
+the budget and retries (eliding the largest patches, or shortening fragment
+summaries) instead of failing.
 
 ## Non-goals (v1)
 
