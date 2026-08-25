@@ -16,6 +16,11 @@ export const claudeProvider: SemanticProvider = {
   id: "claude",
   displayName: "Claude",
 
+  // Claude Code has a 200k-token window shared with its system prompt, and
+  // code diffs tokenize at ~3 chars/token. Leave room for the correction
+  // round-trip, which resends the prompt plus the previous output.
+  promptBudgetChars: 250_000,
+
   async available(): Promise<boolean> {
     try {
       // The Agent SDK bundles the Claude Code binary; what actually gates it

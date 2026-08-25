@@ -10,14 +10,20 @@ import { SEMANTIC_REVIEW_VERSION } from "./schema";
 const ELIDED_PATCH_RE =
   /(^|\/)(package-lock\.json|bun\.lock|bun\.lockb|yarn\.lock|pnpm-lock\.yaml|Cargo\.lock|go\.sum|composer\.lock|Gemfile\.lock|poetry\.lock|uv\.lock)$|\.(min\.js|min\.css|map|snap)$/;
 
-/** Rough ceiling on prompt size; ~4 chars/token, aim under ~150k tokens. */
-const MAX_PROMPT_CHARS = 600_000;
+/**
+ * Default ceiling on prompt size in characters. Providers with smaller
+ * context windows override this via `promptBudgetChars`.
+ */
+export const DEFAULT_MAX_PROMPT_CHARS = 600_000;
 
 export function isElidedPatch(filename: string): boolean {
   return ELIDED_PATCH_RE.test(filename);
 }
 
-export function buildAnalysisPrompt(input: AnalysisInput): string {
+export function buildAnalysisPrompt(
+  input: AnalysisInput,
+  maxChars: number = DEFAULT_MAX_PROMPT_CHARS
+): string {
   const header = `You are analyzing a pull request to produce a "semantic review": a reorganization of the diff from a flat file list into a guided, dependency-ordered walkthrough.
 
 PR: ${input.owner}/${input.repo}#${input.number} (head ${input.headSha})
@@ -94,14 +100,14 @@ The "diagram" field is optional. The "summary" field on ranges is optional.
   let body = sections.join("\n\n");
 
   // Stay under the prompt ceiling: elide the largest patches first.
-  if (header.length + body.length > MAX_PROMPT_CHARS) {
+  if (header.length + body.length > maxChars) {
     const sorted = input.files
       .filter((f) => f.patch && !isElidedPatch(f.filename))
       .sort((a, b) => (b.patch?.length ?? 0) - (a.patch?.length ?? 0));
     const dropped = new Set<string>();
     let size = header.length + body.length;
     for (const file of sorted) {
-      if (size <= MAX_PROMPT_CHARS) break;
+      if (size <= maxChars) break;
       dropped.add(file.filename);
       size -= file.patch!.length;
     }

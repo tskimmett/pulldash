@@ -91,6 +91,34 @@ test("prompt: oversized diffs elide the largest patches first", () => {
   );
 });
 
+test("prompt: custom maxChars budget elides patches sooner", () => {
+  const input = {
+    ...INPUT,
+    files: [
+      {
+        filename: "a.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        patch: "@@ -1 +1,2 @@\n ctx\n+small-change",
+      },
+      {
+        filename: "b.ts",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        patch: "@@ -1 +1,2 @@\n ctx\n+" + "y".repeat(20_000),
+      },
+    ],
+  };
+  // Default budget keeps both patches; a tight budget drops the big one.
+  expect(buildAnalysisPrompt(input)).toContain("y".repeat(1000));
+  const tight = buildAnalysisPrompt(input, 10_000);
+  expect(tight).toContain("+small-change");
+  expect(tight).not.toContain("y".repeat(1000));
+  expect(tight).toContain("b.ts (modified, +1/-0) [patch too large: elided]");
+});
+
 test("prompt: correction prompt embeds errors and previous output", () => {
   const prompt = buildCorrectionPrompt("ORIGINAL", "BAD OUTPUT", ["e1", "e2"]);
   expect(prompt).toContain("ORIGINAL");

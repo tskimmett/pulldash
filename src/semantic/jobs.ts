@@ -12,6 +12,7 @@ import {
   buildAnalysisPrompt,
   buildCorrectionPrompt,
   extractJson,
+  DEFAULT_MAX_PROMPT_CHARS,
 } from "./prompt";
 import { validateSemanticReview, type SemanticReview } from "./schema";
 import { reconcileCoverage } from "./coverage";
@@ -106,10 +107,32 @@ async function runJob(
     }
 
     log(`analyzing ${input.files.length} files with ${provider.displayName}`);
-    const prompt = buildAnalysisPrompt(input);
+    let budget = provider.promptBudgetChars ?? DEFAULT_MAX_PROMPT_CHARS;
+    let prompt = buildAnalysisPrompt(input, budget);
     const runOptions = { onProgress: log, signal: job.abort.signal };
 
-    let raw = await provider.run(prompt, runOptions);
+    // Char budgets are estimates of the provider's token window; if the
+    // provider still rejects the prompt as too long, shrink and retry.
+    const runShrinkable = async (
+      build: (prompt: string) => string
+    ): Promise<string> => {
+      for (;;) {
+        try {
+          return await provider.run(build(prompt), runOptions);
+        } catch (err) {
+          if (!isPromptTooLong(err) || budget <= MIN_PROMPT_BUDGET_CHARS) {
+            throw err;
+          }
+          budget = Math.max(MIN_PROMPT_BUDGET_CHARS, Math.floor(budget / 2));
+          log(
+            `prompt too long for ${provider.displayName}; retrying with the largest patches elided`
+          );
+          prompt = buildAnalysisPrompt(input, budget);
+        }
+      }
+    };
+
+    let raw = await runShrinkable((p) => p);
     await writeRawOutput(
       input.owner,
       input.repo,
@@ -126,9 +149,10 @@ async function runJob(
       log(
         `output failed validation (${review.errors.length} errors), asking ${provider.displayName} to correct`
       );
-      raw = await provider.run(
-        buildCorrectionPrompt(prompt, raw, review.errors),
-        runOptions
+      const previousOutput = raw;
+      const errors = review.errors;
+      raw = await runShrinkable((p) =>
+        buildCorrectionPrompt(p, previousOutput, errors)
       );
       await writeRawOutput(
         input.owner,
@@ -165,6 +189,16 @@ async function runJob(
     job.error = (err as Error).message;
     job.progress.push(`error: ${job.error}`);
   }
+}
+
+/** Floor for the shrink-and-retry loop; below this the analysis is useless. */
+const MIN_PROMPT_BUDGET_CHARS = 50_000;
+
+function isPromptTooLong(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /prompt is too long|too many tokens|context (length|window)|exceeds? .*context|input length .*exceed/i.test(
+    message
+  );
 }
 
 function tryValidate(
