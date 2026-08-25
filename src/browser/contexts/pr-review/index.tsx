@@ -523,12 +523,23 @@ export class PRReviewStore {
   };
 
   selectFile = (filename: string) => {
-    if (this.state.selectedFile === filename && !this.state.showOverview)
+    // In semantic mode any path that lands on a file (tree click, file-header
+    // arrows, j/k, hash navigation) must keep the semantic UI pointed at a
+    // layer that actually covers the file. When the current layer already
+    // covers it - notably the layer -> file jump in selectSemanticLayer -
+    // this resolves to the existing selection, so no loop or clobbering.
+    const layerKey = this.semanticLayerKeyForFile(filename);
+    if (this.state.selectedFile === filename && !this.state.showOverview) {
+      if (layerKey && layerKey !== this.state.selectedLayerId) {
+        this.set({ selectedLayerId: layerKey });
+      }
       return;
+    }
     // Track for shift+click range selection
     this.lastSelectedFile = filename;
     this.set({
       selectedFile: filename,
+      ...(layerKey ? { selectedLayerId: layerKey } : {}),
       selectedFiles: new Set(),
       showOverview: false,
       // Reset line selection when changing files
@@ -886,6 +897,28 @@ export class PRReviewStore {
       (l) => l.id === layerKey.slice(slash + 1)
     );
     return cohort && layer ? { cohort, layer } : null;
+  };
+
+  /**
+   * First layer (in cohort/layer order) whose ranges touch `filename`, or the
+   * currently selected layer when it already covers the file. Returns null
+   * outside semantic mode or when no layer covers the file, meaning "leave the
+   * current layer selection alone".
+   */
+  private semanticLayerKeyForFile = (filename: string): string | null => {
+    if (this.state.viewMode !== "semantic") return null;
+    const review = this.state.semanticReview;
+    if (!review) return null;
+    let first: string | null = null;
+    for (const cohort of review.cohorts) {
+      for (const layer of cohort.layers) {
+        if (!layer.ranges.some((r) => r.file === filename)) continue;
+        const key = `${cohort.id}/${layer.id}`;
+        if (key === this.state.selectedLayerId) return key;
+        first ??= key;
+      }
+    }
+    return first;
   };
 
   selectSemanticLayer = (layerKey: string) => {

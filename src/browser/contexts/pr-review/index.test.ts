@@ -2,6 +2,10 @@ import { test, expect, beforeEach } from "bun:test";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import { PRReviewStore, sortFilesLikeTree } from "./index";
 import type { GitHubStore } from "@/browser/contexts/github";
+import {
+  SEMANTIC_REVIEW_VERSION,
+  type SemanticReview,
+} from "@/semantic/schema";
 
 // Mock localStorage
 const storage = new Map<string, string>();
@@ -687,4 +691,98 @@ test("clearOverviewScrollTarget clears the target", () => {
   store.clearOverviewScrollTarget();
 
   expect(store.getSnapshot().overviewScrollTarget).toBeNull();
+});
+
+// ============================================================================
+// Semantic review layer <-> file sync
+// ============================================================================
+
+function createSemanticStore() {
+  const store = createStore();
+  const review: SemanticReview = {
+    version: SEMANTIC_REVIEW_VERSION,
+    provider: "test",
+    headSha: "abc123",
+    generatedAt: new Date().toISOString(),
+    overview: "overview",
+    cohorts: [
+      {
+        id: "c1",
+        title: "Cohort 1",
+        summary: "s",
+        layers: [
+          {
+            id: "l1",
+            title: "Layer 1",
+            summary: "s",
+            ranges: [
+              { file: "src/index.ts", side: "new", startLine: 1, endLine: 2 },
+            ],
+          },
+          {
+            id: "l2",
+            title: "Layer 2",
+            summary: "s",
+            ranges: [
+              { file: "src/utils.ts", side: "new", startLine: 3, endLine: 4 },
+              { file: "src/index.ts", side: "new", startLine: 9, endLine: 9 },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  (store as unknown as { set: (p: Record<string, unknown>) => void }).set({
+    semanticReview: review,
+  });
+  store.setViewMode("semantic");
+  return store;
+}
+
+test("setViewMode semantic selects the first layer and its file", () => {
+  const store = createSemanticStore();
+
+  expect(store.getSnapshot().selectedLayerId).toBe("c1/l1");
+  expect(store.getSnapshot().selectedFile).toBe("src/index.ts");
+});
+
+test("selectFile in semantic mode syncs selectedLayerId to a covering layer", () => {
+  const store = createSemanticStore();
+
+  store.selectFile("src/utils.ts");
+
+  expect(store.getSnapshot().selectedLayerId).toBe("c1/l2");
+});
+
+test("file navigation in semantic mode syncs the selected layer", () => {
+  const store = createSemanticStore();
+
+  store.navigateToFile("next");
+
+  expect(store.getSnapshot().selectedFile).toBe("src/utils.ts");
+  expect(store.getSnapshot().selectedLayerId).toBe("c1/l2");
+});
+
+test("selecting a layer keeps that layer even when other layers cover the file", () => {
+  const store = createSemanticStore();
+
+  store.selectSemanticLayer("c1/l2");
+
+  // l2's first range is src/utils.ts; selecting it must not bounce to l1.
+  expect(store.getSnapshot().selectedLayerId).toBe("c1/l2");
+  expect(store.getSnapshot().selectedFile).toBe("src/utils.ts");
+
+  // src/index.ts is covered by both l1 and l2; l2 is already selected and
+  // covers it, so the intentional layer selection is preserved.
+  store.selectFile("src/index.ts");
+  expect(store.getSnapshot().selectedLayerId).toBe("c1/l2");
+});
+
+test("selectFile leaves the layer alone for files no layer covers", () => {
+  const store = createSemanticStore();
+
+  store.selectFile("README.md");
+
+  expect(store.getSnapshot().selectedFile).toBe("README.md");
+  expect(store.getSnapshot().selectedLayerId).toBe("c1/l1");
 });
