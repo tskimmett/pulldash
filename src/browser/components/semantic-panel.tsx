@@ -7,10 +7,11 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import { cn } from "../cn";
 import { usePRReviewSelector, usePRReviewStore } from "../contexts/pr-review";
 import { Markdown } from "../ui/markdown";
+import { MermaidDiagram } from "./mermaid-diagram";
 import type { SemanticLayer, SemanticRange } from "@/semantic/schema";
 
 // ============================================================================
@@ -231,6 +232,14 @@ export const SemanticLayerBar = memo(function SemanticLayerBar() {
 
       <RangeChips layer={layer} selectedFile={selectedFile} />
 
+      {layer.diagram && (
+        <LayerDiagram
+          key={selectedLayerId}
+          mermaid={layer.diagram.mermaid}
+          kind={layer.diagram.kind}
+        />
+      )}
+
       {warnings.length > 0 && (
         <div className="text-[11px] text-amber-400/80">
           {warnings.length} coverage warning
@@ -241,6 +250,30 @@ export const SemanticLayerBar = memo(function SemanticLayerBar() {
     </div>
   );
 });
+
+/** Collapsed-by-default diagram; mermaid only loads when first expanded. */
+function LayerDiagram({ mermaid, kind }: { mermaid: string; kind: string }) {
+  const [open, setOpen] = useState(false);
+
+  // Collapse again when the layer changes (component is keyed by layer).
+  useEffect(() => setOpen(false), [mermaid]);
+
+  return (
+    <div>
+      <button
+        onClick={() => setOpen(!open)}
+        className="text-[11px] text-violet-400 hover:underline"
+      >
+        {open ? "Hide" : "Show"} {kind} diagram
+      </button>
+      {open && (
+        <div className="mt-1.5 max-h-[320px] overflow-y-auto themed-scrollbar rounded-md bg-background/60 p-2">
+          <MermaidDiagram source={mermaid} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 function RangeChips({
   layer,

@@ -13,6 +13,9 @@ async function build() {
     plugins: [tailwind],
     target: "browser",
     format: "esm",
+    // Keep dynamic imports (e.g. mermaid for semantic review diagrams) out
+    // of the main bundle.
+    splitting: true,
   });
 
   if (!mainResult.success) {
