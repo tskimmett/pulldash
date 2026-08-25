@@ -75,12 +75,12 @@ export const SemanticSidebar = memo(function SemanticSidebar({
 
       {/* Header */}
       <div className="px-3 pt-3 pb-2 border-b border-border">
-        <div className="flex items-center gap-1.5 text-sm font-medium text-violet-400">
+        <div className="flex items-center gap-1.5 text-sm font-medium text-violet-600 dark:text-violet-400">
           <Layers className="w-4 h-4" />
           Semantic review
         </div>
         {stale && (
-          <div className="mt-2 flex items-start gap-1.5 text-xs text-amber-400 bg-amber-500/10 rounded-md px-2 py-1.5">
+          <div className="mt-2 flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400 bg-amber-500/10 rounded-md px-2 py-1.5">
             <TriangleAlert className="w-3.5 h-3.5 shrink-0 mt-0.5" />
             <span>
               Out of date — the PR has new commits. Re-run from the header
@@ -170,7 +170,7 @@ export const SemanticSidebar = memo(function SemanticSidebar({
         </span>
         <button
           onClick={() => store.setViewMode("files")}
-          className="text-violet-400 hover:underline"
+          className="text-violet-600 dark:text-violet-400 hover:underline"
         >
           Files view
         </button>
@@ -213,7 +213,7 @@ export const SemanticLayerBar = memo(function SemanticLayerBar() {
           className={cn(
             "flex items-center gap-1 px-2 py-0.5 text-xs rounded-md transition-colors shrink-0",
             isReviewed
-              ? "bg-green-600/20 text-green-400 hover:bg-green-600/30"
+              ? "bg-green-600/20 text-green-600 dark:text-green-400 hover:bg-green-600/30"
               : "bg-muted text-muted-foreground hover:bg-muted/70"
           )}
           title="Mark layer reviewed (V)"
@@ -241,7 +241,7 @@ export const SemanticLayerBar = memo(function SemanticLayerBar() {
       )}
 
       {warnings.length > 0 && (
-        <div className="text-[11px] text-amber-400/80">
+        <div className="text-[11px] text-amber-600 dark:text-amber-400/80">
           {warnings.length} coverage warning
           {warnings.length !== 1 ? "s" : ""} from analysis (see "Uncovered
           changes" cohort)
@@ -262,7 +262,7 @@ function LayerDiagram({ mermaid, kind }: { mermaid: string; kind: string }) {
     <div>
       <button
         onClick={() => setOpen(!open)}
-        className="text-[11px] text-violet-400 hover:underline"
+        className="text-[11px] text-violet-600 dark:text-violet-400 hover:underline"
       >
         {open ? "Hide" : "Show"} {kind} diagram
       </button>

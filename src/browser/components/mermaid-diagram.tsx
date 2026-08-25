@@ -1,21 +1,26 @@
 import { memo, useEffect, useRef, useState } from "react";
+import { useResolvedTheme } from "../lib/theme";
 
-let mermaidInit: Promise<typeof import("mermaid").default> | null = null;
+let mermaidModule: Promise<typeof import("mermaid").default> | null = null;
 
-/** Lazy-load and initialize mermaid once (heavy dependency, ~1MB). */
-function loadMermaid() {
-  if (!mermaidInit) {
-    mermaidInit = import("mermaid").then((m) => {
-      m.default.initialize({
-        startOnLoad: false,
-        theme: "dark",
-        securityLevel: "strict",
-        fontFamily: "inherit",
-      });
-      return m.default;
-    });
+/**
+ * Lazy-load mermaid once (heavy dependency, ~1MB). `initialize` is re-run per
+ * load so the diagram palette follows the active theme — mermaid bakes colors
+ * into the rendered SVG, so the theme has to be set before every render.
+ */
+function loadMermaid(theme: "light" | "dark") {
+  if (!mermaidModule) {
+    mermaidModule = import("mermaid").then((m) => m.default);
   }
-  return mermaidInit;
+  return mermaidModule.then((mermaid) => {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: theme === "dark" ? "dark" : "default",
+      securityLevel: "strict",
+      fontFamily: "inherit",
+    });
+    return mermaid;
+  });
 }
 
 let diagramCounter = 0;
@@ -35,11 +40,12 @@ export const MermaidDiagram = memo(function MermaidDiagram({
 }: MermaidDiagramProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState(false);
+  const theme = useResolvedTheme();
 
   useEffect(() => {
     let cancelled = false;
     setError(false);
-    loadMermaid()
+    loadMermaid(theme)
       .then(async (mermaid) => {
         const id = `semantic-diagram-${diagramCounter++}`;
         const { svg } = await mermaid.render(id, source);
@@ -53,7 +59,7 @@ export const MermaidDiagram = memo(function MermaidDiagram({
     return () => {
       cancelled = true;
     };
-  }, [source]);
+  }, [source, theme]);
 
   if (error) {
     return (

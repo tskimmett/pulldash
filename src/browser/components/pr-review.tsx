@@ -579,7 +579,7 @@ const FilePanel = memo(function FilePanel({
                 className={cn(
                   "p-1.5 rounded-md border border-border transition-colors",
                   hideViewed
-                    ? "bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border-blue-500/30"
+                    ? "bg-blue-500/20 text-blue-600 dark:text-blue-400 hover:bg-blue-500/30 border-blue-500/30"
                     : "text-muted-foreground bg-muted/50 hover:bg-muted"
                 )}
               >
@@ -602,7 +602,7 @@ const FilePanel = memo(function FilePanel({
                   className={cn(
                     "p-1.5 rounded-md border border-border transition-colors",
                     hideTestFiles
-                      ? "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 border-amber-500/30"
+                      ? "bg-amber-500/20 text-amber-600 dark:text-amber-400 hover:bg-amber-500/30 border-amber-500/30"
                       : "text-muted-foreground bg-muted/50 hover:bg-muted"
                   )}
                 >
@@ -824,20 +824,20 @@ const KeybindsBar = memo(function KeybindsBar() {
           {gotoLineMode ? (
             <>
               <span className="flex items-center gap-2">
-                <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
+                <span className="px-2 py-0.5 bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded text-xs font-medium">
                   GOTO
                 </span>
                 <span
                   className={cn(
                     "px-1.5 py-0.5 rounded text-xs font-medium",
                     gotoLineSide === "new"
-                      ? "bg-green-500/20 text-green-400"
-                      : "bg-orange-500/20 text-orange-400"
+                      ? "bg-green-500/20 text-green-600 dark:text-green-400"
+                      : "bg-orange-500/20 text-orange-600 dark:text-orange-400"
                   )}
                 >
                   {gotoLineSide === "new" ? "new" : "old"}
                 </span>
-                <span className="font-mono text-blue-400">
+                <span className="font-mono text-blue-600 dark:text-blue-400">
                   {gotoLineInput || "..."}
                 </span>
               </span>
@@ -850,10 +850,10 @@ const KeybindsBar = memo(function KeybindsBar() {
             </>
           ) : commentingOnLine ? (
             <>
-              <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs font-medium">
+              <span className="px-2 py-0.5 bg-green-500/20 text-green-600 dark:text-green-400 rounded text-xs font-medium">
                 COMMENT
               </span>
-              <span className="font-mono text-green-400">
+              <span className="font-mono text-green-600 dark:text-green-400">
                 L
                 {commentingOnLine.startLine
                   ? `${commentingOnLine.startLine}-`
@@ -866,7 +866,7 @@ const KeybindsBar = memo(function KeybindsBar() {
             </>
           ) : focusedPendingCommentId ? (
             <>
-              <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs font-medium">
+              <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 rounded text-xs font-medium">
                 PENDING
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -881,7 +881,7 @@ const KeybindsBar = memo(function KeybindsBar() {
             </>
           ) : focusedCommentId ? (
             <>
-              <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs font-medium">
+              <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 rounded text-xs font-medium">
                 COMMENT
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -899,7 +899,7 @@ const KeybindsBar = memo(function KeybindsBar() {
             </>
           ) : focusedSkipBlockIndex !== null ? (
             <>
-              <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
+              <span className="px-2 py-0.5 bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded text-xs font-medium">
                 EXPAND
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -911,7 +911,7 @@ const KeybindsBar = memo(function KeybindsBar() {
             </>
           ) : focusedLine ? (
             <>
-              <span className="font-mono text-blue-400">
+              <span className="font-mono text-blue-600 dark:text-blue-400">
                 {selectionAnchor
                   ? `L${Math.min(focusedLine, selectionAnchor)}-${Math.max(focusedLine, selectionAnchor)}`
                   : `L${focusedLine}`}
@@ -956,7 +956,7 @@ const KeybindsBar = memo(function KeybindsBar() {
         </div>
         <div className="flex items-center gap-3">
           {pendingCommentsCount > 0 && (
-            <span className="text-yellow-400 text-xs">
+            <span className="text-yellow-600 dark:text-yellow-400 text-xs">
               {pendingCommentsCount} pending comment
               {pendingCommentsCount !== 1 ? "s" : ""}
             </span>
@@ -2004,13 +2004,13 @@ const DiffLineRow = memo(function DiffLineRow({
 
     // Selection highlighting is now CSS-based via data-selected attribute
     if (isInCommentingRange) {
-      bgColor = "#19273e"; // opaque blue for commenting range
+      bgColor = "var(--diff-line-comment-range-bg)";
     } else if (line.type === "insert") {
-      bgColor = "#122218"; // opaque green
+      bgColor = "var(--diff-line-insert-bg)";
     } else if (line.type === "delete") {
-      bgColor = "#261710"; // opaque orange
+      bgColor = "var(--diff-line-delete-bg)";
     } else if (hasCommentRange) {
-      bgColor = "#1b1810"; // opaque yellow
+      bgColor = "var(--diff-line-has-comment-bg)";
     }
 
     const result: React.CSSProperties = {};
@@ -2082,9 +2082,9 @@ const DiffLineRow = memo(function DiffLineRow({
                 key={i}
                 className={cn(
                   seg.type === "insert" &&
-                    "bg-[var(--code-added)]/20 text-green-400",
+                    "bg-[var(--code-added)]/20 text-green-600 dark:text-green-400",
                   seg.type === "delete" &&
-                    "bg-[var(--code-removed)]/20 text-orange-400 line-through decoration-orange-500/50",
+                    "bg-[var(--code-removed)]/20 text-orange-600 dark:text-orange-400 line-through decoration-orange-500/50",
                   // Extra emphasis for tiny changes
                   isTinyChange &&
                     seg.type === "insert" &&
@@ -2208,13 +2208,13 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
 
     let bgColor: string | undefined;
     if (isInCommentingRange) {
-      bgColor = "#19273e";
+      bgColor = "var(--diff-line-comment-range-bg)";
     } else if (isInsert) {
-      bgColor = "#122218";
+      bgColor = "var(--diff-line-insert-bg)";
     } else if (isDelete) {
-      bgColor = "#261710";
+      bgColor = "var(--diff-line-delete-bg)";
     } else if (hasCommentRange) {
-      bgColor = "#1b1810";
+      bgColor = "var(--diff-line-has-comment-bg)";
     }
 
     const bgStyle: React.CSSProperties = bgColor
@@ -2270,9 +2270,10 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
                 <span
                   key={i}
                   className={cn(
-                    showInsert && "bg-[var(--code-added)]/20 text-green-400",
+                    showInsert &&
+                      "bg-[var(--code-added)]/20 text-green-600 dark:text-green-400",
                     showDelete &&
-                      "bg-[var(--code-removed)]/20 text-orange-400 line-through decoration-orange-500/50",
+                      "bg-[var(--code-removed)]/20 text-orange-600 dark:text-orange-400 line-through decoration-orange-500/50",
                     isTinyChange &&
                       showInsert &&
                       "bg-[var(--code-added)]/40 font-semibold",
@@ -2380,7 +2381,7 @@ const SkipBlockRow = memo(function SkipBlockRow({
           </span>
         )}
         {!isExpanding && isFocused && (
-          <span className="ml-2 text-xs text-blue-400 opacity-70">
+          <span className="ml-2 text-xs text-blue-600 dark:text-blue-400 opacity-70">
             Press Enter to expand
           </span>
         )}
@@ -2447,7 +2448,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
       <div className="mx-4 my-3 rounded-lg border border-amber-500/30 bg-amber-500/5 overflow-hidden shadow-sm">
         <div className="flex items-center justify-between px-4 py-3 border-b border-amber-500/20">
           <div className="flex items-center gap-2.5 text-sm font-medium text-amber-200">
-            <MessageSquare className="w-4 h-4 text-amber-400" />
+            <MessageSquare className="w-4 h-4 text-amber-600 dark:text-amber-400" />
             <span>Comment on {lineLabel}</span>
           </div>
           <button
@@ -3229,7 +3230,7 @@ function EmojiReactions({
                   className={cn(
                     "inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border transition-colors",
                     isUserReaction
-                      ? "bg-blue-500/20 border-blue-500/50 text-blue-400"
+                      ? "bg-blue-500/20 border-blue-500/50 text-blue-600 dark:text-blue-400"
                       : "bg-muted/50 border-border hover:border-blue-500/50"
                   )}
                 >
@@ -3675,7 +3676,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
                 <label className="flex items-start gap-3 cursor-pointer group">
                   <RadioGroupItem value="APPROVE" className="mt-0.5" />
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-medium text-sm text-green-400">
+                    <span className="font-medium text-sm text-green-600 dark:text-green-400">
                       Approve
                     </span>
                     <span className="text-xs text-muted-foreground">
@@ -3687,7 +3688,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
                 <label className="flex items-start gap-3 cursor-pointer group">
                   <RadioGroupItem value="REQUEST_CHANGES" className="mt-0.5" />
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-medium text-sm text-amber-400">
+                    <span className="font-medium text-sm text-amber-600 dark:text-amber-400">
                       Request changes
                     </span>
                     <span className="text-xs text-muted-foreground">
@@ -3750,9 +3751,9 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
             className={cn(
               "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-50",
               reviewType === "APPROVE" &&
-                "bg-green-500/20 text-green-400 hover:bg-green-500/30 border border-green-500/30",
+                "bg-green-500/20 text-green-600 dark:text-green-400 hover:bg-green-500/30 border border-green-500/30",
               reviewType === "REQUEST_CHANGES" &&
-                "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 border border-amber-500/30",
+                "bg-amber-500/20 text-amber-600 dark:text-amber-400 hover:bg-amber-500/30 border border-amber-500/30",
               reviewType === "COMMENT" &&
                 "bg-primary text-primary-foreground hover:bg-primary/90"
             )}

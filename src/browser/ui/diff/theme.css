@@ -906,13 +906,8 @@
 }
 
 tr[data-comment-highlight="true"] {
-  @apply !bg-[var(--color-yellow)]/20;
+  background-color: var(--diff-comment-highlight-bg) !important;
   transition: background-color 150ms ease;
-}
-
-.dark tr[data-comment-highlight="true"] {
-  @apply !bg-[var(--color-yellow)]/20;
-  background-color: rgba(188, 133, 255, 0.22);
 }
 
 tr[data-comment-draft="true"] {

@@ -45,7 +45,7 @@ export const SemanticReviewButton = memo(function SemanticReviewButton() {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
-            className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md bg-violet-600/20 text-violet-400 hover:bg-violet-600/30 transition-colors max-w-[220px]"
+            className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md bg-violet-600/20 text-violet-600 dark:text-violet-400 hover:bg-violet-600/30 transition-colors max-w-[220px]"
             title={latest ?? "Analyzing…"}
           >
             <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
@@ -100,7 +100,7 @@ export const SemanticReviewButton = memo(function SemanticReviewButton() {
             "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-l-md transition-colors",
             semanticActive
               ? "bg-violet-600 text-white hover:bg-violet-700"
-              : "bg-violet-600/20 text-violet-400 hover:bg-violet-600/30"
+              : "bg-violet-600/20 text-violet-600 dark:text-violet-400 hover:bg-violet-600/30"
           )}
           title={
             semanticActive
@@ -118,7 +118,7 @@ export const SemanticReviewButton = memo(function SemanticReviewButton() {
                 "px-1 py-1 text-xs rounded-r-md border-l transition-colors",
                 semanticActive
                   ? "bg-violet-600 text-white hover:bg-violet-700 border-violet-500"
-                  : "bg-violet-600/20 text-violet-400 hover:bg-violet-600/30 border-violet-600/30"
+                  : "bg-violet-600/20 text-violet-600 dark:text-violet-400 hover:bg-violet-600/30 border-violet-600/30"
               )}
               title="Semantic review options"
             >
@@ -153,8 +153,8 @@ export const SemanticReviewButton = memo(function SemanticReviewButton() {
           className={cn(
             "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md transition-colors",
             status === "error"
-              ? "bg-red-600/20 text-red-400 hover:bg-red-600/30"
-              : "bg-violet-600/20 text-violet-400 hover:bg-violet-600/30"
+              ? "bg-red-600/20 text-red-600 dark:text-red-400 hover:bg-red-600/30"
+              : "bg-violet-600/20 text-violet-600 dark:text-violet-400 hover:bg-violet-600/30"
           )}
           title={
             status === "error"
@@ -173,7 +173,7 @@ export const SemanticReviewButton = memo(function SemanticReviewButton() {
       <DropdownMenuContent align="end" className="w-[280px]">
         {status === "error" && (
           <>
-            <div className="px-2 py-1.5 text-xs text-red-400 break-words">
+            <div className="px-2 py-1.5 text-xs text-red-600 dark:text-red-400 break-words">
               {error ?? "Analysis failed"}
             </div>
             <DropdownMenuSeparator />

@@ -18,6 +18,7 @@ import {
 import { Home } from "./home";
 import { PRReviewContent } from "./pr-review";
 import { UserMenuButton } from "./welcome-dialog";
+import { ThemeToggle } from "./theme-toggle";
 import { useAuth } from "../contexts/auth";
 import {
   HoverCard,
@@ -122,7 +123,7 @@ export function AppShell() {
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
       {/* Native-style Tab Bar */}
-      <div className="h-9 bg-[#1a1a1a] flex items-center shrink-0 border-b border-border/50 app-drag-region">
+      <div className="h-9 bg-muted/40 dark:bg-[#1a1a1a] flex items-center shrink-0 border-b border-border/50 app-drag-region">
         {/* Logo with tooltip */}
         <div className="h-full flex items-center gap-1.5 px-3 shrink-0 app-no-drag">
           <HoverCard openDelay={200} closeDelay={100}>
@@ -187,12 +188,13 @@ export function AppShell() {
               href="https://github.com/coder/pulldash"
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-white/5 transition-colors"
+              className="flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
               title="View on GitHub"
             >
               <Github className="w-4 h-4" />
             </a>
           )}
+          <ThemeToggle />
           <UserMenuButton />
         </div>
       </div>
@@ -276,7 +278,7 @@ function TabItem({ tab, isActive, onSelect, onClose }: TabItemProps) {
         "group flex items-center gap-1.5 h-7 px-2.5 text-xs font-medium rounded-md transition-colors shrink-0 max-w-[180px] cursor-pointer",
         isActive
           ? "bg-background text-foreground"
-          : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+          : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
       )}
     >
       {isHome ? (
@@ -301,7 +303,7 @@ function TabItem({ tab, isActive, onSelect, onClose }: TabItemProps) {
         <button
           onClick={handleClose}
           className={cn(
-            "p-0.5 rounded hover:bg-white/10 transition-opacity shrink-0",
+            "p-0.5 rounded hover:bg-foreground/10 transition-opacity shrink-0",
             isActive
               ? "opacity-60 hover:opacity-100"
               : "opacity-0 group-hover:opacity-60 hover:!opacity-100"
@@ -393,7 +395,7 @@ function PRUrlInput() {
           value={prUrl}
           onChange={(e) => setPrUrl(e.target.value)}
           placeholder="PR URL..."
-          className="w-full h-6 pl-6 pr-2 rounded-md border border-border/50 bg-white/5 text-[11px] placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring focus:border-transparent font-mono"
+          className="w-full h-6 pl-6 pr-2 rounded-md border border-border/50 bg-foreground/5 text-[11px] placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring focus:border-transparent font-mono"
         />
         <GitPullRequest className="absolute left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground/50" />
       </div>

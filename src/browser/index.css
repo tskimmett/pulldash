@@ -103,6 +103,77 @@
 
 :root {
   --radius: 0.625rem;
+
+  /* ---- Light theme (default) ---- */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+
+  /* Scrollbar colors */
+  --scrollbar-track: oklch(0.96 0 0);
+  --scrollbar-thumb: oklch(0.82 0 0);
+  --scrollbar-thumb-hover: oklch(0.72 0 0);
+
+  /* Markdown surfaces + link color */
+  --md-link: oklch(0.52 0.19 250);
+  --md-code-bg: oklch(0.95 0.005 260 / 90%);
+  --md-pre-bg: oklch(0.97 0.005 260 / 90%);
+  --md-pre-border: oklch(0 0 0 / 10%);
+  --md-table-header-bg: oklch(0.96 0 0);
+  --md-table-stripe-bg: oklch(0.975 0 0 / 60%);
+
+  /* Diff line selection */
+  --diff-selection-bg: oklch(0.93 0.04 250);
+  --diff-selection-ring: rgb(37, 99, 235);
+
+  /* Diff line backgrounds (used as inline styles from pr-review.tsx) */
+  --diff-line-comment-range-bg: oklch(0.93 0.04 250);
+  --diff-line-insert-bg: oklch(0.94 0.06 150);
+  --diff-line-delete-bg: oklch(0.94 0.05 25);
+  --diff-line-has-comment-bg: oklch(0.95 0.06 90);
+  --diff-comment-highlight-bg: rgba(147, 51, 234, 0.14);
+
+  /* Markdown syntax highlighting (GitHub Light) */
+  --hljs-fg: #24292f;
+  --hljs-comment: #6e7781;
+  --hljs-keyword: #cf222e;
+  --hljs-string: #0a3069;
+  --hljs-title: #8250df;
+  --hljs-attr: #0550ae;
+  --hljs-symbol: #953800;
+  --hljs-builtin: #82071e;
+
+  --font-sans:
+    "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
+    Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  --font-mono: "Geist Mono", "Fira Code", "Fira Mono", ui-monospace, monospace;
+}
+
+.dark {
+  /* ---- Dark theme ---- */
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -135,10 +206,17 @@
   --scrollbar-thumb: oklch(0.35 0 0);
   --scrollbar-thumb-hover: oklch(0.45 0 0);
 
-  --font-sans:
-    "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans",
-    Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-  --font-mono: "Geist Mono", "Fira Code", "Fira Mono", ui-monospace, monospace;
+  /* Markdown surfaces + link color */
+  --md-link: oklch(0.65 0.2 250);
+  --md-code-bg: oklch(0.22 0.01 260 / 80%);
+  --md-pre-bg: oklch(0.18 0.01 260 / 60%);
+  --md-pre-border: oklch(1 0 0 / 8%);
+  --md-table-header-bg: oklch(0.2 0 0);
+  --md-table-stripe-bg: oklch(0.18 0 0 / 50%);
+
+  /* Diff line selection */
+  --diff-selection-bg: #19273e;
+  --diff-selection-ring: var(--diff-selection-ring);
 }
 
 @layer base {
@@ -240,60 +318,66 @@
 /* CSS-based diff line selection - avoids per-row React re-renders */
 /* Unified view selection */
 .diff-line-row[data-selected="true"] {
-  background: linear-gradient(#19273e, #19273e) !important;
+  background: linear-gradient(
+    var(--diff-selection-bg),
+    var(--diff-selection-bg)
+  ) !important;
   background-size: 100% calc(100% + 2px) !important;
   background-repeat: no-repeat !important;
   box-shadow:
-    inset 2px 0 0 rgb(59, 130, 246),
-    inset -2px 0 0 rgb(59, 130, 246);
+    inset 2px 0 0 var(--diff-selection-ring),
+    inset -2px 0 0 var(--diff-selection-ring);
 }
 .diff-line-row[data-sel-first="true"] {
   box-shadow:
-    inset 2px 0 0 rgb(59, 130, 246),
-    inset -2px 0 0 rgb(59, 130, 246),
-    inset 0 2px 0 rgb(59, 130, 246) !important;
+    inset 2px 0 0 var(--diff-selection-ring),
+    inset -2px 0 0 var(--diff-selection-ring),
+    inset 0 2px 0 var(--diff-selection-ring) !important;
 }
 .diff-line-row[data-sel-last="true"] {
   box-shadow:
-    inset 2px 0 0 rgb(59, 130, 246),
-    inset -2px 0 0 rgb(59, 130, 246),
-    inset 0 -2px 0 rgb(59, 130, 246) !important;
+    inset 2px 0 0 var(--diff-selection-ring),
+    inset -2px 0 0 var(--diff-selection-ring),
+    inset 0 -2px 0 var(--diff-selection-ring) !important;
 }
 .diff-line-row[data-sel-first="true"][data-sel-last="true"] {
   box-shadow:
-    inset 2px 0 0 rgb(59, 130, 246),
-    inset -2px 0 0 rgb(59, 130, 246),
-    inset 0 2px 0 rgb(59, 130, 246),
-    inset 0 -2px 0 rgb(59, 130, 246) !important;
+    inset 2px 0 0 var(--diff-selection-ring),
+    inset -2px 0 0 var(--diff-selection-ring),
+    inset 0 2px 0 var(--diff-selection-ring),
+    inset 0 -2px 0 var(--diff-selection-ring) !important;
 }
 
 /* Split view selection */
 .split-diff-side[data-selected="true"] {
-  background: linear-gradient(#19273e, #19273e) !important;
+  background: linear-gradient(
+    var(--diff-selection-bg),
+    var(--diff-selection-bg)
+  ) !important;
   background-size: 100% calc(100% + 2px) !important;
   background-repeat: no-repeat !important;
   box-shadow:
-    inset 2px 0 0 rgb(59, 130, 246),
-    inset -2px 0 0 rgb(59, 130, 246);
+    inset 2px 0 0 var(--diff-selection-ring),
+    inset -2px 0 0 var(--diff-selection-ring);
 }
 .split-diff-side[data-sel-first="true"] {
   box-shadow:
-    inset 2px 0 0 rgb(59, 130, 246),
-    inset -2px 0 0 rgb(59, 130, 246),
-    inset 0 2px 0 rgb(59, 130, 246) !important;
+    inset 2px 0 0 var(--diff-selection-ring),
+    inset -2px 0 0 var(--diff-selection-ring),
+    inset 0 2px 0 var(--diff-selection-ring) !important;
 }
 .split-diff-side[data-sel-last="true"] {
   box-shadow:
-    inset 2px 0 0 rgb(59, 130, 246),
-    inset -2px 0 0 rgb(59, 130, 246),
-    inset 0 -2px 0 rgb(59, 130, 246) !important;
+    inset 2px 0 0 var(--diff-selection-ring),
+    inset -2px 0 0 var(--diff-selection-ring),
+    inset 0 -2px 0 var(--diff-selection-ring) !important;
 }
 .split-diff-side[data-sel-first="true"][data-sel-last="true"] {
   box-shadow:
-    inset 2px 0 0 rgb(59, 130, 246),
-    inset -2px 0 0 rgb(59, 130, 246),
-    inset 0 2px 0 rgb(59, 130, 246),
-    inset 0 -2px 0 rgb(59, 130, 246) !important;
+    inset 2px 0 0 var(--diff-selection-ring),
+    inset -2px 0 0 var(--diff-selection-ring),
+    inset 0 2px 0 var(--diff-selection-ring),
+    inset 0 -2px 0 var(--diff-selection-ring) !important;
 }
 
 /* ============================================================================
@@ -363,7 +447,7 @@
 
 /* Links */
 .markdown-body a {
-  color: oklch(0.65 0.2 250);
+  color: var(--md-link);
   text-decoration: none;
 }
 
@@ -439,7 +523,7 @@
   font-size: 0.85em;
   padding: 0.2em 0.4em;
   margin: 0;
-  background-color: oklch(0.22 0.01 260 / 80%);
+  background-color: var(--md-code-bg);
   border-radius: 4px;
 }
 
@@ -450,9 +534,9 @@
   overflow: auto;
   font-size: 0.85em;
   line-height: 1.45;
-  background-color: oklch(0.18 0.01 260 / 60%);
+  background-color: var(--md-pre-bg);
   border-radius: 6px;
-  border: 1px solid oklch(1 0 0 / 8%);
+  border: 1px solid var(--md-pre-border);
 }
 
 .markdown-body pre code,
@@ -487,11 +571,11 @@
 
 .markdown-body table th {
   font-weight: 600;
-  background-color: oklch(0.2 0 0);
+  background-color: var(--md-table-header-bg);
 }
 
 .markdown-body table tr:nth-child(2n) {
-  background-color: oklch(0.18 0 0 / 50%);
+  background-color: var(--md-table-stripe-bg);
 }
 
 /* Horizontal rules */
@@ -523,22 +607,22 @@
   font-style: italic;
 }
 
-/* Syntax highlighting - GitHub dark theme */
+/* Syntax highlighting - GitHub theme (light + dark via tokens) */
 .markdown-body .hljs {
-  color: #c9d1d9;
+  color: var(--hljs-fg);
   background: transparent;
 }
 
 .markdown-body .hljs-comment,
 .markdown-body .hljs-quote {
-  color: #8b949e;
+  color: var(--hljs-comment);
   font-style: italic;
 }
 
 .markdown-body .hljs-keyword,
 .markdown-body .hljs-selector-tag,
 .markdown-body .hljs-addition {
-  color: #ff7b72;
+  color: var(--hljs-keyword);
 }
 
 .markdown-body .hljs-number,
@@ -547,7 +631,7 @@
 .markdown-body .hljs-literal,
 .markdown-body .hljs-doctag,
 .markdown-body .hljs-regexp {
-  color: #a5d6ff;
+  color: var(--hljs-string);
 }
 
 .markdown-body .hljs-title,
@@ -555,7 +639,7 @@
 .markdown-body .hljs-name,
 .markdown-body .hljs-selector-id,
 .markdown-body .hljs-selector-class {
-  color: #d2a8ff;
+  color: var(--hljs-title);
 }
 
 .markdown-body .hljs-attribute,
@@ -564,7 +648,7 @@
 .markdown-body .hljs-template-variable,
 .markdown-body .hljs-class .hljs-title,
 .markdown-body .hljs-type {
-  color: #79c0ff;
+  color: var(--hljs-attr);
 }
 
 .markdown-body .hljs-symbol,
@@ -575,16 +659,16 @@
 .markdown-body .hljs-selector-attr,
 .markdown-body .hljs-selector-pseudo,
 .markdown-body .hljs-link {
-  color: #ffa657;
+  color: var(--hljs-symbol);
 }
 
 .markdown-body .hljs-built_in,
 .markdown-body .hljs-deletion {
-  color: #ffa198;
+  color: var(--hljs-builtin);
 }
 
 .markdown-body .hljs-formula {
-  background-color: oklch(0.25 0 0);
+  background-color: var(--md-code-bg);
 }
 
 .markdown-body .hljs-emphasis {
