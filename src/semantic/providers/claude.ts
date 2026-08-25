@@ -88,6 +88,19 @@ export const claudeProvider: SemanticProvider = {
     if (!output) {
       throw new Error("Claude agent produced no output");
     }
+    if (isAuthError(output)) {
+      throw new Error(
+        "Claude Code login has expired \u2014 run `claude login` in a terminal, then retry the analysis"
+      );
+    }
     return output;
   },
 };
+
+// The Agent SDK reports auth failures as a result message rather than a
+// thrown error; detect them so the UI shows an actionable message.
+function isAuthError(output: string): boolean {
+  return /failed to authenticate|oauth session expired|please run \/login|invalid api key/i.test(
+    output
+  );
+}
