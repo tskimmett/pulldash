@@ -452,7 +452,7 @@ function emitChangeBlock(
 
   try {
     const result = linesDiffComputer.computeDiff(delLines, addLines, {
-      ignoreTrimWhitespace: false,
+      ignoreTrimWhitespace: true,
       computeMoves: false,
       maxComputationTimeMs: 500,
     });
