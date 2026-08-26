@@ -2256,7 +2256,7 @@ const DiffLineRow = memo(function DiffLineRow({
                   seg.type === "insert" &&
                     "bg-[var(--code-added)]/20 text-green-600 dark:text-green-400",
                   seg.type === "delete" &&
-                    "bg-[var(--code-removed)]/20 text-orange-600 dark:text-orange-400 line-through decoration-orange-500/50",
+                    "bg-[var(--code-removed)]/20 text-orange-600 dark:text-orange-400",
                   // Extra emphasis for tiny changes
                   isTinyChange &&
                     seg.type === "insert" &&
@@ -2445,7 +2445,7 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
                     showInsert &&
                       "bg-[var(--code-added)]/20 text-green-600 dark:text-green-400",
                     showDelete &&
-                      "bg-[var(--code-removed)]/20 text-orange-600 dark:text-orange-400 line-through decoration-orange-500/50",
+                      "bg-[var(--code-removed)]/20 text-orange-600 dark:text-orange-400",
                     isTinyChange &&
                       showInsert &&
                       "bg-[var(--code-added)]/40 font-semibold",
