@@ -174,6 +174,10 @@
 
 .dark {
   /* ---- Dark theme ---- */
+  --diff-line-comment-range-bg: #19273e;
+  --diff-line-insert-bg: #122218;
+  --diff-line-delete-bg: #261710;
+  --diff-line-has-comment-bg: #1b1810;
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);

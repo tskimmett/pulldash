@@ -105,7 +105,7 @@ export const SemanticSidebar = memo(function SemanticSidebar({
         {review.cohorts.map((cohort) => (
           <div key={cohort.id} className="mb-1">
             <div
-              className="px-3 py-1.5 text-xs font-semibold text-foreground/90"
+              className="px-3 py-1.5 text-[13px] font-semibold text-foreground/90"
               title={cohort.summary}
             >
               {cohort.title}
@@ -122,7 +122,7 @@ export const SemanticSidebar = memo(function SemanticSidebar({
                     onLayerSelect?.();
                   }}
                   className={cn(
-                    "w-full flex items-start gap-2 pl-4 pr-2 py-1.5 text-left text-xs transition-colors",
+                    "w-full flex items-start gap-2 pl-4 pr-2 py-1.5 text-left text-[13px] transition-colors",
                     isSelected
                       ? "bg-violet-600/20 text-foreground"
                       : "hover:bg-muted/50",
@@ -153,7 +153,7 @@ export const SemanticSidebar = memo(function SemanticSidebar({
                     >
                       {layer.title}
                     </span>
-                    <span className="block text-muted-foreground truncate">
+                    <span className="block text-xs text-muted-foreground truncate">
                       {layer.ranges.length} range
                       {layer.ranges.length !== 1 ? "s" : ""}
                       {" · "}
@@ -313,10 +313,10 @@ function RangeChips({
               key={`${file}:${i}`}
               onClick={() => store.jumpToSemanticRange(range)}
               className={cn(
-                "flex items-center gap-1 px-1.5 py-0.5 text-[11px] rounded font-mono transition-colors",
+                "flex items-center gap-1 px-1.5 py-0.5 text-xs rounded font-mono transition-colors",
                 isCurrent
-                  ? "bg-violet-600/30 text-violet-300"
-                  : "bg-muted/60 text-muted-foreground hover:bg-muted"
+                  ? "bg-violet-600 text-white dark:bg-violet-500/40 dark:text-violet-100"
+                  : "bg-muted text-foreground/80 border border-border/60 hover:bg-accent hover:text-foreground"
               )}
               title={
                 range.summary ?? `${file} L${range.startLine}-${range.endLine}`
