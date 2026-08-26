@@ -7,6 +7,7 @@ import {
   AlignJustify,
   MessagesSquare,
   MessageSquareOff,
+  UnfoldVertical,
 } from "lucide-react";
 import {
   Tooltip,
@@ -119,6 +120,26 @@ export const FileHeader = memo(function FileHeader({
       </div>
 
       <div className="flex items-center gap-2">
+        {/* Expand every collapsed gap in the diff */}
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() =>
+                  window.dispatchEvent(
+                    new CustomEvent("pr-review:expand-all-skip-blocks")
+                  )
+                }
+                aria-label="Expand entire file"
+                className="flex items-center px-2 py-1.5 text-xs rounded-md border border-border bg-muted/30 text-muted-foreground hover:text-foreground transition-colors shrink-0"
+              >
+                <UnfoldVertical className="w-3.5 h-3.5" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>Expand entire file</TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+
         {/* Collapse/expand all inline comments */}
         {onToggleAllComments && (
           <TooltipProvider delayDuration={300}>

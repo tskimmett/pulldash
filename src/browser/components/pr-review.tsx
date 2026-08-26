@@ -1621,15 +1621,42 @@ const DiffViewer = memo(function DiffViewer({
       }
     };
 
+    // Expand every remaining gap in the file (header button). The file
+    // content fetch is cached/deduped, so this only downloads the file once.
+    const handleExpandAll = () => {
+      let currentSkipIndex = 0;
+      for (const hunk of hunks) {
+        if (hunk.type !== "skip") continue;
+        const idx = currentSkipIndex++;
+        const startLine = skipBlockStartLines[idx] ?? 1;
+        const expanded = getExpandedLines(idx);
+        const topCount = expanded?.top.length ?? 0;
+        const remaining =
+          hunk.count - topCount - (expanded?.bottom.length ?? 0);
+        if (remaining > 0) {
+          expandSkipBlock(idx, startLine + topCount, remaining, "all");
+        }
+      }
+    };
+
     window.addEventListener(
       "pr-review:expand-skip-block",
       handleExpandSkipBlock as EventListener
     );
-    return () =>
+    window.addEventListener(
+      "pr-review:expand-all-skip-blocks",
+      handleExpandAll
+    );
+    return () => {
       window.removeEventListener(
         "pr-review:expand-skip-block",
         handleExpandSkipBlock as EventListener
       );
+      window.removeEventListener(
+        "pr-review:expand-all-skip-blocks",
+        handleExpandAll
+      );
+    };
   }, [hunks, skipBlockStartLines, expandSkipBlock, getExpandedLines]);
 
   // Handle mousemove during drag to extend selection even when not directly over line gutters
