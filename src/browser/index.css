@@ -88,8 +88,8 @@
   /* Darken Tailwind's greens one notch in light mode - the defaults are
      too washed out against a white background. Diff line backgrounds use
      their own --diff-* variables and are unaffected. */
-  --color-green-400: oklch(72.3% 0.219 149.579); /* = default green-500 */
-  --color-green-500: oklch(62.7% 0.194 149.214); /* = default green-600 */
+  --color-green-400: oklch(62.7% 0.194 149.214); /* = default green-600 */
+  --color-green-500: oklch(52.7% 0.154 150.069); /* = default green-700 */
 
   /* ---- Light theme (default) ---- */
   --background: oklch(1 0 0);
