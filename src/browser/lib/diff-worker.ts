@@ -10,7 +10,7 @@ import gitDiffParser, {
   DeleteChange,
   InsertChange,
 } from "gitdiff-parser";
-import { diffChars, diffWords } from "diff";
+import { DefaultLinesDiffComputer } from "vscode-diff";
 import { refractor } from "refractor/all";
 
 // ============================================================================
@@ -59,13 +59,6 @@ export interface ParsedDiff {
   gapContext?: Record<number, { top: DiffLine[]; bottom: DiffLine[] }>;
   /** Total line count of the new file, when content was available. */
   totalNewLines?: number;
-}
-
-interface ParseOptions {
-  maxDiffDistance: number;
-  maxChangeRatio: number;
-  mergeModifiedLines: boolean;
-  inlineMaxCharEdits: number;
 }
 
 type ReplaceKey<T, K extends PropertyKey, V> = T extends unknown
@@ -338,274 +331,191 @@ function highlightFileByLines(content: string, lang: string): string[] {
 // Diff Parsing
 // ============================================================================
 
-const calculateChangeRatio = (a: string, b: string): number => {
-  const totalChars = a.length + b.length;
-  if (totalChars === 0) return 1;
-  const tokens = diffWords(a, b);
-  const changedChars = tokens
-    .filter((token) => token.added || token.removed)
-    .reduce((sum, token) => sum + token.value.length, 0);
-  return changedChars / totalChars;
-};
-
 const changeToLine = (change: _Change): Line => ({
   ...change,
   content: [{ value: change.content, type: "normal" }],
 });
 
-function diffCharsIfWithinEditLimit(a: string, b: string, maxEdits = 4) {
-  const diffs = diffChars(a, b);
-  let edits = 0;
-  for (const part of diffs) {
-    if (part.added || part.removed) {
-      edits += part.value.length;
-      if (edits > maxEdits) return { exceededLimit: true };
-    }
-  }
-  return {
-    exceededLimit: false,
-    diffs: diffs.map((d) => ({
-      value: d.value,
-      type: d.added ? "insert" : d.removed ? "delete" : "normal",
-    })) as RawLineSegment[],
-  };
-}
+// VS Code's diff algorithm (DefaultLinesDiffComputer), used to align the
+// delete/insert lines of each change block and compute character-level
+// inner changes - the same output VS Code renders in its diff editor.
+const linesDiffComputer = new DefaultLinesDiffComputer();
 
-const buildInlineDiffSegments = (
-  current: _Change,
-  next: _Change,
-  options: ParseOptions
-): RawLineSegment[] => {
-  const segments: RawLineSegment[] = diffWords(
-    current.content,
-    next.content
-  ).map((token) => ({
-    value: token.value,
-    type: token.added ? "insert" : token.removed ? "delete" : "normal",
-  }));
+/** 0-based line index -> [startColumn, endColumn) pairs (1-based columns). */
+type EmphasisRanges = Map<number, Array<[number, number]>>;
 
-  const result: RawLineSegment[] = [];
-  const mergeIntoResult = (segment: RawLineSegment) => {
-    const last = result[result.length - 1];
-    if (last && last.type === segment.type) {
-      last.value += segment.value;
-    } else {
-      result.push(segment);
-    }
-  };
-
-  for (let i = 0; i < segments.length; i++) {
-    const current = segments[i];
-    const next = segments[i + 1];
-    if (current.type === "delete" && next?.type === "insert") {
-      const charDiff = diffCharsIfWithinEditLimit(
-        current.value,
-        next.value,
-        options.inlineMaxCharEdits
-      );
-      if (!charDiff.exceededLimit) {
-        charDiff.diffs!.forEach(mergeIntoResult);
-        i++;
-      } else {
-        result.push(current);
-      }
-    } else {
-      mergeIntoResult(current);
-    }
-  }
-
-  return result;
-};
-
-const UNPAIRED = -1;
-
-function buildChangeIndices(changes: _Change[]) {
-  const insertIdxs: number[] = [];
-  const deleteIdxs: number[] = [];
-  for (let i = 0; i < changes.length; i++) {
-    const c = changes[i];
-    if (c.type === "insert") insertIdxs.push(i);
-    else if (c.type === "delete") deleteIdxs.push(i);
-  }
-  return { insertIdxs, deleteIdxs };
-}
-
-function findBestInsertForDelete(
-  changes: _Change[],
-  delIdx: number,
-  insertIdxs: number[],
-  pairOfAdd: Int32Array,
-  options: ParseOptions
-): number {
-  const del = changes[delIdx] as DeleteChange;
-  const lower = del.lineNumber - options.maxDiffDistance;
-  const upper = del.lineNumber + options.maxDiffDistance;
-
-  let bestAddIdx = UNPAIRED;
-  let bestRatio = Infinity;
-
-  for (const addIdx of insertIdxs) {
-    const add = changes[addIdx] as InsertChange;
-    if (pairOfAdd[addIdx] !== UNPAIRED) continue;
-    if (add.lineNumber < lower) continue;
-    if (add.lineNumber > upper) break;
-
-    const ratio = calculateChangeRatio(del.content, add.content);
-    if (ratio > options.maxChangeRatio) continue;
-    if (ratio < bestRatio) {
-      bestRatio = ratio;
-      bestAddIdx = addIdx;
-    }
-  }
-
-  return bestAddIdx;
-}
-
-function buildInitialPairs(
-  changes: _Change[],
-  insertIdxs: number[],
-  deleteIdxs: number[],
-  options: ParseOptions
+/** Split a (possibly multi-line) editor Range into per-line column ranges. */
+function collectRangeEmphasis(
+  map: EmphasisRanges,
+  range: {
+    startLineNumber: number;
+    startColumn: number;
+    endLineNumber: number;
+    endColumn: number;
+  },
+  lines: string[]
 ) {
-  const n = changes.length;
-  const pairOfDel = new Int32Array(n).fill(UNPAIRED);
-  const pairOfAdd = new Int32Array(n).fill(UNPAIRED);
+  for (let ln = range.startLineNumber; ln <= range.endLineNumber; ln++) {
+    const idx = ln - 1;
+    if (idx < 0 || idx >= lines.length) continue;
+    const start = ln === range.startLineNumber ? range.startColumn : 1;
+    const end =
+      ln === range.endLineNumber ? range.endColumn : lines[idx].length + 1;
+    if (end <= start) continue;
+    const existing = map.get(idx);
+    if (existing) {
+      existing.push([start, end]);
+    } else {
+      map.set(idx, [[start, end]]);
+    }
+  }
+}
 
-  for (const di of deleteIdxs) {
-    const bestAddIdx = findBestInsertForDelete(
-      changes,
-      di,
-      insertIdxs,
-      pairOfAdd,
-      options
-    );
-    if (bestAddIdx !== UNPAIRED) {
-      pairOfDel[di] = bestAddIdx;
-      pairOfAdd[bestAddIdx] = di;
+/** Turn a line plus its emphasis column ranges into render segments. */
+function buildSegments(
+  content: string,
+  ranges: Array<[number, number]> | undefined,
+  emphType: "insert" | "delete"
+): RawLineSegment[] {
+  if (!ranges || ranges.length === 0) {
+    return [{ value: content, type: "normal" }];
+  }
+
+  // Sort and merge overlapping/adjacent ranges
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged: Array<[number, number]> = [];
+  for (const r of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && r[0] <= last[1]) {
+      last[1] = Math.max(last[1], r[1]);
+    } else {
+      merged.push([r[0], r[1]]);
     }
   }
 
-  return { pairOfDel, pairOfAdd };
-}
-
-function buildUnpairedDeletePrefix(changes: _Change[], pairOfDel: Int32Array) {
-  const n = changes.length;
-  const prefix = new Int32Array(n + 1);
-  for (let i = 0; i < n; i++) {
-    const c = changes[i];
-    const isInitiallyUnpairedDelete =
-      c.type === "delete" && pairOfDel[i] === UNPAIRED;
-    prefix[i + 1] = prefix[i] + (isInitiallyUnpairedDelete ? 1 : 0);
+  // If the emphasis covers the whole line, skip it - the row background
+  // already communicates the change (matches VS Code/GitHub).
+  if (
+    content.length > 0 &&
+    merged.length === 1 &&
+    merged[0][0] <= 1 &&
+    merged[0][1] >= content.length + 1
+  ) {
+    return [{ value: content, type: "normal" }];
   }
-  return prefix;
+
+  const segments: RawLineSegment[] = [];
+  let pos = 1;
+  for (const [rawStart, rawEnd] of merged) {
+    const start = Math.max(pos, Math.min(rawStart, content.length + 1));
+    const end = Math.max(start, Math.min(rawEnd, content.length + 1));
+    if (start > pos) {
+      segments.push({
+        value: content.slice(pos - 1, start - 1),
+        type: "normal",
+      });
+    }
+    if (end > start) {
+      segments.push({
+        value: content.slice(start - 1, end - 1),
+        type: emphType,
+      });
+    }
+    pos = end;
+  }
+  if (pos <= content.length) {
+    segments.push({ value: content.slice(pos - 1), type: "normal" });
+  }
+  return segments.filter((seg) => seg.value.length > 0);
 }
 
-function hasUnpairedDeleteBetween(
-  unpairedDelPrefix: Int32Array,
-  deleteIdx: number,
-  insertIdx: number
-) {
-  const lower = Math.max(0, deleteIdx);
-  const upper = Math.max(lower, insertIdx);
-  return unpairedDelPrefix[upper] - unpairedDelPrefix[lower] > 0;
-}
-
-function emitNormal(out: Line[], c: _Change) {
-  out.push(changeToLine(c));
-}
-
-function emitModified(
+/**
+ * Emit one change block (a run of deleted lines followed by a run of
+ * inserted lines). VS Code's diff computer aligns the two sides and
+ * yields the character-level inner changes used for emphasis.
+ */
+function emitChangeBlock(
   out: Line[],
-  del: DeleteChange,
-  add: InsertChange,
-  options: ParseOptions
+  dels: DeleteChange[],
+  adds: InsertChange[]
 ) {
-  out.push({
-    oldLineNumber: del.lineNumber,
-    newLineNumber: add.lineNumber,
-    type: "normal",
-    isNormal: true,
-    content: buildInlineDiffSegments(del, add, options),
+  if (dels.length === 0 || adds.length === 0) {
+    for (const d of dels) out.push(changeToLine(d));
+    for (const a of adds) out.push(changeToLine(a));
+    return;
+  }
+
+  const delLines = dels.map((d) => d.content);
+  const addLines = adds.map((a) => a.content);
+  const oldEmphasis: EmphasisRanges = new Map();
+  const newEmphasis: EmphasisRanges = new Map();
+
+  try {
+    const result = linesDiffComputer.computeDiff(delLines, addLines, {
+      ignoreTrimWhitespace: false,
+      computeMoves: false,
+      maxComputationTimeMs: 500,
+    });
+    for (const change of result.changes) {
+      if (!change.innerChanges) continue;
+      for (const inner of change.innerChanges) {
+        collectRangeEmphasis(oldEmphasis, inner.originalRange, delLines);
+        collectRangeEmphasis(newEmphasis, inner.modifiedRange, addLines);
+      }
+    }
+  } catch {
+    // Fall through to plain (un-emphasized) lines
+  }
+
+  dels.forEach((d, i) => {
+    out.push({
+      ...d,
+      content: buildSegments(d.content, oldEmphasis.get(i), "delete"),
+    });
+  });
+  adds.forEach((a, i) => {
+    out.push({
+      ...a,
+      content: buildSegments(a.content, newEmphasis.get(i), "insert"),
+    });
   });
 }
 
-function emitLines(
-  changes: _Change[],
-  pairOfDel: Int32Array,
-  pairOfAdd: Int32Array,
-  unpairedDelPrefix: Int32Array,
-  options: ParseOptions
-): Line[] {
+/** Build a hunk's display lines: deletes then inserts per change block. */
+function computeHunkLines(changes: _Change[]): Line[] {
   const out: Line[] = [];
-  const processed = new Uint8Array(changes.length);
+  let dels: DeleteChange[] = [];
+  let adds: InsertChange[] = [];
 
-  for (let i = 0; i < changes.length; i++) {
-    if (processed[i]) continue;
-    const c = changes[i];
+  const flush = () => {
+    if (dels.length || adds.length) {
+      emitChangeBlock(out, dels, adds);
+      dels = [];
+      adds = [];
+    }
+  };
 
-    if (c.type === "normal") {
-      processed[i] = 1;
-      emitNormal(out, c);
-    } else if (c.type === "delete") {
-      const pairedAddIdx = pairOfDel[i];
-      if (pairedAddIdx === UNPAIRED) {
-        processed[i] = 1;
-        emitNormal(out, c);
-      } else if (pairedAddIdx > i) {
-        const shouldUnpair = hasUnpairedDeleteBetween(
-          unpairedDelPrefix,
-          i + 1,
-          pairedAddIdx
-        );
-        if (shouldUnpair) {
-          pairOfAdd[pairedAddIdx] = UNPAIRED;
-          processed[i] = 1;
-          emitNormal(out, c);
-        } else {
-          processed[i] = 1;
-        }
-      } else {
-        const add = changes[pairedAddIdx] as InsertChange;
-        emitModified(out, c, add, options);
-        processed[i] = 1;
-        processed[pairedAddIdx] = 1;
-      }
+  for (const c of changes) {
+    if (c.type === "delete") {
+      // A delete after inserts starts a new block
+      if (adds.length) flush();
+      dels.push(c);
+    } else if (c.type === "insert") {
+      adds.push(c);
     } else {
-      const pairedDelIdx = pairOfAdd[i];
-      if (pairedDelIdx === UNPAIRED) {
-        processed[i] = 1;
-        emitNormal(out, c);
-      } else {
-        const del = changes[pairedDelIdx] as DeleteChange;
-        emitModified(out, del, c, options);
-        processed[i] = 1;
-        processed[pairedDelIdx] = 1;
-      }
+      flush();
+      out.push(changeToLine(c));
     }
   }
-
+  flush();
   return out;
 }
 
-function mergeModifiedLines(changes: _Change[], options: ParseOptions): Line[] {
-  const { insertIdxs, deleteIdxs } = buildChangeIndices(changes);
-  const { pairOfDel, pairOfAdd } = buildInitialPairs(
-    changes,
-    insertIdxs,
-    deleteIdxs,
-    options
-  );
-  const unpairedDelPrefix = buildUnpairedDeletePrefix(changes, pairOfDel);
-  return emitLines(changes, pairOfDel, pairOfAdd, unpairedDelPrefix, options);
-}
-
-const parseHunk = (hunk: _Hunk, options: ParseOptions): Hunk => {
+const parseHunk = (hunk: _Hunk): Hunk => {
   return {
     ...hunk,
     type: "hunk",
-    lines: options.mergeModifiedLines
-      ? mergeModifiedLines(hunk.changes, options)
-      : hunk.changes.map(changeToLine),
+    lines: computeHunkLines(hunk.changes),
   };
 };
 
@@ -635,13 +545,6 @@ const insertSkipBlocks = (hunks: Hunk[]): (Hunk | SkipBlock)[] => {
   return result;
 };
 
-const defaultOptions: ParseOptions = {
-  maxDiffDistance: 30,
-  maxChangeRatio: 0.45,
-  mergeModifiedLines: true,
-  inlineMaxCharEdits: 4,
-};
-
 // ============================================================================
 // Main Functions
 // ============================================================================
@@ -658,7 +561,6 @@ function parseDiffWithHighlighting(
 +++ b/${filename}
 ${patch}`;
 
-  const opts = defaultOptions;
   const files = gitDiffParser.parse(diffHeader);
   const file = files[0];
 
@@ -680,9 +582,7 @@ ${patch}`;
     ? highlightFileByLines(newContent, language)
     : null;
 
-  const rawHunks = insertSkipBlocks(
-    file.hunks.map((hunk) => parseHunk(hunk, opts))
-  );
+  const rawHunks = insertSkipBlocks(file.hunks.map((hunk) => parseHunk(hunk)));
 
   const hunks: (DiffHunk | DiffSkipBlock)[] = rawHunks.map((hunk) => {
     if (hunk.type === "skip") {
