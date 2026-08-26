@@ -247,6 +247,12 @@ interface PRReviewState {
 
   // Line selection
   focusedLine: number | null;
+  /**
+   * When true, the focused line is scrolled to but not visually
+   * highlighted (used by change-jump navigation). Any other focus
+   * change resets it - see set().
+   */
+  suppressFocusHighlight: boolean;
   focusedLineSide: "old" | "new" | null; // 'old' for delete lines, 'new' for insert/context
   selectionAnchor: number | null;
   selectionAnchorSide: "old" | "new" | null;
@@ -492,6 +498,7 @@ export class PRReviewStore {
       navigableItems: {},
       commentRangeLookup: {},
       focusedLine: null,
+      suppressFocusHighlight: false,
       focusedLineSide: null,
       selectionAnchor: null,
       selectionAnchorSide: null,
@@ -549,6 +556,11 @@ export class PRReviewStore {
   }
 
   private set(partial: Partial<PRReviewState>) {
+    // Any focus movement re-enables the focus highlight unless the
+    // caller (change-jump navigation) explicitly suppresses it.
+    if ("focusedLine" in partial && !("suppressFocusHighlight" in partial)) {
+      partial = { ...partial, suppressFocusHighlight: false };
+    }
     this.state = { ...this.state, ...partial };
     this.emit();
   }
@@ -1507,6 +1519,7 @@ export class PRReviewStore {
 
     this.nextScrollAlign = "center";
     this.set({
+      suppressFocusHighlight: true,
       focusedLine: target.lineNum,
       focusedLineSide: target.side,
       focusedSkipBlockIndex: null,

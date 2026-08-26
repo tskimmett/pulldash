@@ -1815,6 +1815,9 @@ const DiffViewer = memo(function DiffViewer({
   const focusedLineSide = usePRReviewSelector((s) => s.focusedLineSide);
   const selectionAnchor = usePRReviewSelector((s) => s.selectionAnchor);
   const selectionAnchorSide = usePRReviewSelector((s) => s.selectionAnchorSide);
+  const suppressFocusHighlight = usePRReviewSelector(
+    (s) => s.suppressFocusHighlight
+  );
 
   // Combined scroll + selection effect using RAF to prevent jitter
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1840,7 +1843,7 @@ const DiffViewer = memo(function DiffViewer({
           el.removeAttribute("data-sel-last");
         });
 
-        if (focusedLine && focusedLineSide) {
+        if (focusedLine && focusedLineSide && !suppressFocusHighlight) {
           // Compute selection range
           let selStart = focusedLine;
           let selEnd = focusedLine;
@@ -1911,6 +1914,7 @@ const DiffViewer = memo(function DiffViewer({
     focusedLineSide,
     selectionAnchor,
     selectionAnchorSide,
+    suppressFocusHighlight,
     isDraggingState,
     getRowIndexForLine,
     virtualizer,
