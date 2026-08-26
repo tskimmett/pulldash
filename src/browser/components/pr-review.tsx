@@ -50,6 +50,10 @@ import { PRHeader } from "./pr-header";
 import { SemanticReviewButton } from "./semantic-review-button";
 import { SemanticLayerBar, SemanticSidebar } from "./semantic-panel";
 import { FileTree } from "./file-tree";
+import {
+  SidebarResizeHandle,
+  useSidebarWidth,
+} from "@/browser/lib/sidebar-width";
 import { isTestFile } from "@/browser/lib/test-file";
 import { FileHeader } from "./file-header";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
@@ -508,6 +512,7 @@ const FilePanel = memo(function FilePanel({
     [files, hideTestFiles, testFileCount]
   );
 
+  const sidebarWidth = useSidebarWidth();
   const commentCounts = useCommentCountsByFile();
   const pendingCommentCounts = usePendingCommentCountsByFile();
   const { copyDiff, copyFile, copyMainVersion } = useFileCopyActions();
@@ -529,11 +534,12 @@ const FilePanel = memo(function FilePanel({
   return (
     <aside
       className={cn(
-        "w-64 border-r border-border flex flex-col overflow-hidden shrink-0 bg-background",
+        "max-w-[85vw] border-r border-border flex flex-col overflow-hidden shrink-0 bg-background",
         // Mobile: absolute positioned drawer
         "fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-in-out md:relative md:translate-x-0",
         mobileOpen ? "translate-x-0" : "-translate-x-full"
       )}
+      style={{ width: sidebarWidth }}
     >
       {/* Mobile close button */}
       <div className="flex items-center justify-between px-2 py-2 border-b border-border md:hidden">
@@ -650,6 +656,7 @@ const FilePanel = memo(function FilePanel({
         onCopyFile={copyFile}
         onCopyMainVersion={copyMainVersion}
       />
+      <SidebarResizeHandle />
     </aside>
   );
 });
