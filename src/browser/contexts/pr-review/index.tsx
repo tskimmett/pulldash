@@ -230,6 +230,9 @@ interface PRReviewState {
   // the hunk above; `bottom` grows upward from the hunk below.
   expandedSkipBlocks: Record<string, ExpandedSkipBlock>;
   expandingSkipBlocks: Set<string>;
+  // Total line count of each file at the head commit, learned when file
+  // content is fetched for gap expansion. Sizes the end-of-file gap.
+  fileLineCounts: Record<string, number>;
   // Pre-computed navigation arrays per file (Fix 2)
   navigableItems: Record<string, NavigableItem[]>;
   // Pre-computed comment range lookup per file (Fix 3)
@@ -477,6 +480,7 @@ export class PRReviewStore {
       loadingFiles: new Set(),
       expandedSkipBlocks: {},
       expandingSkipBlocks: new Set(),
+      fileLineCounts: {},
       navigableItems: {},
       commentRangeLookup: {},
       focusedLine: null,
@@ -1180,6 +1184,13 @@ export class PRReviewStore {
 
   getSkipBlockKey = (filename: string, skipIndex: number): string => {
     return `${filename}:${skipIndex}`;
+  };
+
+  setFileLineCount = (filename: string, count: number) => {
+    if (this.state.fileLineCounts[filename] === count) return;
+    this.set({
+      fileLineCounts: { ...this.state.fileLineCounts, [filename]: count },
+    });
   };
 
   setSkipBlockExpanding = (key: string, expanding: boolean) => {

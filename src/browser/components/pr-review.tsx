@@ -1044,6 +1044,8 @@ type VirtualRowType =
       remainingCount: number;
       /** True when the gap sits above the first hunk (top of file) */
       isTopOfFile: boolean;
+      /** True for the synthesized gap below the last hunk */
+      isEndOfFile: boolean;
       index: number;
     }
   | { type: "line"; line: DiffLine; lineNum: number | undefined; index: number }
@@ -1087,6 +1089,14 @@ const DiffViewer = memo(function DiffViewer({
 
   // Subscribe to expanded skip blocks directly for re-render triggering
   const expandedSkipBlocks = usePRReviewSelector((s) => s.expandedSkipBlocks);
+  const fileLineCounts = usePRReviewSelector((s) => s.fileLineCounts);
+  const totalFileLines = selectedFile
+    ? fileLineCounts[selectedFile]
+    : undefined;
+  const currentFile = useCurrentFile();
+  // Added/removed files have no unshown lines below the diff
+  const mayHaveTrailingGap =
+    currentFile?.status !== "added" && currentFile?.status !== "removed";
 
   // Skip block expansion
   const { expandSkipBlock, isExpanding } = useSkipBlockExpansion();
@@ -1180,8 +1190,9 @@ const DiffViewer = memo(function DiffViewer({
     return result;
   }, [commentsByLine]);
 
-  // Pre-compute skip block start lines by looking at adjacent hunks
-  const skipBlockStartLines = useMemo(() => {
+  // Pre-compute skip block start lines by looking at adjacent hunks, plus
+  // where the file continues after the last hunk (the end-of-file gap).
+  const { skipBlockStartLines, trailingStart } = useMemo(() => {
     const startLines: number[] = [];
     let expectedNextLine = 1;
 
@@ -1203,7 +1214,7 @@ const DiffViewer = memo(function DiffViewer({
         expectedNextLine = maxNewLine + 1;
       }
     }
-    return startLines;
+    return { skipBlockStartLines: startLines, trailingStart: expectedNextLine };
   }, [hunks]);
 
   // Helper to convert lines to split pairs for side-by-side view
@@ -1342,6 +1353,7 @@ const DiffViewer = memo(function DiffViewer({
             startLine: startLine + top.length,
             remainingCount,
             isTopOfFile: !seenHunk,
+            isEndOfFile: false,
             index: index++,
           });
           rows.push({ type: "skip-spacer", position: "after", index: index++ });
@@ -1367,10 +1379,43 @@ const DiffViewer = memo(function DiffViewer({
       }
     }
 
+    // End-of-file gap: the diff can't tell whether the file continues past
+    // the last hunk, so offer a trailing expander until the file's real
+    // length (learned on first expansion) says otherwise.
+    if (seenHunk && mayHaveTrailingGap) {
+      const trailingIndex = skipIndex;
+      const expanded = getExpandedLines(trailingIndex);
+      const top = expanded?.top ?? [];
+      const start = trailingStart + top.length;
+      const remainingCount =
+        totalFileLines !== undefined
+          ? totalFileLines - start + 1
+          : Number.POSITIVE_INFINITY;
+
+      addExpandedLines(top);
+      if (remainingCount > 0) {
+        rows.push({ type: "skip-spacer", position: "before", index: index++ });
+        rows.push({
+          type: "skip",
+          hunk: { type: "skip", count: 0, content: "" },
+          skipIndex: trailingIndex,
+          startLine: start,
+          remainingCount,
+          isTopOfFile: false,
+          isEndOfFile: true,
+          index: index++,
+        });
+        rows.push({ type: "skip-spacer", position: "after", index: index++ });
+      }
+    }
+
     return rows;
   }, [
     hunks,
     skipBlockStartLines,
+    trailingStart,
+    totalFileLines,
+    mayHaveTrailingGap,
     pendingCommentsByLine,
     threadsByLine,
     getExpandedLines,
@@ -1637,6 +1682,16 @@ const DiffViewer = memo(function DiffViewer({
           expandSkipBlock(idx, startLine + topCount, remaining, "all");
         }
       }
+      if (mayHaveTrailingGap) {
+        const trailingIndex = currentSkipIndex;
+        const topCount = getExpandedLines(trailingIndex)?.top.length ?? 0;
+        expandSkipBlock(
+          trailingIndex,
+          trailingStart + topCount,
+          Number.POSITIVE_INFINITY,
+          "all"
+        );
+      }
     };
 
     window.addEventListener(
@@ -1657,7 +1712,14 @@ const DiffViewer = memo(function DiffViewer({
         handleExpandAll
       );
     };
-  }, [hunks, skipBlockStartLines, expandSkipBlock, getExpandedLines]);
+  }, [
+    hunks,
+    skipBlockStartLines,
+    trailingStart,
+    mayHaveTrailingGap,
+    expandSkipBlock,
+    getExpandedLines,
+  ]);
 
   // Handle mousemove during drag to extend selection even when not directly over line gutters
   useEffect(() => {
@@ -1936,6 +1998,7 @@ const VirtualRowRenderer = memo(function VirtualRowRenderer({
           hunk={row.hunk}
           remainingCount={row.remainingCount}
           isTopOfFile={row.isTopOfFile}
+          isEndOfFile={row.isEndOfFile}
           isFocused={focusedSkipBlockIndex === row.skipIndex}
           isExpanding={isExpanding(row.skipIndex)}
           onExpand={(direction) =>
@@ -2407,6 +2470,9 @@ interface SkipBlockRowProps {
   remainingCount: number;
   /** Gap sits above the first hunk - only expanding upward makes sense */
   isTopOfFile?: boolean;
+  /** Synthesized gap below the last hunk - only expanding downward makes
+   * sense, and the size may be unknown (remainingCount = Infinity) */
+  isEndOfFile?: boolean;
   isFocused?: boolean;
   isExpanding?: boolean;
   onExpand?: (direction: ExpandDirection) => void;
@@ -2416,6 +2482,7 @@ const SkipBlockRow = memo(function SkipBlockRow({
   hunk,
   remainingCount,
   isTopOfFile,
+  isEndOfFile,
   isFocused,
   isExpanding,
   onExpand,
@@ -2434,7 +2501,9 @@ const SkipBlockRow = memo(function SkipBlockRow({
 
   // Small gaps expand in one click, like GitHub. Otherwise offer
   // directional expanders that reveal SKIP_EXPAND_STEP lines at a time.
-  const expandAllOnly = remainingCount <= SKIP_EXPAND_STEP;
+  // The end-of-file gap's size is unknown (Infinity) until first expanded.
+  const sizeKnown = Number.isFinite(remainingCount);
+  const expandAllOnly = sizeKnown && remainingCount <= SKIP_EXPAND_STEP;
 
   const expandButton = (
     direction: ExpandDirection,
@@ -2476,16 +2545,17 @@ const SkipBlockRow = memo(function SkipBlockRow({
         ) : expandAllOnly ? (
           expandButton(
             "all",
-            ChevronsUpDown,
+            isEndOfFile ? ChevronsDown : ChevronsUpDown,
             `Expand all ${remainingCount} hidden lines`
           )
         ) : (
           <>
-            {expandButton(
-              "up",
-              ChevronsUp,
-              `Expand ${SKIP_EXPAND_STEP} lines up`
-            )}
+            {!isEndOfFile &&
+              expandButton(
+                "up",
+                ChevronsUp,
+                `Expand ${SKIP_EXPAND_STEP} lines up`
+              )}
             {!isTopOfFile &&
               expandButton(
                 "down",
@@ -2502,7 +2572,9 @@ const SkipBlockRow = memo(function SkipBlockRow({
             isFocused && "opacity-70"
           )}
         >
-          {remainingCount} hidden line{remainingCount !== 1 ? "s" : ""}
+          {sizeKnown
+            ? `${remainingCount} hidden line${remainingCount !== 1 ? "s" : ""}`
+            : "Lines below the last change"}
           {hunk.content ? ` · ${hunk.content}` : ""}
         </span>
         {!isExpanding && isFocused && (

@@ -40,15 +40,6 @@ export function useSkipBlockExpansion() {
       const key = store.getSkipBlockKey(selectedFile, skipIndex);
       if (expandingSkipBlocks.has(key)) return;
 
-      const n = direction === "all" ? count : Math.min(SKIP_EXPAND_STEP, count);
-      // A partial expansion that would leave a sliver smaller than one step
-      // just reveals everything - same as GitHub.
-      const fetchAll = direction === "all" || n >= count;
-      const fetchCount = fetchAll ? count : n;
-      const fetchStart =
-        direction === "up" && !fetchAll ? startLine + count - n : startLine;
-      const edge = direction === "up" && !fetchAll ? "bottom" : "top";
-
       store.setSkipBlockExpanding(key, true);
 
       try {
@@ -64,6 +55,29 @@ export function useSkipBlockExpansion() {
           console.error("Failed to fetch file for skip block expansion");
           return;
         }
+
+        // Record the file's true length; this also sizes the end-of-file
+        // gap, whose count is passed as Infinity until known.
+        const split = content.split("\n");
+        const totalLines =
+          split[split.length - 1] === "" ? split.length - 1 : split.length;
+        store.setFileLineCount(selectedFile, totalLines);
+
+        // Clamp the gap to the end of the file
+        const remCount = Math.min(count, totalLines - startLine + 1);
+        if (remCount <= 0) return;
+
+        const n =
+          direction === "all" ? remCount : Math.min(SKIP_EXPAND_STEP, remCount);
+        // A partial expansion that would leave a sliver smaller than one
+        // step just reveals everything - same as GitHub.
+        const fetchAll = direction === "all" || n >= remCount;
+        const fetchCount = fetchAll ? remCount : n;
+        const fetchStart =
+          direction === "up" && !fetchAll
+            ? startLine + remCount - n
+            : startLine;
+        const edge = direction === "up" && !fetchAll ? "bottom" : "top";
 
         // Get highlighted lines via WebWorker
         const expandedLines = await diffService.highlightLines(
