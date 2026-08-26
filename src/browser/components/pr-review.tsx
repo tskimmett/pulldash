@@ -1917,7 +1917,7 @@ const DiffViewer = memo(function DiffViewer({
           <div className="border border-border rounded-lg overflow-hidden">
             <div
               ref={containerRef}
-              className="relative w-full font-mono text-[0.8rem] [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)] diff-line-container"
+              className="relative w-full font-mono text-[0.75rem] [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)] diff-line-container"
               style={{ height: `${virtualizer.getTotalSize()}px` }}
             >
               {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -2447,7 +2447,7 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
 
   return (
     <div
-      className="flex h-5 min-h-5 whitespace-pre-wrap box-border group contain-layout split-diff-line-row font-mono text-[0.8rem]"
+      className="flex h-5 min-h-5 whitespace-pre-wrap box-border group contain-layout split-diff-line-row font-mono text-[0.75rem]"
       data-line-num={lineNum}
     >
       {/* Left side (old/delete) */}
@@ -4214,7 +4214,7 @@ function DiffSkeleton() {
   return (
     <div className="flex-1 overflow-auto p-4">
       <div className="border border-border rounded-lg overflow-hidden">
-        <div className="font-mono text-[0.8rem]">
+        <div className="font-mono text-[0.75rem]">
           {/* Hunk header skeleton */}
           <div className="bg-muted/50 px-4 py-2 border-b border-border">
             <Skeleton className="h-4 w-48" />
