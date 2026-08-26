@@ -160,6 +160,11 @@ export interface WorkflowRunAwaitingApproval {
 // Merge method type
 export type MergeMethod = "merge" | "squash" | "rebase";
 
+export interface ExpandedSkipBlock {
+  top: DiffLine[];
+  bottom: DiffLine[];
+}
+
 interface PRReviewState {
   // Core data
   pr: PullRequest;
@@ -220,8 +225,10 @@ interface PRReviewState {
   // Diffs
   loadedDiffs: Record<string, ParsedDiff>;
   loadingFiles: Set<string>;
-  // Map of "filename:skipIndex" -> expanded lines content
-  expandedSkipBlocks: Record<string, DiffLine[]>;
+  // Map of "filename:skipIndex" -> lines revealed so far from each edge of
+  // the gap (GitHub-style incremental expansion). `top` grows downward from
+  // the hunk above; `bottom` grows upward from the hunk below.
+  expandedSkipBlocks: Record<string, ExpandedSkipBlock>;
   expandingSkipBlocks: Set<string>;
   // Pre-computed navigation arrays per file (Fix 2)
   navigableItems: Record<string, NavigableItem[]>;
@@ -1185,9 +1192,19 @@ export class PRReviewStore {
     this.set({ expandingSkipBlocks: next });
   };
 
-  setExpandedSkipBlock = (key: string, lines: DiffLine[]) => {
+  /** Reveal more of a skip block from one edge of the remaining gap. */
+  appendExpandedSkipBlock = (
+    key: string,
+    edge: "top" | "bottom",
+    lines: DiffLine[]
+  ) => {
+    const prev = this.state.expandedSkipBlocks[key] ?? { top: [], bottom: [] };
+    const next: ExpandedSkipBlock =
+      edge === "top"
+        ? { top: [...prev.top, ...lines], bottom: prev.bottom }
+        : { top: prev.top, bottom: [...lines, ...prev.bottom] };
     this.set({
-      expandedSkipBlocks: { ...this.state.expandedSkipBlocks, [key]: lines },
+      expandedSkipBlocks: { ...this.state.expandedSkipBlocks, [key]: next },
     });
   };
 
@@ -1199,14 +1216,6 @@ export class PRReviewStore {
   isSkipBlockExpanding = (filename: string, skipIndex: number): boolean => {
     const key = this.getSkipBlockKey(filename, skipIndex);
     return this.state.expandingSkipBlocks.has(key);
-  };
-
-  getExpandedSkipBlockLines = (
-    filename: string,
-    skipIndex: number
-  ): DiffLine[] | null => {
-    const key = this.getSkipBlockKey(filename, skipIndex);
-    return this.state.expandedSkipBlocks[key] ?? null;
   };
 
   // ---------------------------------------------------------------------------
@@ -1272,9 +1281,9 @@ export class PRReviewStore {
     for (const hunk of diff.hunks) {
       if (hunk.type === "skip") {
         const key = `${selectedFile}:${skipIndex}`;
-        const expandedLines = expandedSkipBlocks[key];
-        if (expandedLines) {
-          allLines.push(...expandedLines);
+        const expanded = expandedSkipBlocks[key];
+        if (expanded) {
+          allLines.push(...expanded.top, ...expanded.bottom);
         }
         skipIndex++;
       } else if (hunk.type === "hunk") {
@@ -1416,11 +1425,13 @@ export class PRReviewStore {
           const currentSkipIndex = skipIndex++;
           // Check if this skip block is expanded
           const key = `${selectedFile}:${currentSkipIndex}`;
-          const expandedLines = expandedSkipBlocks[key];
+          const expanded = expandedSkipBlocks[key];
+          const top = expanded?.top ?? [];
+          const bottom = expanded?.bottom ?? [];
+          const remaining = hunk.count - top.length - bottom.length;
 
-          if (expandedLines && expandedLines.length > 0) {
-            // Skip block is expanded - add its lines
-            for (const line of expandedLines) {
+          const pushLines = (lines: DiffLine[]) => {
+            for (const line of lines) {
               if (line.type === "delete" && line.oldLineNumber) {
                 navigableItems.push({
                   type: "line",
@@ -1435,10 +1446,14 @@ export class PRReviewStore {
                 });
               }
             }
-          } else {
-            // Skip block is collapsed - add it as navigable
+          };
+
+          pushLines(top);
+          if (remaining > 0) {
+            // Part of the gap is still collapsed - keep it navigable
             navigableItems.push({ type: "skip", skipIndex: currentSkipIndex });
           }
+          pushLines(bottom);
         } else if (hunk.type === "hunk") {
           for (const line of hunk.lines) {
             if (line.type === "delete" && line.oldLineNumber) {
@@ -1681,16 +1696,18 @@ export class PRReviewStore {
       for (const hunk of diff.hunks) {
         if (hunk.type === "skip") {
           const key = `${selectedFile}:${skipIdx}`;
-          const expandedLines = expandedSkipBlocks[key];
-          if (expandedLines) {
-            allLines.push(...expandedLines);
-          } else {
-            // Mark where skip block would appear in pairs
+          const expanded = expandedSkipBlocks[key];
+          const top = expanded?.top ?? [];
+          const bottom = expanded?.bottom ?? [];
+          allLines.push(...top);
+          if (top.length + bottom.length < hunk.count) {
+            // Mark where the still-collapsed gap would appear in pairs
             skipBlockIndices.push({
               pairIdx: allLines.length, // Will be adjusted after pair conversion
               skipIndex: skipIdx,
             });
           }
+          allLines.push(...bottom);
           skipIdx++;
         } else if (hunk.type === "hunk") {
           allLines.push(...hunk.lines);
@@ -3199,5 +3216,9 @@ export { usePendingReviewLoader } from "./usePendingReviewLoader";
 export { useThreadActions } from "./useThreadActions";
 export { useCommentActions } from "./useCommentActions";
 export { useReviewActions } from "./useReviewActions";
-export { useSkipBlockExpansion } from "./useSkipBlockExpansion";
+export {
+  useSkipBlockExpansion,
+  SKIP_EXPAND_STEP,
+  type ExpandDirection,
+} from "./useSkipBlockExpansion";
 export { useFileCopyActions } from "./useFileCopyActions";

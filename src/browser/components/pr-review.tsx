@@ -15,6 +15,8 @@ import {
   Send,
   X,
   ChevronsUpDown,
+  ChevronsUp,
+  ChevronsDown,
   Check,
   XCircle,
   MessageCircle,
@@ -80,6 +82,7 @@ import {
   useReviewActions,
   useFileCopyActions,
   useSkipBlockExpansion,
+  SKIP_EXPAND_STEP,
   useThreadActions,
   useCurrentFile,
   useCurrentDiff,
@@ -99,6 +102,8 @@ import {
   type DiffHunk,
   type DiffSkipBlock,
   type DiffViewMode,
+  type ExpandDirection,
+  type ExpandedSkipBlock,
 } from "../contexts/pr-review";
 import {
   DropdownMenu,
@@ -1033,7 +1038,12 @@ type VirtualRowType =
       type: "skip";
       hunk: DiffSkipBlock;
       skipIndex: number;
+      /** Start line (new file) of the still-collapsed portion of the gap */
       startLine: number;
+      /** Lines still hidden in this gap */
+      remainingCount: number;
+      /** True when the gap sits above the first hunk (top of file) */
+      isTopOfFile: boolean;
       index: number;
     }
   | { type: "line"; line: DiffLine; lineNum: number | undefined; index: number }
@@ -1103,7 +1113,7 @@ const DiffViewer = memo(function DiffViewer({
 
   // Helper to get expanded lines for a skip block
   const getExpandedLines = useCallback(
-    (skipIndex: number): DiffLine[] | null => {
+    (skipIndex: number): ExpandedSkipBlock | null => {
       if (!selectedFile) return null;
       const key = `${selectedFile}:${skipIndex}`;
       return expandedSkipBlocks[key] ?? null;
@@ -1290,29 +1300,36 @@ const DiffViewer = memo(function DiffViewer({
       }
     };
 
+    const addExpandedLines = (lines: DiffLine[]) => {
+      if (lines.length === 0) return;
+      if (viewMode === "split") {
+        const pairs = convertToSplitPairs(lines);
+        for (const pair of pairs) {
+          rows.push({ type: "split-line", pair, index: index++ });
+          addCommentsForLine(pair.lineNum);
+        }
+      } else {
+        for (const line of lines) {
+          const lineNum = line.newLineNumber || line.oldLineNumber;
+          rows.push({ type: "line", line, lineNum, index: index++ });
+          addCommentsForLine(lineNum);
+        }
+      }
+    };
+
+    let seenHunk = false;
     for (const hunk of hunks) {
       if (hunk.type === "skip") {
         const currentSkipIndex = skipIndex++;
         const startLine = skipBlockStartLines[currentSkipIndex] ?? 1;
-        const expandedLines = getExpandedLines(currentSkipIndex);
+        const expanded = getExpandedLines(currentSkipIndex);
+        const top = expanded?.top ?? [];
+        const bottom = expanded?.bottom ?? [];
+        const remainingCount = hunk.count - top.length - bottom.length;
 
-        if (expandedLines && expandedLines.length > 0) {
-          // Show expanded lines
-          if (viewMode === "split") {
-            const pairs = convertToSplitPairs(expandedLines);
-            for (const pair of pairs) {
-              rows.push({ type: "split-line", pair, index: index++ });
-              addCommentsForLine(pair.lineNum);
-            }
-          } else {
-            for (const line of expandedLines) {
-              const lineNum = line.newLineNumber || line.oldLineNumber;
-              rows.push({ type: "line", line, lineNum, index: index++ });
-              addCommentsForLine(lineNum);
-            }
-          }
-        } else {
-          // Show collapsed skip block with spacers
+        addExpandedLines(top);
+        if (remainingCount > 0) {
+          // Part of the gap is still collapsed
           rows.push({
             type: "skip-spacer",
             position: "before",
@@ -1322,12 +1339,16 @@ const DiffViewer = memo(function DiffViewer({
             type: "skip",
             hunk,
             skipIndex: currentSkipIndex,
-            startLine,
+            startLine: startLine + top.length,
+            remainingCount,
+            isTopOfFile: !seenHunk,
             index: index++,
           });
           rows.push({ type: "skip-spacer", position: "after", index: index++ });
         }
+        addExpandedLines(bottom);
       } else {
+        seenHunk = true;
         if (viewMode === "split") {
           // Convert to split pairs
           const pairs = convertToSplitPairs(hunk.lines);
@@ -1591,8 +1612,12 @@ const DiffViewer = memo(function DiffViewer({
           currentSkipIndex++;
         }
       }
-      if (count > 0) {
-        expandSkipBlock(skipIndex, startLine, count);
+      // Account for lines already revealed from either edge
+      const expanded = getExpandedLines(skipIndex);
+      const topCount = expanded?.top.length ?? 0;
+      const remaining = count - topCount - (expanded?.bottom.length ?? 0);
+      if (remaining > 0) {
+        expandSkipBlock(skipIndex, startLine + topCount, remaining, "all");
       }
     };
 
@@ -1605,7 +1630,7 @@ const DiffViewer = memo(function DiffViewer({
         "pr-review:expand-skip-block",
         handleExpandSkipBlock as EventListener
       );
-  }, [hunks, skipBlockStartLines, expandSkipBlock]);
+  }, [hunks, skipBlockStartLines, expandSkipBlock, getExpandedLines]);
 
   // Handle mousemove during drag to extend selection even when not directly over line gutters
   useEffect(() => {
@@ -1858,7 +1883,8 @@ interface VirtualRowRendererProps {
   expandSkipBlock: (
     skipIndex: number,
     startLine: number,
-    count: number
+    count: number,
+    direction?: ExpandDirection
   ) => void;
   isExpanding: (skipIndex: number) => boolean;
 }
@@ -1881,10 +1907,17 @@ const VirtualRowRenderer = memo(function VirtualRowRenderer({
       return (
         <SkipBlockRow
           hunk={row.hunk}
+          remainingCount={row.remainingCount}
+          isTopOfFile={row.isTopOfFile}
           isFocused={focusedSkipBlockIndex === row.skipIndex}
           isExpanding={isExpanding(row.skipIndex)}
-          onExpand={() =>
-            expandSkipBlock(row.skipIndex, row.startLine, row.hunk.count)
+          onExpand={(direction) =>
+            expandSkipBlock(
+              row.skipIndex,
+              row.startLine,
+              row.remainingCount,
+              direction
+            )
           }
         />
       );
@@ -2343,24 +2376,24 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
 
 interface SkipBlockRowProps {
   hunk: DiffSkipBlock;
+  /** Lines still hidden in this gap */
+  remainingCount: number;
+  /** Gap sits above the first hunk - only expanding upward makes sense */
+  isTopOfFile?: boolean;
   isFocused?: boolean;
   isExpanding?: boolean;
-  onExpand?: () => void;
+  onExpand?: (direction: ExpandDirection) => void;
 }
 
 const SkipBlockRow = memo(function SkipBlockRow({
   hunk,
+  remainingCount,
+  isTopOfFile,
   isFocused,
   isExpanding,
   onExpand,
 }: SkipBlockRowProps) {
   const skipBlockRef = useRef<HTMLDivElement>(null);
-
-  const handleClick = useCallback(() => {
-    if (onExpand && !isExpanding) {
-      onExpand();
-    }
-  }, [onExpand, isExpanding]);
 
   // Scroll into view when focused
   useEffect(() => {
@@ -2372,52 +2405,86 @@ const SkipBlockRow = memo(function SkipBlockRow({
     }
   }, [isFocused]);
 
+  // Small gaps expand in one click, like GitHub. Otherwise offer
+  // directional expanders that reveal SKIP_EXPAND_STEP lines at a time.
+  const expandAllOnly = remainingCount <= SKIP_EXPAND_STEP;
+
+  const expandButton = (
+    direction: ExpandDirection,
+    Icon: typeof ChevronsUp,
+    label: string
+  ) => (
+    <button
+      onClick={() => !isExpanding && onExpand?.(direction)}
+      disabled={isExpanding}
+      title={label}
+      aria-label={label}
+      className={cn(
+        "flex-1 w-full flex items-center justify-center transition-colors",
+        "text-blue-600/70 dark:text-blue-400/70",
+        !isExpanding &&
+          "hover:bg-blue-500/20 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer"
+      )}
+    >
+      <Icon className="w-4 h-4" />
+    </button>
+  );
+
   return (
     <div
       ref={skipBlockRef}
-      onClick={handleClick}
       className={cn(
-        "flex items-center h-10 font-mono bg-muted text-muted-foreground transition-colors group",
-        isExpanding ? "opacity-60" : "hover:bg-muted/80 cursor-pointer",
+        "flex items-stretch h-10 font-mono bg-muted text-muted-foreground group",
+        isExpanding && "opacity-60",
         isFocused && "ring-2 ring-blue-500 ring-inset bg-blue-500/10"
       )}
     >
       <div className="w-1 shrink-0" />
-      {/* Two line number columns to match diff lines */}
-      <div
-        className={cn(
-          "w-10 shrink-0 opacity-50 select-none flex items-center justify-center group-hover:opacity-70",
-          isFocused && "opacity-70"
-        )}
-      >
+      {/* Expander gutter - spans both line number columns */}
+      <div className="w-20 shrink-0 flex flex-col border-r border-border/30 bg-blue-500/5 select-none">
         {isExpanding ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
+          <div className="flex-1 flex items-center justify-center opacity-70">
+            <Loader2 className="w-4 h-4 animate-spin" />
+          </div>
+        ) : expandAllOnly ? (
+          expandButton(
+            "all",
+            ChevronsUpDown,
+            `Expand all ${remainingCount} hidden lines`
+          )
         ) : (
-          <ChevronsUpDown className="w-4 h-4" />
+          <>
+            {expandButton(
+              "up",
+              ChevronsUp,
+              `Expand ${SKIP_EXPAND_STEP} lines up`
+            )}
+            {!isTopOfFile &&
+              expandButton(
+                "down",
+                ChevronsDown,
+                `Expand ${SKIP_EXPAND_STEP} lines down`
+              )}
+          </>
         )}
       </div>
-      <div className="w-10 shrink-0 border-r border-border/30" />
-      <div className="flex-1">
+      <div className="flex-1 flex items-center min-w-0">
         <span
           className={cn(
-            "pl-2 italic opacity-50 group-hover:opacity-70",
+            "pl-2 italic opacity-50 truncate",
             isFocused && "opacity-70"
           )}
         >
-          {hunk.content || `${hunk.count} lines hidden`}
+          {remainingCount} hidden line{remainingCount !== 1 ? "s" : ""}
+          {hunk.content ? ` · ${hunk.content}` : ""}
         </span>
-        {!isExpanding && !isFocused && (
-          <span className="ml-2 text-xs opacity-0 group-hover:opacity-50 transition-opacity">
-            Click to expand
-          </span>
-        )}
         {!isExpanding && isFocused && (
-          <span className="ml-2 text-xs text-blue-600 dark:text-blue-400 opacity-70">
-            Press Enter to expand
+          <span className="ml-2 text-xs shrink-0 text-blue-600 dark:text-blue-400 opacity-70">
+            Press Enter to expand all
           </span>
         )}
         {isExpanding && (
-          <span className="ml-2 text-xs opacity-50">Loading...</span>
+          <span className="ml-2 text-xs shrink-0 opacity-50">Loading...</span>
         )}
       </div>
     </div>
