@@ -85,6 +85,12 @@
 :root {
   --radius: 0.625rem;
 
+  /* Darken Tailwind's greens one notch in light mode - the defaults are
+     too washed out against a white background. Diff line backgrounds use
+     their own --diff-* variables and are unaffected. */
+  --color-green-400: oklch(72.3% 0.219 149.579); /* = default green-500 */
+  --color-green-500: oklch(62.7% 0.194 149.214); /* = default green-600 */
+
   /* ---- Light theme (default) ---- */
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -156,6 +162,10 @@
 }
 
 .dark {
+  /* Restore Tailwind's default greens in dark mode */
+  --color-green-400: oklch(79.2% 0.209 151.711);
+  --color-green-500: oklch(72.3% 0.219 149.579);
+
   /* ---- Dark theme ---- */
   --diff-line-comment-range-bg: #19273e;
   --diff-line-insert-bg: #122218;
