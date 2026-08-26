@@ -103,7 +103,7 @@ export function useKeyboardNavigation() {
           // Use startTransition to allow React to interrupt rendering during rapid navigation
           startTransition(() => {
             if (state.viewMode === "semantic") {
-              store.navigateSemanticLayer("prev");
+              store.navigateSemanticFile("prev");
             } else {
               store.navigateToPrevUnviewedFile();
             }
@@ -114,7 +114,7 @@ export function useKeyboardNavigation() {
           // Use startTransition to allow React to interrupt rendering during rapid navigation
           startTransition(() => {
             if (state.viewMode === "semantic") {
-              store.navigateSemanticLayer("next");
+              store.navigateSemanticFile("next");
             } else {
               store.navigateToNextUnviewedFile();
             }

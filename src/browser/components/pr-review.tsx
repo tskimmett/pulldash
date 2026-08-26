@@ -754,8 +754,16 @@ const DiffPanel = memo(function DiffPanel() {
                 onToggleViewed={() => store.toggleViewed(currentFile.filename)}
                 currentIndex={currentIndex}
                 totalFiles={files.length}
-                onPrevFile={() => store.navigateToPrevUnviewedFile()}
-                onNextFile={() => store.navigateToNextUnviewedFile()}
+                onPrevFile={() =>
+                  store.getSnapshot().viewMode === "semantic"
+                    ? store.navigateSemanticFile("prev")
+                    : store.navigateToPrevUnviewedFile()
+                }
+                onNextFile={() =>
+                  store.getSnapshot().viewMode === "semantic"
+                    ? store.navigateSemanticFile("next")
+                    : store.navigateToNextUnviewedFile()
+                }
                 diffViewMode={diffViewMode}
                 onToggleDiffViewMode={() => store.toggleDiffViewMode()}
                 commentCount={currentFileCommentCount}

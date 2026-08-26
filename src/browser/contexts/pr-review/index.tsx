@@ -1065,6 +1065,49 @@ export class PRReviewStore {
     });
   };
 
+  /**
+   * Prev/next file in semantic mode: step through the current layer's
+   * files in range order, then overflow into the adjacent layer.
+   */
+  navigateSemanticFile = (direction: "next" | "prev") => {
+    const { selectedLayerId, selectedFile, files } = this.state;
+    const found = selectedLayerId
+      ? this.getSemanticLayer(selectedLayerId)
+      : null;
+    if (!found) {
+      this.navigateSemanticLayer(direction);
+      return;
+    }
+
+    // Unique files of this layer, in the order its ranges visit them
+    const layerFiles: string[] = [];
+    for (const range of found.layer.ranges) {
+      if (
+        !layerFiles.includes(range.file) &&
+        files.some((f) => f.filename === range.file)
+      ) {
+        layerFiles.push(range.file);
+      }
+    }
+
+    const idx = selectedFile ? layerFiles.indexOf(selectedFile) : -1;
+    const targetIdx =
+      direction === "next" ? (idx === -1 ? 0 : idx + 1) : idx - 1;
+
+    if (idx !== -1 || direction === "next") {
+      const targetFile = layerFiles[targetIdx];
+      if (targetFile) {
+        const range = found.layer.ranges.find((r) => r.file === targetFile);
+        if (range) {
+          this.jumpToSemanticRange(range);
+          return;
+        }
+      }
+    }
+    // Past either end of the layer's files - move to the adjacent layer
+    this.navigateSemanticLayer(direction);
+  };
+
   /** j/k in semantic mode: move between layers (wraps around). */
   navigateSemanticLayer = (direction: "next" | "prev") => {
     const keys = this.semanticLayerKeys();
