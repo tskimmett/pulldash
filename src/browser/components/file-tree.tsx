@@ -14,6 +14,8 @@ import {
   Eye,
   EyeOff,
   GitBranch,
+  Folder,
+  FolderOpen,
   FolderCheck,
 } from "lucide-react";
 import { cn } from "../cn";
@@ -343,9 +345,14 @@ export function FileTree({
                       style={{ paddingLeft: `${depth * 12 + 8}px` }}
                     >
                       {isExpanded ? (
-                        <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                       ) : (
-                        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      )}
+                      {isExpanded ? (
+                        <FolderOpen className="w-4 h-4 shrink-0 text-sky-400 fill-sky-400/25" />
+                      ) : (
+                        <Folder className="w-4 h-4 shrink-0 text-sky-400 fill-sky-400/25" />
                       )}
                       <span className="truncate flex-1">{node.name}</span>
                       {allViewed && (
