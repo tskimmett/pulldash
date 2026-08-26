@@ -238,6 +238,8 @@ interface PRReviewState {
   // Total line count of each file at the head commit, learned when file
   // content is fetched for gap expansion. Sizes the end-of-file gap.
   fileLineCounts: Record<string, number>;
+  /** Files whose entire diff was expanded via the header button. */
+  fullyExpandedFiles: Set<string>;
   // Pre-computed navigation arrays per file (Fix 2)
   navigableItems: Record<string, NavigableItem[]>;
   // Pre-computed comment range lookup per file (Fix 3)
@@ -486,6 +488,7 @@ export class PRReviewStore {
       expandedSkipBlocks: {},
       expandingSkipBlocks: new Set(),
       fileLineCounts: {},
+      fullyExpandedFiles: new Set(),
       navigableItems: {},
       commentRangeLookup: {},
       focusedLine: null,
@@ -1255,6 +1258,36 @@ export class PRReviewStore {
   isSkipBlockExpanding = (filename: string, skipIndex: number): boolean => {
     const key = this.getSkipBlockKey(filename, skipIndex);
     return this.state.expandingSkipBlocks.has(key);
+  };
+
+  /** Mark a file as fully expanded (header expand-all button). */
+  setFileFullyExpanded = (filename: string) => {
+    if (this.state.fullyExpandedFiles.has(filename)) return;
+    const next = new Set(this.state.fullyExpandedFiles);
+    next.add(filename);
+    this.set({ fullyExpandedFiles: next });
+  };
+
+  /**
+   * Collapse a file's expanded gaps back to the default state: only the
+   * seeded context around each change remains visible.
+   */
+  collapseFileSkipBlocks = (filename: string) => {
+    const prefix = `${filename}:`;
+    const expandedSkipBlocks: Record<string, ExpandedSkipBlock> = {};
+    for (const [key, value] of Object.entries(this.state.expandedSkipBlocks)) {
+      if (!key.startsWith(prefix)) expandedSkipBlocks[key] = value;
+    }
+    const gapContext = this.state.loadedDiffs[filename]?.gapContext;
+    if (gapContext) {
+      for (const [idx, segments] of Object.entries(gapContext)) {
+        expandedSkipBlocks[this.getSkipBlockKey(filename, Number(idx))] =
+          segments;
+      }
+    }
+    const fullyExpandedFiles = new Set(this.state.fullyExpandedFiles);
+    fullyExpandedFiles.delete(filename);
+    this.set({ expandedSkipBlocks, fullyExpandedFiles });
   };
 
   // ---------------------------------------------------------------------------

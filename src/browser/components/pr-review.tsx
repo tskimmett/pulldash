@@ -1692,6 +1692,7 @@ const DiffViewer = memo(function DiffViewer({
           "all"
         );
       }
+      if (selectedFile) store.setFileFullyExpanded(selectedFile);
     };
 
     window.addEventListener(
@@ -1719,6 +1720,8 @@ const DiffViewer = memo(function DiffViewer({
     mayHaveTrailingGap,
     expandSkipBlock,
     getExpandedLines,
+    store,
+    selectedFile,
   ]);
 
   // Handle mousemove during drag to extend selection even when not directly over line gutters

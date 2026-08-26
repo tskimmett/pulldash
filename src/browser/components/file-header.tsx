@@ -8,6 +8,7 @@ import {
   MessagesSquare,
   MessageSquareOff,
   UnfoldVertical,
+  FoldVertical,
 } from "lucide-react";
 import {
   Tooltip,
@@ -19,7 +20,11 @@ import { cn } from "../cn";
 import { Keycap } from "../ui/keycap";
 import type { PullRequestFile } from "@/api/types";
 import { memo } from "react";
-import type { DiffViewMode } from "../contexts/pr-review";
+import {
+  usePRReviewSelector,
+  usePRReviewStore,
+  type DiffViewMode,
+} from "../contexts/pr-review";
 
 interface FileHeaderProps {
   file: PullRequestFile;
@@ -50,6 +55,11 @@ export const FileHeader = memo(function FileHeader({
   allCommentsCollapsed,
   onToggleAllComments,
 }: FileHeaderProps) {
+  const store = usePRReviewStore();
+  const isFullyExpanded = usePRReviewSelector((s) =>
+    s.fullyExpandedFiles.has(file.filename)
+  );
+
   const fileStatusBadge = (() => {
     switch (file.status) {
       case "added":
@@ -125,18 +135,34 @@ export const FileHeader = memo(function FileHeader({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                onClick={() =>
-                  window.dispatchEvent(
-                    new CustomEvent("pr-review:expand-all-skip-blocks")
-                  )
+                onClick={() => {
+                  if (isFullyExpanded) {
+                    store.collapseFileSkipBlocks(file.filename);
+                  } else {
+                    window.dispatchEvent(
+                      new CustomEvent("pr-review:expand-all-skip-blocks")
+                    );
+                  }
+                }}
+                aria-label={
+                  isFullyExpanded
+                    ? "Collapse expanded lines"
+                    : "Expand entire file"
                 }
-                aria-label="Expand entire file"
                 className="flex items-center px-2 py-1.5 text-xs rounded-md border border-border bg-muted/30 text-muted-foreground hover:text-foreground transition-colors shrink-0"
               >
-                <UnfoldVertical className="w-3.5 h-3.5" />
+                {isFullyExpanded ? (
+                  <FoldVertical className="w-3.5 h-3.5" />
+                ) : (
+                  <UnfoldVertical className="w-3.5 h-3.5" />
+                )}
               </button>
             </TooltipTrigger>
-            <TooltipContent>Expand entire file</TooltipContent>
+            <TooltipContent>
+              {isFullyExpanded
+                ? "Collapse expanded lines"
+                : "Expand entire file"}
+            </TooltipContent>
           </Tooltip>
         </TooltipProvider>
 
