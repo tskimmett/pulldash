@@ -119,7 +119,7 @@ function getFileIcon(file: PullRequestFile) {
       return <FileMinus className="w-4 h-4 text-red-500" />;
     case "modified":
     case "changed":
-      return <FileEdit className="w-4 h-4 text-yellow-500" />;
+      return <FileEdit className="w-4 h-4 text-muted-foreground" />;
     case "renamed":
       return <FileCode className="w-4 h-4 text-blue-500" />;
     default:
