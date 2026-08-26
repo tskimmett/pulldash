@@ -1871,9 +1871,10 @@ const DiffViewer = memo(function DiffViewer({
       if (focusedLine && !isDraggingState) {
         const rowIndex = getRowIndexForLine(focusedLine, focusedLineSide);
         if (rowIndex !== undefined) {
-          // Use "auto" alignment - only scrolls if needed, keeps row visible
+          // "auto" only scrolls if needed; change navigation requests
+          // "center" so the jumped-to line lands mid-viewport.
           virtualizer.scrollToIndex(rowIndex, {
-            align: "auto",
+            align: store.consumeScrollAlign(),
           });
 
           // Account for KeybindsBar: if line is near bottom of viewport, scroll a bit more

@@ -1436,6 +1436,19 @@ export class PRReviewStore {
   };
 
   /**
+   * One-shot scroll alignment for the next focus-driven scroll. Change
+   * navigation sets "center" so the jumped-to line lands mid-viewport;
+   * regular line navigation leaves it "auto" (scroll only if needed).
+   */
+  private nextScrollAlign: "auto" | "center" = "auto";
+
+  consumeScrollAlign = (): "auto" | "center" => {
+    const align = this.nextScrollAlign;
+    this.nextScrollAlign = "auto";
+    return align;
+  };
+
+  /**
    * Jump focus to the first line of the previous/next change block
    * (contiguous run of added/removed lines) in the current file's diff.
    */
@@ -1492,6 +1505,7 @@ export class PRReviewStore {
     }
     if (!target) return;
 
+    this.nextScrollAlign = "center";
     this.set({
       focusedLine: target.lineNum,
       focusedLineSide: target.side,
