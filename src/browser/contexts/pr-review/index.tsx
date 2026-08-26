@@ -122,6 +122,11 @@ export interface DiffSkipBlock {
 
 export interface ParsedDiff {
   hunks: (DiffHunk | DiffSkipBlock)[];
+  /** Default context around each gap, keyed by skip index (the index one
+   * past the last skip block is the end-of-file gap). */
+  gapContext?: Record<number, ExpandedSkipBlock>;
+  /** Total line count of the new file, when known. */
+  totalNewLines?: number;
 }
 
 export interface CommentingOnLine {
@@ -1169,12 +1174,35 @@ export class PRReviewStore {
       }
     }
 
+    // Seed the default context revealed around each gap, and the file's
+    // real length (sizes the end-of-file gap). Never overwrite lines the
+    // user has already expanded further.
+    let expandedSkipBlocks = this.state.expandedSkipBlocks;
+    if (diff.gapContext) {
+      for (const [idx, segments] of Object.entries(diff.gapContext)) {
+        const key = this.getSkipBlockKey(filename, Number(idx));
+        if (!expandedSkipBlocks[key]) {
+          if (expandedSkipBlocks === this.state.expandedSkipBlocks) {
+            expandedSkipBlocks = { ...expandedSkipBlocks };
+          }
+          expandedSkipBlocks[key] = segments;
+        }
+      }
+    }
+    const fileLineCounts =
+      diff.totalNewLines !== undefined &&
+      this.state.fileLineCounts[filename] !== diff.totalNewLines
+        ? { ...this.state.fileLineCounts, [filename]: diff.totalNewLines }
+        : this.state.fileLineCounts;
+
     this.set({
       loadedDiffs: { ...this.state.loadedDiffs, [filename]: diff },
       navigableItems: {
         ...this.state.navigableItems,
         [filename]: navigableItems,
       },
+      expandedSkipBlocks,
+      fileLineCounts,
     });
   };
 

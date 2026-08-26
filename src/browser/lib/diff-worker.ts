@@ -51,6 +51,14 @@ export interface DiffSkipBlock {
 
 export interface ParsedDiff {
   hunks: (DiffHunk | DiffSkipBlock)[];
+  /**
+   * Default context revealed around each gap (keyed by skip index; the
+   * index one past the last skip block is the end-of-file gap). Present
+   * only when the new file's content was available at parse time.
+   */
+  gapContext?: Record<number, { top: DiffLine[]; bottom: DiffLine[] }>;
+  /** Total line count of the new file, when content was available. */
+  totalNewLines?: number;
 }
 
 interface ParseOptions {
@@ -760,8 +768,104 @@ ${patch}`;
     };
   });
 
+  // Reveal extra context around each gap by default, GitHub-style, using
+  // the already-highlighted new file content (near-free at this point).
+  if (newContent && newHighlightedLines) {
+    const allNewLines = newContent.split("\n");
+    const totalNewLines =
+      allNewLines[allNewLines.length - 1] === ""
+        ? allNewLines.length - 1
+        : allNewLines.length;
+
+    const makeLines = (start: number, count: number): DiffLine[] => {
+      const lines: DiffLine[] = [];
+      for (let i = 0; i < count; i++) {
+        const lineNum = start + i;
+        const value = allNewLines[lineNum - 1] ?? "";
+        lines.push({
+          type: "normal",
+          oldLineNumber: lineNum,
+          newLineNumber: lineNum,
+          content: [
+            {
+              value,
+              html:
+                newHighlightedLines[lineNum - 1] ?? highlight(value, language),
+              type: "normal",
+            },
+          ],
+        });
+      }
+      return lines;
+    };
+
+    const gapContext: Record<number, { top: DiffLine[]; bottom: DiffLine[] }> =
+      {};
+    let expectedNextLine = 1;
+    let skipIdx = 0;
+    let seenHunk = false;
+
+    for (const h of hunks) {
+      if (h.type === "skip") {
+        const start = expectedNextLine;
+        const count = h.count;
+        if (!seenHunk) {
+          // Top-of-file gap: only lines adjacent to the first change
+          gapContext[skipIdx] =
+            count <= DEFAULT_GAP_CONTEXT
+              ? { top: makeLines(start, count), bottom: [] }
+              : {
+                  top: [],
+                  bottom: makeLines(
+                    start + count - DEFAULT_GAP_CONTEXT,
+                    DEFAULT_GAP_CONTEXT
+                  ),
+                };
+        } else if (count <= DEFAULT_GAP_CONTEXT * 2) {
+          gapContext[skipIdx] = { top: makeLines(start, count), bottom: [] };
+        } else {
+          gapContext[skipIdx] = {
+            top: makeLines(start, DEFAULT_GAP_CONTEXT),
+            bottom: makeLines(
+              start + count - DEFAULT_GAP_CONTEXT,
+              DEFAULT_GAP_CONTEXT
+            ),
+          };
+        }
+        expectedNextLine += count;
+        skipIdx++;
+      } else {
+        seenHunk = true;
+        let maxNewLine = h.newStart;
+        for (const line of h.lines) {
+          if (line.newLineNumber && line.newLineNumber > maxNewLine) {
+            maxNewLine = line.newLineNumber;
+          }
+        }
+        expectedNextLine = maxNewLine + 1;
+      }
+    }
+
+    // End-of-file gap (index one past the last skip block)
+    const trailingRemaining = totalNewLines - expectedNextLine + 1;
+    if (seenHunk && trailingRemaining > 0) {
+      gapContext[skipIdx] = {
+        top: makeLines(
+          expectedNextLine,
+          Math.min(DEFAULT_GAP_CONTEXT, trailingRemaining)
+        ),
+        bottom: [],
+      };
+    }
+
+    return { hunks, gapContext, totalNewLines };
+  }
+
   return { hunks };
 }
+
+/** Lines revealed around each gap by default. */
+const DEFAULT_GAP_CONTEXT = 20;
 
 function highlightFileLines(
   content: string,
