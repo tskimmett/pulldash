@@ -15,17 +15,13 @@ export function useKeyboardNavigation() {
         return;
       }
 
-      // Handle Ctrl/Cmd+Arrow for jumping by 10 lines
+      // Handle Ctrl/Cmd+Arrow for jumping to the prev/next change
       if (
         (e.ctrlKey || e.metaKey) &&
         (e.key === "ArrowDown" || e.key === "ArrowUp")
       ) {
         e.preventDefault();
-        store.navigateLine(
-          e.key === "ArrowDown" ? "down" : "up",
-          e.shiftKey,
-          10
-        );
+        store.navigateToChange(e.key === "ArrowDown" ? "next" : "prev");
         return;
       }
 

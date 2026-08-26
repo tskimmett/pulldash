@@ -1435,6 +1435,74 @@ export class PRReviewStore {
     }
   };
 
+  /**
+   * Jump focus to the first line of the previous/next change block
+   * (contiguous run of added/removed lines) in the current file's diff.
+   */
+  navigateToChange = (direction: "prev" | "next") => {
+    const { selectedFile, loadedDiffs, focusedLine, focusedLineSide } =
+      this.state;
+    if (!selectedFile) return;
+    const diff = loadedDiffs[selectedFile];
+    if (!diff?.hunks) return;
+
+    type BlockStart = { lineNum: number; side: "old" | "new"; ord: number };
+    const blockStarts: BlockStart[] = [];
+    let focusedOrd = -1;
+    let ord = 0;
+    let inChange = false;
+
+    for (const hunk of diff.hunks) {
+      if (hunk.type !== "hunk") {
+        inChange = false;
+        continue;
+      }
+      for (const line of hunk.lines) {
+        const isChange = line.type === "insert" || line.type === "delete";
+        const side: "old" | "new" = line.type === "delete" ? "old" : "new";
+        const lineNum =
+          side === "old" ? line.oldLineNumber : line.newLineNumber;
+        if (isChange && !inChange && lineNum) {
+          blockStarts.push({ lineNum, side, ord });
+        }
+        inChange = isChange;
+        if (
+          focusedLine !== null &&
+          lineNum === focusedLine &&
+          (focusedLineSide ?? "new") === side
+        ) {
+          focusedOrd = ord;
+        }
+        ord++;
+      }
+    }
+    if (blockStarts.length === 0) return;
+
+    let target: BlockStart | undefined;
+    if (direction === "next") {
+      target =
+        focusedOrd === -1
+          ? blockStarts[0]
+          : blockStarts.find((b) => b.ord > focusedOrd);
+    } else {
+      target =
+        focusedOrd === -1
+          ? blockStarts[blockStarts.length - 1]
+          : [...blockStarts].reverse().find((b) => b.ord < focusedOrd);
+    }
+    if (!target) return;
+
+    this.set({
+      focusedLine: target.lineNum,
+      focusedLineSide: target.side,
+      focusedSkipBlockIndex: null,
+      focusedCommentId: null,
+      focusedPendingCommentId: null,
+      selectionAnchor: null,
+      selectionAnchorSide: null,
+    });
+  };
+
   navigateLine = (
     direction: "up" | "down",
     withShift: boolean,

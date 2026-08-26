@@ -3,6 +3,8 @@ import {
   FileCode,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   Columns2,
   AlignJustify,
   MessagesSquare,
@@ -130,6 +132,46 @@ export const FileHeader = memo(function FileHeader({
       </div>
 
       <div className="flex items-center gap-2">
+        {/* Jump to prev/next change block in the diff */}
+        <TooltipProvider delayDuration={300}>
+          <div className="flex items-center rounded-md border border-border bg-muted/30 shrink-0">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => store.navigateToChange("prev")}
+                  aria-label="Previous change"
+                  className="flex items-center px-1.5 py-1.5 text-xs rounded-l-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                >
+                  <ChevronUp className="w-3.5 h-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Previous change{" "}
+                <kbd className="ml-1 px-1 py-0.5 bg-muted/60 rounded text-[9px] font-mono">
+                  Ctrl+&uarr;
+                </kbd>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => store.navigateToChange("next")}
+                  aria-label="Next change"
+                  className="flex items-center px-1.5 py-1.5 text-xs rounded-r-md border-l border-border text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                >
+                  <ChevronDown className="w-3.5 h-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                Next change{" "}
+                <kbd className="ml-1 px-1 py-0.5 bg-muted/60 rounded text-[9px] font-mono">
+                  Ctrl+&darr;
+                </kbd>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        </TooltipProvider>
+
         {/* Expand every collapsed gap in the diff */}
         <TooltipProvider delayDuration={300}>
           <Tooltip>
