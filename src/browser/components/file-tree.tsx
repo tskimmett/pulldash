@@ -56,6 +56,9 @@ interface TreeNode {
   type: "file" | "folder";
   children?: TreeNode[];
   file?: PullRequestFile;
+  /** Added/deleted line counts; for folders, summed over all descendants. */
+  additions: number;
+  deletions: number;
 }
 
 // Flattened item for virtualization
@@ -85,8 +88,14 @@ function buildTree(files: PullRequestFile[]): TreeNode[] {
           type: isLast ? "file" : "folder",
           children: isLast ? undefined : {},
           file: isLast ? file : undefined,
+          additions: 0,
+          deletions: 0,
         } as TreeNode & { children: Record<string, TreeNode> };
       }
+
+      // Roll the file's stats up into every ancestor folder (and itself)
+      current[part].additions += file.additions ?? 0;
+      current[part].deletions += file.deletions ?? 0;
 
       if (!isLast) {
         current = (
@@ -127,6 +136,23 @@ function getFileIcon(file: PullRequestFile) {
     default:
       return <File className="w-4 h-4 text-muted-foreground" />;
   }
+}
+
+/** Compact +N -N diff stats shown in the tree's right margin. */
+function DiffStat({
+  additions,
+  deletions,
+}: {
+  additions: number;
+  deletions: number;
+}) {
+  if (additions === 0 && deletions === 0) return null;
+  return (
+    <span className="flex items-center gap-1 text-[11px] tabular-nums shrink-0 leading-none">
+      {additions > 0 && <span className="text-green-500">+{additions}</span>}
+      {deletions > 0 && <span className="text-red-500">−{deletions}</span>}
+    </span>
+  );
 }
 
 // Helper to collect all file paths under a folder
@@ -355,6 +381,10 @@ export function FileTree({
                         <Folder className="w-4 h-4 shrink-0 text-sky-400 fill-sky-400/25" />
                       )}
                       <span className="truncate flex-1">{node.name}</span>
+                      <DiffStat
+                        additions={node.additions}
+                        deletions={node.deletions}
+                      />
                       {allViewed && (
                         <Check className="w-3 h-3 text-green-500 shrink-0" />
                       )}
@@ -427,7 +457,11 @@ export function FileTree({
                   >
                     {node.file && getFileIcon(node.file)}
                     <span className="truncate flex-1">{node.name}</span>
-                    <div className="flex items-center gap-1 shrink-0">
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <DiffStat
+                        additions={node.additions}
+                        deletions={node.deletions}
+                      />
                       {pendingCount > 0 && (
                         <span className="flex items-center gap-0.5 text-xs text-yellow-500 bg-yellow-500/20 px-1.5 py-0.5 rounded">
                           {pendingCount}
