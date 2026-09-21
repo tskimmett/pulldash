@@ -2598,7 +2598,13 @@ function createGitHubStore() {
     owner: string,
     repo: string,
     number: number,
-    options: { path: string; line: number; body: string; startLine?: number }
+    options: {
+      path: string;
+      line: number;
+      body: string;
+      startLine?: number;
+      side?: "LEFT" | "RIGHT";
+    }
   ): Promise<{
     reviewId: string;
     commentId: string;
@@ -2620,8 +2626,13 @@ function createGitHubStore() {
       body: options.body,
     };
 
+    if (options.side) {
+      input.side = options.side;
+    }
+
     if (options.startLine && options.startLine !== options.line) {
       input.startLine = options.startLine;
+      if (options.side) input.startSide = options.side;
     }
 
     const data = await batcher.query<{

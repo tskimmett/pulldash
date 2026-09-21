@@ -66,11 +66,16 @@ export function useReviewActions() {
       github.invalidateCache(`pr:${owner}/${repo}/${pr.number}:timeline`);
 
       // Refresh comments, reviews, and timeline
-      const [newComments, reviews, timeline] = await Promise.all([
-        github.getPRComments(owner, repo, pr.number),
-        github.getPRReviews(owner, repo, pr.number),
-        github.getPRTimeline(owner, repo, pr.number),
-      ]);
+      const [newComments, reviews, timeline, threadsResult] = await Promise.all(
+        [
+          github.getPRComments(owner, repo, pr.number),
+          github.getPRReviews(owner, repo, pr.number),
+          github.getPRTimeline(owner, repo, pr.number),
+          github.getReviewThreads(owner, repo, pr.number).catch(() => null),
+        ]
+      );
+      // Threads first so setComments can stamp resolved state onto comments
+      if (threadsResult) store.setReviewThreads(threadsResult.threads);
       store.setComments(newComments as ReviewComment[]);
       store.setReviews(reviews);
       store.setTimeline(timeline);

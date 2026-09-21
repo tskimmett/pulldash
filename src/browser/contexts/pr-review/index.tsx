@@ -18,6 +18,7 @@ import {
   type MentionUser,
 } from "@/browser/ui/markdown";
 import { isTestFile } from "@/browser/lib/test-file";
+import { enrichCommentsWithThreads } from "@/browser/lib/review-threads";
 import {
   cancelSemanticJob,
   fetchCachedSemanticReview,
@@ -32,6 +33,7 @@ import type {
   SemanticRange,
   SemanticReview,
 } from "@/semantic/schema";
+import { layerFilesInOrder } from "@/semantic/layer-files";
 import {
   type GitHubStore,
   type Review,
@@ -129,9 +131,19 @@ export interface ParsedDiff {
   totalNewLines?: number;
 }
 
+export type CommentSide = "LEFT" | "RIGHT";
+
 export interface CommentingOnLine {
   line: number;
   startLine?: number;
+  /** GitHub diff side: LEFT for deleted lines, RIGHT for added/context. */
+  side: CommentSide;
+}
+
+export function toCommentSide(
+  side: "old" | "new" | null | undefined
+): CommentSide {
+  return side === "old" ? "LEFT" : "RIGHT";
 }
 
 // ============================================================================
@@ -277,6 +289,8 @@ interface PRReviewState {
   // Effective collapsed = override ?? (allCommentsCollapsed || threadIsResolved)
   allCommentsCollapsed: boolean;
   collapsedThreadOverrides: Map<string, boolean>;
+  // Hide resolved threads entirely from the diff (persisted).
+  hideResolvedComments: boolean;
 
   // Semantic review (local-agent-powered; hidden when no providers)
   semanticProviders: ProviderInfo[] | null; // null = not yet loaded
@@ -294,6 +308,8 @@ interface PRReviewState {
   reviewBody: string;
   showReviewPanel: boolean;
   submittingReview: boolean;
+  /** Error from the last review submission attempt, shown in the submit dropdown. */
+  reviewSubmitError: string | null;
 }
 
 // ============================================================================
@@ -352,6 +368,36 @@ function setStoredCollapseAllComments(collapsed: boolean): void {
   try {
     localStorage.setItem(COLLAPSE_ALL_COMMENTS_KEY, String(collapsed));
   } catch {}
+}
+
+const HIDE_RESOLVED_COMMENTS_KEY = "pulldash_hide_resolved_comments";
+
+function getStoredHideResolvedComments(): boolean {
+  try {
+    return localStorage.getItem(HIDE_RESOLVED_COMMENTS_KEY) === "true";
+  } catch {}
+  return false;
+}
+
+function setStoredHideResolvedComments(hidden: boolean): void {
+  try {
+    localStorage.setItem(HIDE_RESOLVED_COMMENTS_KEY, String(hidden));
+  } catch {}
+}
+
+/**
+ * Comments that should appear in the diff. When "hide resolved" is on,
+ * comments in resolved threads are dropped entirely (not just collapsed).
+ * Returns the same array when nothing is filtered so memoized consumers
+ * don't re-render.
+ */
+export function visibleComments<T extends { is_resolved?: boolean }>(
+  comments: T[],
+  hideResolved: boolean
+): T[] {
+  if (!hideResolved) return comments;
+  const filtered = comments.filter((c) => !c.is_resolved);
+  return filtered.length === comments.length ? comments : filtered;
 }
 
 /**
@@ -513,6 +559,7 @@ export class PRReviewStore {
       focusedPendingCommentId: null,
       editingPendingCommentId: null,
       allCommentsCollapsed: getStoredCollapseAllComments(),
+      hideResolvedComments: getStoredHideResolvedComments(),
       collapsedThreadOverrides: new Map(),
       semanticProviders: null,
       semanticStatus: "idle",
@@ -528,6 +575,7 @@ export class PRReviewStore {
       reviewBody,
       showReviewPanel: false,
       submittingReview: false,
+      reviewSubmitError: null,
       currentUser: null,
     };
   }
@@ -847,6 +895,24 @@ export class PRReviewStore {
     this.setAllCommentsCollapsed(!this.state.allCommentsCollapsed);
   };
 
+  /** Hide or show resolved threads in the diff. Drops focus if it was on a hidden comment. */
+  setHideResolvedComments = (hidden: boolean) => {
+    setStoredHideResolvedComments(hidden);
+    const { focusedCommentId, comments } = this.state;
+    const focused = focusedCommentId
+      ? comments.find((c) => c.id === focusedCommentId)
+      : undefined;
+    this.set({
+      hideResolvedComments: hidden,
+      focusedCommentId:
+        hidden && focused?.is_resolved ? null : focusedCommentId,
+    });
+  };
+
+  toggleHideResolvedComments = () => {
+    this.setHideResolvedComments(!this.state.hideResolvedComments);
+  };
+
   /** Toggle a single thread, recording an override when it differs from the default. */
   setThreadCollapsed = (
     key: string,
@@ -1052,12 +1118,24 @@ export class PRReviewStore {
     if (!found) return;
     this.set({ selectedLayerId: layerKey });
     const range = found.layer.ranges[0];
-    if (range) this.jumpToSemanticRange(range);
+    if (range) this.jumpToSemanticRange(range, layerKey);
   };
 
-  /** Open the range's file and focus its first line (diff auto-scrolls). */
-  jumpToSemanticRange = (range: SemanticRange) => {
+  /**
+   * Open the range's file and focus its first line (diff auto-scrolls). When
+   * `layerKey` is given, that layer becomes the selected one first, so a file
+   * covered by several layers stays attributed to the layer the user clicked
+   * (selectFile keeps the current layer whenever it covers the file).
+   */
+  jumpToSemanticRange = (range: SemanticRange, layerKey?: string) => {
     if (!this.state.files.some((f) => f.filename === range.file)) return;
+    if (
+      layerKey &&
+      layerKey !== this.state.selectedLayerId &&
+      this.getSemanticLayer(layerKey)
+    ) {
+      this.set({ selectedLayerId: layerKey });
+    }
     this.selectFile(range.file);
     this.set({
       focusedLine: range.startLine,
@@ -1079,29 +1157,21 @@ export class PRReviewStore {
       return;
     }
 
-    // Unique files of this layer, in the order its ranges visit them
-    const layerFiles: string[] = [];
-    for (const range of found.layer.ranges) {
-      if (
-        !layerFiles.includes(range.file) &&
-        files.some((f) => f.filename === range.file)
-      ) {
-        layerFiles.push(range.file);
-      }
-    }
-
-    const idx = selectedFile ? layerFiles.indexOf(selectedFile) : -1;
+    const entries = layerFilesInOrder(
+      found.layer,
+      new Set(files.map((f) => f.filename))
+    );
+    const idx = selectedFile
+      ? entries.findIndex((e) => e.file === selectedFile)
+      : -1;
     const targetIdx =
       direction === "next" ? (idx === -1 ? 0 : idx + 1) : idx - 1;
 
     if (idx !== -1 || direction === "next") {
-      const targetFile = layerFiles[targetIdx];
-      if (targetFile) {
-        const range = found.layer.ranges.find((r) => r.file === targetFile);
-        if (range) {
-          this.jumpToSemanticRange(range);
-          return;
-        }
+      const target = entries[targetIdx];
+      if (target) {
+        this.jumpToSemanticRange(target.ranges[0], selectedLayerId!);
+        return;
       }
     }
     // Past either end of the layer's files - move to the adjacent layer
@@ -1587,12 +1657,15 @@ export class PRReviewStore {
       loadedDiffs,
       expandedSkipBlocks,
       navigableItems: precomputedItems,
-      comments,
+      comments: allComments,
       pendingComments,
       focusedCommentId,
       focusedPendingCommentId,
       focusedSkipBlockIndex,
+      hideResolvedComments,
     } = this.state;
+    // Hidden (resolved) threads aren't rendered, so don't navigate into them.
+    const comments = visibleComments(allComments, hideResolvedComments);
 
     if (!selectedFile) return;
     const diff = loadedDiffs[selectedFile];
@@ -2200,12 +2273,53 @@ export class PRReviewStore {
     }
   };
 
-  startCommenting = (line: number, startLine?: number) => {
-    this.set({ commentingOnLine: { line, startLine } });
+  /**
+   * Whether GitHub will accept a review comment on this line: it must be
+   * part of a diff hunk on the given side. Lines revealed by expanding a gap
+   * are not commentable. Returns true when the file's diff isn't loaded yet.
+   */
+  isLineInDiff = (
+    filename: string,
+    line: number,
+    side: CommentSide = "RIGHT"
+  ): boolean => {
+    const diff = this.state.loadedDiffs[filename];
+    if (!diff) return true;
+    for (const hunk of diff.hunks) {
+      if (hunk.type !== "hunk") continue;
+      for (const l of hunk.lines) {
+        if (side === "LEFT") {
+          if (l.type !== "insert" && l.oldLineNumber === line) return true;
+        } else if (l.type !== "delete" && l.newLineNumber === line) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  startCommenting = (
+    line: number,
+    startLine?: number,
+    lineSide: "old" | "new" | null = "new"
+  ) => {
+    const side = toCommentSide(lineSide);
+    const { selectedFile } = this.state;
+    // GitHub rejects comments outside diff hunks (e.g. expanded context), so
+    // don't offer a form that can never be submitted.
+    if (
+      selectedFile &&
+      (!this.isLineInDiff(selectedFile, line, side) ||
+        (startLine !== undefined &&
+          !this.isLineInDiff(selectedFile, startLine, side)))
+    ) {
+      return;
+    }
+    this.set({ commentingOnLine: { line, startLine, side } });
   };
 
   startCommentingOnFocusedLine = () => {
-    const { focusedLine, selectionAnchor } = this.state;
+    const { focusedLine, selectionAnchor, focusedLineSide } = this.state;
     if (!focusedLine) return;
 
     const startLine = selectionAnchor
@@ -2215,12 +2329,11 @@ export class PRReviewStore {
       ? Math.max(focusedLine, selectionAnchor)
       : focusedLine;
 
-    this.set({
-      commentingOnLine: {
-        line: endLine,
-        startLine: startLine !== endLine ? startLine : undefined,
-      },
-    });
+    this.startCommenting(
+      endLine,
+      startLine !== endLine ? startLine : undefined,
+      focusedLineSide
+    );
   };
 
   cancelCommenting = () => {
@@ -2394,7 +2507,9 @@ export class PRReviewStore {
   };
 
   setComments = (comments: ReviewComment[]) => {
-    this.set({ comments });
+    this.set({
+      comments: enrichCommentsWithThreads(comments, this.state.reviewThreads),
+    });
     this.recomputeCommentRangeLookup();
   };
 
@@ -2538,8 +2653,21 @@ export class PRReviewStore {
   };
 
   addReply = (reply: ReviewComment) => {
+    // A fresh reply from REST has no thread info; inherit it from the parent
+    // so the thread's resolved state and resolve button stay consistent.
+    const parent = this.state.comments.find(
+      (c) => c.id === reply.in_reply_to_id
+    );
+    const enriched = parent
+      ? {
+          ...reply,
+          pull_request_review_thread_id: parent.pull_request_review_thread_id,
+          is_resolved: parent.is_resolved,
+          resolved_by: parent.resolved_by,
+        }
+      : reply;
     this.set({
-      comments: [...this.state.comments, reply],
+      comments: [...this.state.comments, enriched],
       replyingToCommentId: null,
     });
   };
@@ -2573,6 +2701,10 @@ export class PRReviewStore {
     this.set({ submittingReview: submitting });
   };
 
+  setReviewSubmitError = (error: string | null) => {
+    this.set({ reviewSubmitError: error });
+  };
+
   clearReviewState = () => {
     this.clearPendingState();
     this.set({
@@ -2581,6 +2713,7 @@ export class PRReviewStore {
       reviewBody: "",
       showReviewPanel: false,
       submittingReview: false,
+      reviewSubmitError: null,
     });
   };
 
@@ -2828,6 +2961,10 @@ export class PRReviewStore {
         commits: commitsData,
         timeline: timelineData,
         reviewThreads: reviewThreadsResult.threads,
+        comments: enrichCommentsWithThreads(
+          this.state.comments,
+          reviewThreadsResult.threads
+        ),
         viewerPermission:
           reviewThreadsResult.viewerPermission ?? this.state.viewerPermission,
         viewerCanMergeAsAdmin: reviewThreadsResult.viewerCanMergeAsAdmin,
@@ -3221,7 +3358,10 @@ export class PRReviewStore {
   };
 
   setReviewThreads = (threads: ReviewThread[]) => {
-    this.set({ reviewThreads: threads });
+    this.set({
+      reviewThreads: threads,
+      comments: enrichCommentsWithThreads(this.state.comments, threads),
+    });
   };
 
   updateReviewThread = (
@@ -3406,7 +3546,10 @@ export { useCommentCountsByFile } from "./useCommentCountsByFile";
 export { useCurrentFile } from "./useCurrentFile";
 export { useCurrentDiff } from "./useCurrentDiff";
 export { useIsCurrentFileLoading } from "./useIsCurrentFileLoading";
-export { useCurrentFileComments } from "./useCurrentFileComments";
+export {
+  useCurrentFileComments,
+  useCurrentFileResolvedCount,
+} from "./useCurrentFileComments";
 export { useCurrentFilePendingComments } from "./useCurrentFilePendingComments";
 export { useSelectionRange } from "./useSelectionRange";
 export { useIsLineFocused } from "./useIsLineFocused";

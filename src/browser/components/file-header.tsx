@@ -9,6 +9,8 @@ import {
   AlignJustify,
   MessagesSquare,
   MessageSquareOff,
+  CircleCheck,
+  CircleCheckBig,
   UnfoldVertical,
   FoldVertical,
 } from "lucide-react";
@@ -41,6 +43,12 @@ interface FileHeaderProps {
   commentCount?: number;
   allCommentsCollapsed?: boolean;
   onToggleAllComments?: () => void;
+  /** Resolved comments in this file, shown as the badge on the hide toggle */
+  resolvedCommentCount?: number;
+  /** Whether the PR has any resolved comments; the hide toggle is hidden otherwise */
+  hasResolvedComments?: boolean;
+  hideResolvedComments?: boolean;
+  onToggleHideResolved?: () => void;
 }
 
 export const FileHeader = memo(function FileHeader({
@@ -56,6 +64,10 @@ export const FileHeader = memo(function FileHeader({
   commentCount,
   allCommentsCollapsed,
   onToggleAllComments,
+  resolvedCommentCount = 0,
+  hasResolvedComments,
+  hideResolvedComments,
+  onToggleHideResolved,
 }: FileHeaderProps) {
   const store = usePRReviewStore();
   const isFullyExpanded = usePRReviewSelector((s) =>
@@ -245,6 +257,48 @@ export const FileHeader = memo(function FileHeader({
             </Tooltip>
           </TooltipProvider>
         )}
+
+        {/* Hide/show resolved comment threads */}
+        {onToggleHideResolved &&
+          (hasResolvedComments || hideResolvedComments) && (
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={onToggleHideResolved}
+                    aria-pressed={hideResolvedComments}
+                    aria-label={
+                      hideResolvedComments
+                        ? "Show resolved comments"
+                        : "Hide resolved comments"
+                    }
+                    className={cn(
+                      "flex items-center gap-1 px-2 py-1.5 text-xs rounded-md border border-border transition-colors shrink-0",
+                      hideResolvedComments
+                        ? "bg-muted text-foreground"
+                        : "bg-muted/30 text-muted-foreground hover:text-foreground"
+                    )}
+                  >
+                    {hideResolvedComments ? (
+                      <CircleCheck className="w-3.5 h-3.5" />
+                    ) : (
+                      <CircleCheckBig className="w-3.5 h-3.5 text-green-500" />
+                    )}
+                    {resolvedCommentCount > 0 && (
+                      <span className="tabular-nums">
+                        {resolvedCommentCount}
+                      </span>
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {hideResolvedComments
+                    ? "Show resolved comments"
+                    : "Hide resolved comments"}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
 
         {/* Split/Unified toggle */}
         {onToggleDiffViewMode && (

@@ -37,6 +37,7 @@ import {
   Smile,
   FlaskConical,
   FlaskConicalOff,
+  AlertCircle,
 } from "lucide-react";
 import type { Reaction, ReactionContent } from "../contexts/github";
 import { Skeleton } from "../ui/skeleton";
@@ -51,12 +52,14 @@ import { cn } from "../cn";
 import { PRHeader } from "./pr-header";
 import { SemanticReviewButton } from "./semantic-review-button";
 import { SemanticLayerBar, SemanticSidebar } from "./semantic-panel";
+import { layerFilesInOrder } from "@/semantic/layer-files";
 import { FileTree } from "./file-tree";
 import {
   SidebarResizeHandle,
   useSidebarWidth,
 } from "@/browser/lib/sidebar-width";
 import { isTestFile } from "@/browser/lib/test-file";
+import { enrichCommentsWithThreads } from "@/browser/lib/review-threads";
 import { FileHeader } from "./file-header";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import {
@@ -88,6 +91,7 @@ import {
   useCurrentDiff,
   useIsCurrentFileLoading,
   useCurrentFileComments,
+  useCurrentFileResolvedCount,
   useCurrentFilePendingComments,
   useCommentCountsByFile,
   usePendingCommentCountsByFile,
@@ -97,6 +101,7 @@ import {
   commentThreadKey,
   isThreadCollapsed,
   type LocalPendingComment,
+  type CommentSide,
   type ParsedDiff,
   type DiffLine,
   type DiffHunk,
@@ -243,7 +248,14 @@ export function PRReviewContent({
 
         setPr(prData);
         setFiles(filesData);
-        setComments(commentsData as ReviewComment[]);
+        // REST comments carry no thread/resolution info; stamp it on from
+        // the GraphQL threads so resolved threads render as such.
+        setComments(
+          enrichCommentsWithThreads(
+            commentsData as ReviewComment[],
+            reviewThreadsResult.threads
+          )
+        );
         setViewerPermission(reviewThreadsResult.viewerPermission);
         setViewerCanMergeAsAdmin(reviewThreadsResult.viewerCanMergeAsAdmin);
 
@@ -716,6 +728,13 @@ const DiffPanel = memo(function DiffPanel() {
   );
   const currentFileComments = useCurrentFileComments();
   const currentFileCommentCount = currentFileComments.length;
+  const currentFileResolvedCount = useCurrentFileResolvedCount();
+  const hasResolvedComments = usePRReviewSelector((s) =>
+    s.comments.some((c) => c.is_resolved)
+  );
+  const hideResolvedComments = usePRReviewSelector(
+    (s) => s.hideResolvedComments
+  );
 
   const viewMode = usePRReviewSelector((s) => s.viewMode);
 
@@ -723,9 +742,24 @@ const DiffPanel = memo(function DiffPanel() {
   const parsedDiff = useCurrentDiff();
   const isLoading = useIsCurrentFileLoading();
 
-  const currentIndex = selectedFile
-    ? files.findIndex((f) => f.filename === selectedFile)
-    : -1;
+  // In semantic mode the arrows walk the selected layer's files, so the
+  // "N / M" counter should count within that layer rather than the whole PR.
+  const selectedLayerId = usePRReviewSelector((s) => s.selectedLayerId);
+  const semanticLayer =
+    viewMode === "semantic" && selectedLayerId
+      ? (store.getSemanticLayer(selectedLayerId)?.layer ?? null)
+      : null;
+  const navFiles = useMemo(
+    () =>
+      semanticLayer
+        ? layerFilesInOrder(
+            semanticLayer,
+            new Set(files.map((f) => f.filename))
+          ).map((e) => e.file)
+        : files.map((f) => f.filename),
+    [semanticLayer, files]
+  );
+  const currentIndex = selectedFile ? navFiles.indexOf(selectedFile) : -1;
 
   // Show overview panel
   if (showOverview) {
@@ -753,7 +787,7 @@ const DiffPanel = memo(function DiffPanel() {
                 isViewed={viewedFiles.has(currentFile.filename)}
                 onToggleViewed={() => store.toggleViewed(currentFile.filename)}
                 currentIndex={currentIndex}
-                totalFiles={files.length}
+                totalFiles={navFiles.length}
                 onPrevFile={() =>
                   store.getSnapshot().viewMode === "semantic"
                     ? store.navigateSemanticFile("prev")
@@ -769,6 +803,10 @@ const DiffPanel = memo(function DiffPanel() {
                 commentCount={currentFileCommentCount}
                 allCommentsCollapsed={allCommentsCollapsed}
                 onToggleAllComments={() => store.toggleAllCommentsCollapsed()}
+                resolvedCommentCount={currentFileResolvedCount}
+                hasResolvedComments={hasResolvedComments}
+                hideResolvedComments={hideResolvedComments}
+                onToggleHideResolved={() => store.toggleHideResolvedComments()}
               />
             </div>
           </div>
@@ -1060,7 +1098,13 @@ type VirtualRowType =
     }
   | { type: "line"; line: DiffLine; lineNum: number | undefined; index: number }
   | { type: "split-line"; pair: SplitLinePair; index: number }
-  | { type: "comment-form"; lineNum: number; startLine?: number; index: number }
+  | {
+      type: "comment-form";
+      lineNum: number;
+      startLine?: number;
+      side: CommentSide;
+      index: number;
+    }
   | { type: "pending-comment"; comment: LocalPendingComment; index: number }
   | {
       type: "comment-thread";
@@ -1069,6 +1113,174 @@ type VirtualRowType =
       index: number;
     }
   | { type: "skip-spacer"; position: "before" | "after"; index: number };
+
+// ============================================================================
+// Overview Ruler (VS Code-style change markers in the scrollbar track)
+// ============================================================================
+
+type RulerMarkKind = "insert" | "delete" | "comment";
+
+interface RulerMark {
+  kind: RulerMarkKind;
+  /** Content-space start offset in px */
+  start: number;
+  /** Content-space end offset in px */
+  end: number;
+}
+
+const RULER_MARK_CLASS: Record<RulerMarkKind, string> = {
+  insert: "left-1/2 w-1/2 bg-green-500/80",
+  delete: "left-0 w-1/2 bg-orange-600/80",
+  comment: "left-0 w-full bg-amber-500/90",
+};
+
+interface DiffOverviewRulerProps {
+  marks: RulerMark[];
+  scrollElRef: React.RefObject<HTMLDivElement | null>;
+  /** Any value that changes when the scroll height may have changed */
+  contentSize: number;
+}
+
+/**
+ * Renders behind the (transparent-tracked) native scrollbar of the diff
+ * viewer so change/comment locations show through the translucent thumb.
+ */
+const RULER_MIN_THUMB = 24;
+
+const DiffOverviewRuler = memo(function DiffOverviewRuler({
+  marks,
+  scrollElRef,
+  contentSize,
+}: DiffOverviewRulerProps) {
+  const [metrics, setMetrics] = useState({ track: 0, scroll: 0 });
+  const thumbRef = useRef<HTMLDivElement>(null);
+  const { track, scroll } = metrics;
+  const thumbHeight = Math.max(RULER_MIN_THUMB, (track * track) / scroll);
+  // Ratio between scrollTop and thumb offset (accounts for min thumb size)
+  const thumbTravel = track - thumbHeight;
+  const scrollRange = scroll - track;
+
+  useEffect(() => {
+    const el = scrollElRef.current;
+    if (!el) return;
+    const update = () => {
+      const t = el.clientHeight;
+      const s = el.scrollHeight;
+      setMetrics((m) =>
+        m.track === t && m.scroll === s ? m : { track: t, scroll: s }
+      );
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [scrollElRef, contentSize]);
+
+  // Position the thumb directly from scroll events - no React re-render per frame.
+  useEffect(() => {
+    const el = scrollElRef.current;
+    if (!el || scrollRange <= 0) return;
+    const position = () => {
+      const thumb = thumbRef.current;
+      if (!thumb) return;
+      const y = (el.scrollTop / scrollRange) * thumbTravel;
+      thumb.style.transform = `translateY(${y}px)`;
+    };
+    position();
+    el.addEventListener("scroll", position, { passive: true });
+    return () => el.removeEventListener("scroll", position);
+  }, [scrollElRef, scrollRange, thumbTravel]);
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const el = scrollElRef.current;
+      if (!el || e.button !== 0 || scrollRange <= 0) return;
+      e.preventDefault();
+      const ruler = e.currentTarget;
+      const rulerTop = ruler.getBoundingClientRect().top;
+      const y = e.clientY - rulerTop;
+      const thumbTop = (el.scrollTop / scrollRange) * thumbTravel;
+      const onThumb = y >= thumbTop && y <= thumbTop + thumbHeight;
+
+      if (!onThumb) {
+        // Jump so the clicked spot in the file is centered in the viewport.
+        const target = (y / track) * scroll - track / 2;
+        el.scrollTop = Math.max(0, Math.min(scrollRange, target));
+      }
+
+      // Continue as a drag from wherever the thumb is now.
+      const startY = e.clientY;
+      const startScrollTop = el.scrollTop;
+      const pxPerThumbPx = scrollRange / thumbTravel;
+      ruler.setPointerCapture(e.pointerId);
+      ruler.dataset.dragging = "true";
+      const onMove = (ev: PointerEvent) => {
+        el.scrollTop = startScrollTop + (ev.clientY - startY) * pxPerThumbPx;
+      };
+      const onUp = () => {
+        delete ruler.dataset.dragging;
+        ruler.removeEventListener("pointermove", onMove);
+        ruler.removeEventListener("pointerup", onUp);
+        ruler.removeEventListener("pointercancel", onUp);
+      };
+      ruler.addEventListener("pointermove", onMove);
+      ruler.addEventListener("pointerup", onUp);
+      ruler.addEventListener("pointercancel", onUp);
+    },
+    [scrollElRef, scrollRange, thumbTravel, thumbHeight, track, scroll]
+  );
+
+  // Nothing to scroll: hide the ruler like a native scrollbar would.
+  if (track === 0 || scrollRange <= 0) return null;
+
+  const scale = track / scroll;
+
+  return (
+    <div
+      aria-hidden
+      onPointerDown={onPointerDown}
+      className="group absolute top-0 right-0 z-20 w-[14px] cursor-default select-none touch-none bg-[var(--scrollbar-track)]"
+      style={{ height: track }}
+    >
+      {marks.map((mark, i) => {
+        const top = mark.start * scale;
+        const height = Math.max(2, (mark.end - mark.start) * scale);
+        return (
+          <div
+            key={i}
+            className={cn("absolute", RULER_MARK_CLASS[mark.kind])}
+            style={{ top, height }}
+          />
+        );
+      })}
+      <div
+        ref={thumbRef}
+        className="absolute left-0 top-0 w-full rounded-full border-2 border-transparent bg-clip-padding bg-[color-mix(in_oklch,var(--scrollbar-thumb)_60%,transparent)] group-hover:bg-[color-mix(in_oklch,var(--scrollbar-thumb-hover)_75%,transparent)] group-data-[dragging=true]:bg-[color-mix(in_oklch,var(--scrollbar-thumb-hover)_75%,transparent)]"
+        style={{ height: thumbHeight }}
+      />
+    </div>
+  );
+});
+
+function rowRulerKinds(row: VirtualRowType): RulerMarkKind[] | null {
+  switch (row.type) {
+    case "line":
+      if (row.line.type === "insert") return ["insert"];
+      if (row.line.type === "delete") return ["delete"];
+      return null;
+    case "split-line": {
+      const kinds: RulerMarkKind[] = [];
+      if (row.pair.left?.type === "delete") kinds.push("delete");
+      if (row.pair.right?.type === "insert") kinds.push("insert");
+      return kinds.length ? kinds : null;
+    }
+    case "comment-thread":
+    case "pending-comment":
+      return ["comment"];
+    default:
+      return null;
+  }
+}
 
 // ============================================================================
 // Diff Viewer (Virtualized)
@@ -1465,6 +1677,7 @@ const DiffViewer = memo(function DiffViewer({
           type: "comment-form",
           lineNum: targetLine,
           startLine: commentingOnLine.startLine,
+          side: commentingOnLine.side,
           index: newIndex++,
         });
       }
@@ -1561,6 +1774,46 @@ const DiffViewer = memo(function DiffViewer({
     paddingEnd: 300,
   });
 
+  const totalSize = virtualizer.getTotalSize();
+
+  // Merge adjacent rows of the same kind into ruler marks. Uses measured
+  // offsets when available so comment threads of varying height stay aligned.
+  const rulerMarks = useMemo((): RulerMark[] => {
+    const marks: RulerMark[] = [];
+    const lastByKind: Partial<Record<RulerMarkKind, RulerMark>> = {};
+    // Comments are rarer and drawn on top, so collect them separately.
+    const commentMarks: RulerMark[] = [];
+    const cache = virtualizer.measurementsCache;
+    let cursor = 0;
+
+    for (let i = 0; i < virtualRows.length; i++) {
+      const measured = cache[i];
+      const start = measured?.start ?? cursor;
+      const end = measured?.end ?? start + estimateSize(i);
+      cursor = end;
+
+      const row = virtualRows[i];
+      if (!row) continue;
+      const kinds = rowRulerKinds(row);
+      if (!kinds) continue;
+
+      for (const kind of kinds) {
+        const last = lastByKind[kind];
+        if (last && start <= last.end + 1) {
+          last.end = end;
+        } else {
+          const mark = { kind, start, end };
+          lastByKind[kind] = mark;
+          (kind === "comment" ? commentMarks : marks).push(mark);
+        }
+      }
+    }
+
+    return marks.concat(commentMarks);
+    // totalSize is a proxy for "measurements changed"
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [virtualRows, virtualizer, estimateSize, totalSize]);
+
   const onDragStart = useCallback(
     (lineNum: number, side: "old" | "new", shiftKey?: boolean) => {
       const state = store.getSnapshot();
@@ -1614,12 +1867,13 @@ const DiffViewer = memo(function DiffViewer({
       const anchor = state.selectionAnchor;
 
       if (focusedLine !== null) {
+        const side = dragSideRef.current ?? state.focusedLineSide;
         if (anchor !== null && anchor !== focusedLine) {
           const startLine = Math.min(anchor, focusedLine);
           const endLine = Math.max(anchor, focusedLine);
-          store.startCommenting(endLine, startLine);
+          store.startCommenting(endLine, startLine, side);
         } else {
-          store.startCommenting(focusedLine);
+          store.startCommenting(focusedLine, undefined, side);
         }
       }
     }
@@ -1635,7 +1889,7 @@ const DiffViewer = memo(function DiffViewer({
         handledByMouseEventsRef.current = false;
         return;
       }
-      store.startCommenting(lineNum);
+      store.startCommenting(lineNum, undefined, side);
     },
     [store]
   );
@@ -1930,42 +2184,49 @@ const DiffViewer = memo(function DiffViewer({
 
   return (
     <LineDragContext.Provider value={dragValue}>
-      <div ref={parentRef} className="flex-1 overflow-auto themed-scrollbar">
-        <div className="p-4">
-          <div className="border border-border rounded-lg overflow-hidden">
-            <div
-              ref={containerRef}
-              className="relative w-full font-mono text-[0.75rem] [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)] diff-line-container"
-              style={{ height: `${virtualizer.getTotalSize()}px` }}
-            >
-              {virtualizer.getVirtualItems().map((virtualRow) => {
-                const row = virtualRows[virtualRow.index];
-                if (!row) return null;
+      <div className="relative flex-1 min-h-0 flex flex-col">
+        <DiffOverviewRuler
+          marks={rulerMarks}
+          scrollElRef={parentRef}
+          contentSize={totalSize}
+        />
+        <div ref={parentRef} className="flex-1 overflow-auto diff-scrollbar">
+          <div className="p-4">
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div
+                ref={containerRef}
+                className="relative w-full font-mono text-[0.75rem] [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)] diff-line-container"
+                style={{ height: `${totalSize}px` }}
+              >
+                {virtualizer.getVirtualItems().map((virtualRow) => {
+                  const row = virtualRows[virtualRow.index];
+                  if (!row) return null;
 
-                return (
-                  <div
-                    key={virtualRow.key}
-                    className="absolute top-0 left-0 w-full"
-                    style={{
-                      transform: `translateY(${virtualRow.start}px)`,
-                    }}
-                    data-index={virtualRow.index}
-                    ref={virtualizer.measureElement}
-                  >
-                    <VirtualRowRenderer
-                      row={row}
-                      focusedSkipBlockIndex={focusedSkipBlockIndex}
-                      focusedCommentId={focusedCommentId}
-                      focusedPendingCommentId={focusedPendingCommentId}
-                      editingCommentId={editingCommentId}
-                      editingPendingCommentId={editingPendingCommentId}
-                      replyingToCommentId={replyingToCommentId}
-                      expandSkipBlock={expandSkipBlock}
-                      isExpanding={isExpanding}
-                    />
-                  </div>
-                );
-              })}
+                  return (
+                    <div
+                      key={virtualRow.key}
+                      className="absolute top-0 left-0 w-full"
+                      style={{
+                        transform: `translateY(${virtualRow.start}px)`,
+                      }}
+                      data-index={virtualRow.index}
+                      ref={virtualizer.measureElement}
+                    >
+                      <VirtualRowRenderer
+                        row={row}
+                        focusedSkipBlockIndex={focusedSkipBlockIndex}
+                        focusedCommentId={focusedCommentId}
+                        focusedPendingCommentId={focusedPendingCommentId}
+                        editingCommentId={editingCommentId}
+                        editingPendingCommentId={editingPendingCommentId}
+                        replyingToCommentId={replyingToCommentId}
+                        expandSkipBlock={expandSkipBlock}
+                        isExpanding={isExpanding}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
@@ -2034,7 +2295,13 @@ const VirtualRowRenderer = memo(function VirtualRowRenderer({
     case "split-line":
       return <SplitDiffLineRow pair={row.pair} />;
     case "comment-form":
-      return <InlineCommentForm line={row.lineNum} startLine={row.startLine} />;
+      return (
+        <InlineCommentForm
+          line={row.lineNum}
+          startLine={row.startLine}
+          side={row.side}
+        />
+      );
     case "pending-comment":
       return (
         <PendingCommentItem
@@ -2611,11 +2878,13 @@ const SkipBlockRow = memo(function SkipBlockRow({
 interface InlineCommentFormProps {
   line: number;
   startLine?: number;
+  side: CommentSide;
 }
 
 const InlineCommentForm = memo(function InlineCommentForm({
   line,
   startLine,
+  side,
 }: InlineCommentFormProps) {
   const store = usePRReviewStore();
   const canWrite = useCanWrite();
@@ -2624,18 +2893,30 @@ const InlineCommentForm = memo(function InlineCommentForm({
   const { addPendingComment } = useCommentActions();
   const [text, setText] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = useCallback(async () => {
     if (!text.trim()) return;
 
     setSubmitting(true);
+    setError(null);
     try {
-      await addPendingComment(line, text.trim(), startLine);
+      await addPendingComment(line, text.trim(), startLine, side);
       setText("");
+    } catch (e) {
+      // Keep the text so the user can retry
+      setError(
+        e instanceof Error
+          ? e.message.replace(
+              /^Request failed due to following response errors:\s*/i,
+              ""
+            )
+          : "Failed to add comment"
+      );
     } finally {
       setSubmitting(false);
     }
-  }, [text, line, startLine, addPendingComment]);
+  }, [text, line, startLine, side, addPendingComment]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -2725,6 +3006,12 @@ const InlineCommentForm = memo(function InlineCommentForm({
           minHeight="100px"
           autoFocus
         />
+        {error && (
+          <div className="mt-2 flex items-start gap-2 text-xs text-destructive">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>Couldn't save comment to GitHub: {error}</span>
+          </div>
+        )}
       </div>
 
       {/* Action buttons */}
@@ -3696,6 +3983,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
   const pendingComments = usePRReviewSelector((s) => s.pendingComments);
   const reviewBody = usePRReviewSelector((s) => s.reviewBody);
   const submitting = usePRReviewSelector((s) => s.submittingReview);
+  const submitError = usePRReviewSelector((s) => s.reviewSubmitError);
   const pr = usePRReviewSelector((s) => s.pr);
   const currentUser = usePRReviewSelector((s) => s.currentUser);
   const viewerPermission = usePRReviewSelector((s) => s.viewerPermission);
@@ -3755,9 +4043,19 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
   const pendingCount = pendingComments.length;
 
   const handleSubmit = useCallback(async () => {
-    await submitReview(reviewType);
-    setIsOpen(false);
+    try {
+      await submitReview(reviewType);
+      setIsOpen(false);
+    } catch (error) {
+      // Error is shown in the dropdown via reviewSubmitError; keep it open
+      console.error("Failed to submit review:", error);
+    }
   }, [submitReview, reviewType]);
+
+  // Clear a stale error when the dropdown is reopened
+  useEffect(() => {
+    if (isOpen) store.setReviewSubmitError(null);
+  }, [isOpen, store]);
 
   // Ctrl/Cmd+Enter to submit review when dropdown is open
   useEffect(() => {
@@ -3828,6 +4126,16 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
             autoFocus={openedViaKeyboard}
           />
         </div>
+
+        {submitError && (
+          <div
+            className="mx-3 mb-2 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>{submitError}</span>
+          </div>
+        )}
 
         {/* Pending comments by file */}
         {pendingCount > 0 && (

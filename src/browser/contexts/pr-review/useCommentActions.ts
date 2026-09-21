@@ -4,6 +4,7 @@ import { useTelemetry } from "@/browser/contexts/telemetry";
 import {
   usePRReviewStore,
   usePRReviewSelector,
+  type CommentSide,
   type LocalPendingComment,
 } from ".";
 
@@ -18,7 +19,8 @@ export function useCommentActions() {
   const addPendingComment = async (
     line: number,
     body: string,
-    startLine?: number
+    startLine?: number,
+    side: CommentSide = "RIGHT"
   ) => {
     const state = store.getSnapshot();
     if (!state.selectedFile) return;
@@ -31,7 +33,7 @@ export function useCommentActions() {
       line,
       start_line: startLine,
       body,
-      side: "RIGHT",
+      side,
     };
 
     store.addPendingComment(newComment);
@@ -52,6 +54,7 @@ export function useCommentActions() {
         line,
         body,
         startLine,
+        side,
       });
       // Update the local comment with GitHub IDs
       store.updatePendingCommentWithGitHubIds(

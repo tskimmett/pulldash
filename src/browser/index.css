@@ -675,3 +675,20 @@
 .markdown-body .hljs-strong {
   font-weight: bold;
 }
+
+/* Diff viewer: the native vertical scrollbar is hidden and replaced by the
+   overview ruler (marks + custom thumb) so clicks jump instead of paging.
+   The horizontal scrollbar stays native. */
+.diff-scrollbar::-webkit-scrollbar:vertical {
+  width: 0;
+}
+
+.diff-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .diff-scrollbar {
+    scrollbar-width: none;
+  }
+}

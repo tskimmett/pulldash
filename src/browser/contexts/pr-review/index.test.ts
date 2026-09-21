@@ -5,6 +5,8 @@ import {
   commentThreadKey,
   isThreadCollapsed,
   sortFilesLikeTree,
+  visibleComments,
+  type ParsedDiff,
 } from "./index";
 import type { GitHubStore } from "@/browser/contexts/github";
 import {
@@ -347,7 +349,91 @@ test("startCommenting sets commenting state", () => {
   store.startCommenting(42, 38);
 
   const state = store.getSnapshot();
-  expect(state.commentingOnLine).toEqual({ line: 42, startLine: 38 });
+  expect(state.commentingOnLine).toEqual({
+    line: 42,
+    startLine: 38,
+    side: "RIGHT",
+  });
+});
+
+test("startCommenting records LEFT side for old-side lines", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+
+  store.startCommenting(7, undefined, "old");
+
+  expect(store.getSnapshot().commentingOnLine).toEqual({
+    line: 7,
+    startLine: undefined,
+    side: "LEFT",
+  });
+});
+
+test("startCommentingOnFocusedLine derives side from focused line", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+  store.setFocusedLine(7, "old");
+
+  store.startCommentingOnFocusedLine();
+
+  expect(store.getSnapshot().commentingOnLine).toEqual({
+    line: 7,
+    startLine: undefined,
+    side: "LEFT",
+  });
+});
+
+function diffWithOneHunk(): ParsedDiff {
+  return {
+    hunks: [
+      { type: "skip", count: 9, content: "" },
+      {
+        type: "hunk",
+        oldStart: 10,
+        newStart: 10,
+        lines: [
+          { type: "normal", oldLineNumber: 10, newLineNumber: 10, content: [] },
+          { type: "delete", oldLineNumber: 11, content: [] },
+          { type: "insert", newLineNumber: 11, content: [] },
+          { type: "normal", oldLineNumber: 12, newLineNumber: 12, content: [] },
+        ],
+      },
+    ],
+  };
+}
+
+test("isLineInDiff only accepts hunk lines on the matching side", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+  store.setLoadedDiff("src/index.ts", diffWithOneHunk());
+
+  expect(store.isLineInDiff("src/index.ts", 10, "RIGHT")).toBe(true);
+  expect(store.isLineInDiff("src/index.ts", 11, "RIGHT")).toBe(true);
+  expect(store.isLineInDiff("src/index.ts", 11, "LEFT")).toBe(true);
+  // Line 5 is only reachable by expanding the gap
+  expect(store.isLineInDiff("src/index.ts", 5, "RIGHT")).toBe(false);
+  expect(store.isLineInDiff("src/index.ts", 5, "LEFT")).toBe(false);
+  // Unloaded diffs are not validated
+  expect(store.isLineInDiff("src/utils.ts", 5, "RIGHT")).toBe(true);
+});
+
+test("startCommenting ignores lines outside the diff hunks", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+  store.setLoadedDiff("src/index.ts", diffWithOneHunk());
+
+  store.startCommenting(5);
+  expect(store.getSnapshot().commentingOnLine).toBeNull();
+
+  store.startCommenting(12, 5);
+  expect(store.getSnapshot().commentingOnLine).toBeNull();
+
+  store.startCommenting(12, 10);
+  expect(store.getSnapshot().commentingOnLine).toEqual({
+    line: 12,
+    startLine: 10,
+    side: "RIGHT",
+  });
 });
 
 test("cancelCommenting clears commenting state", () => {
@@ -768,6 +854,21 @@ test("file navigation in semantic mode syncs the selected layer", () => {
   expect(store.getSnapshot().selectedLayerId).toBe("c1/l2");
 });
 
+test("jumpToSemanticRange with a layer key selects that layer, not the first covering one", () => {
+  const store = createSemanticStore();
+
+  // src/index.ts is covered by l1 and l2; jumping from l2's row must keep l2.
+  store.jumpToSemanticRange(
+    { file: "src/index.ts", side: "new", startLine: 9, endLine: 9 },
+    "c1/l2"
+  );
+
+  const state = store.getSnapshot();
+  expect(state.selectedLayerId).toBe("c1/l2");
+  expect(state.selectedFile).toBe("src/index.ts");
+  expect(state.focusedLine).toBe(9);
+});
+
 test("selecting a layer keeps that layer even when other layers cover the file", () => {
   const store = createSemanticStore();
 
@@ -821,6 +922,53 @@ test("toggleAllCommentsCollapsed flips the global default and persists it", () =
 
   // A fresh store picks up the persisted preference.
   expect(createStore().getSnapshot().allCommentsCollapsed).toBe(true);
+});
+
+test("toggleHideResolvedComments flips the flag and persists it", () => {
+  const store = createStore();
+
+  expect(store.getSnapshot().hideResolvedComments).toBe(false);
+
+  store.toggleHideResolvedComments();
+
+  expect(store.getSnapshot().hideResolvedComments).toBe(true);
+  expect(storage.get("pulldash_hide_resolved_comments")).toBe("true");
+  expect(createStore().getSnapshot().hideResolvedComments).toBe(true);
+
+  store.toggleHideResolvedComments();
+  expect(store.getSnapshot().hideResolvedComments).toBe(false);
+});
+
+test("hiding resolved comments drops focus from a resolved comment", () => {
+  const store = createStore();
+  const resolved = {
+    ...createMockComment(1, "src/index.ts", 10),
+    is_resolved: true,
+  } as ReviewComment;
+  const open = createMockComment(2, "src/index.ts", 12);
+  store.setComments([resolved, open]);
+
+  store.setFocusedCommentId(1);
+  store.setHideResolvedComments(true);
+  expect(store.getSnapshot().focusedCommentId).toBeNull();
+
+  store.setFocusedCommentId(2);
+  store.setHideResolvedComments(true);
+  expect(store.getSnapshot().focusedCommentId).toBe(2);
+});
+
+test("visibleComments filters resolved threads only when hiding", () => {
+  const resolved = {
+    ...createMockComment(1, "a.ts", 1),
+    is_resolved: true,
+  } as ReviewComment;
+  const open = createMockComment(2, "a.ts", 2);
+  const all = [resolved, open];
+
+  expect(visibleComments(all, false)).toBe(all);
+  expect(visibleComments(all, true)).toEqual([open]);
+  // Nothing filtered: same array back so memoized consumers stay stable.
+  expect(visibleComments([open], true)).toEqual([open]);
 });
 
 test("toggleThreadCollapsed overrides the global default per thread", () => {
