@@ -38,6 +38,7 @@ import {
   FlaskConical,
   FlaskConicalOff,
   AlertCircle,
+  List,
 } from "lucide-react";
 import type { Reaction, ReactionContent } from "../contexts/github";
 import { Skeleton } from "../ui/skeleton";
@@ -62,6 +63,7 @@ import {
 import { isTestFile } from "@/browser/lib/test-file";
 import { enrichCommentsWithThreads } from "@/browser/lib/review-threads";
 import { FileHeader } from "./file-header";
+import { AllFilesDiff } from "./all-files-diff";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import {
   useGitHub,
@@ -427,6 +429,7 @@ function PRReviewLayout() {
   const owner = usePRReviewSelector((s) => s.owner);
   const repo = usePRReviewSelector((s) => s.repo);
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
+  const fileLayoutMode = usePRReviewSelector((s) => s.fileLayoutMode);
 
   // Track file views (only once per file per session)
   const trackedFilesRef = useRef<Set<string>>(new Set());
@@ -470,6 +473,28 @@ function PRReviewLayout() {
         onToggleSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
         rightContent={
           <>
+            <button
+              onClick={() =>
+                store.setFileLayoutMode(
+                  fileLayoutMode === "single" ? "all" : "single"
+                )
+              }
+              aria-pressed={fileLayoutMode === "all"}
+              title={
+                fileLayoutMode === "all"
+                  ? "Switch to single file view"
+                  : "Show all file diffs"
+              }
+              className={cn(
+                "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md transition-colors",
+                fileLayoutMode === "all"
+                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                  : "bg-muted text-muted-foreground hover:bg-muted/70"
+              )}
+            >
+              <List className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">All files</span>
+            </button>
             <DiffRangeButton />
             <SemanticReviewButton />
             {canWrite && <SubmitReviewDropdown />}
@@ -741,6 +766,7 @@ const DiffPanel = memo(function DiffPanel() {
   const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
   const selectedFiles = usePRReviewSelector((s) => s.selectedFiles);
   const showOverview = usePRReviewSelector((s) => s.showOverview);
+  const fileLayoutMode = usePRReviewSelector((s) => s.fileLayoutMode);
   const diffViewMode = usePRReviewSelector((s) => s.diffViewMode);
   const allCommentsCollapsed = usePRReviewSelector(
     (s) => s.allCommentsCollapsed
@@ -787,6 +813,16 @@ const DiffPanel = memo(function DiffPanel() {
         <ReadOnlyBanner />
         <DiffRangeBanner />
         <PROverview />
+      </main>
+    );
+  }
+
+  if (fileLayoutMode === "all") {
+    return (
+      <main className="flex-1 overflow-hidden flex flex-col">
+        <ReadOnlyBanner />
+        <DiffRangeBanner />
+        <AllFilesDiff />
       </main>
     );
   }

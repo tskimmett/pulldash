@@ -242,6 +242,7 @@ interface PRReviewState {
 
   // Diff view mode (unified or split) - global user preference
   diffViewMode: DiffViewMode;
+  fileLayoutMode: "single" | "all";
 
   // File navigation
   selectedFile: string | null;
@@ -555,6 +556,7 @@ export class PRReviewStore {
       hideViewed: true,
       hideTestFiles: getStoredHideTestFiles(),
       diffViewMode,
+      fileLayoutMode: "single",
       loadedDiffs: {},
       loadingFiles: new Set(),
       expandedSkipBlocks: {},
@@ -706,6 +708,17 @@ export class PRReviewStore {
     });
   };
 
+  setFileLayoutMode = (mode: "single" | "all") => {
+    this.set({
+      fileLayoutMode: mode,
+      showOverview: mode === "all" ? false : this.state.showOverview,
+      selectedFile:
+        mode === "all" && !this.state.selectedFile
+          ? (this.state.files[0]?.filename ?? null)
+          : this.state.selectedFile,
+    });
+  };
+
   toggleFileSelection = (filename: string, isShiftClick: boolean) => {
     const { files, selectedFiles } = this.state;
 
@@ -845,7 +858,11 @@ export class PRReviewStore {
     this.set({ viewedFiles: next });
 
     // When marking a file as viewed, navigate to the next file
-    if (!wasViewed && filename === this.state.selectedFile) {
+    if (
+      !wasViewed &&
+      filename === this.state.selectedFile &&
+      this.state.fileLayoutMode === "single"
+    ) {
       this.navigateToFile("next");
     }
   };

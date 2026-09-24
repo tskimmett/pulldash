@@ -277,6 +277,17 @@ test("toggleViewed navigates to next file when marking current file as viewed", 
   expect(store.getSnapshot().selectedFile).toBe("src/utils.ts");
 });
 
+test("toggleViewed keeps scroll position in all files mode", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+  store.setFileLayoutMode("all");
+
+  store.toggleViewed("src/index.ts");
+
+  expect(store.getSnapshot().viewedFiles.has("src/index.ts")).toBe(true);
+  expect(store.getSnapshot().selectedFile).toBe("src/index.ts");
+});
+
 test("toggleViewedMultiple marks multiple files", () => {
   const store = createStore();
 
@@ -635,6 +646,18 @@ test("toggleDiffViewMode toggles between unified and split", () => {
 
   store.toggleDiffViewMode();
   expect(store.getSnapshot().diffViewMode).toBe("unified");
+});
+
+test("file layout starts in single mode and can show all files from overview", () => {
+  const store = createStore();
+  expect(store.getSnapshot().fileLayoutMode).toBe("single");
+
+  store.setFileLayoutMode("all");
+  expect(store.getSnapshot().fileLayoutMode).toBe("all");
+  expect(store.getSnapshot().showOverview).toBe(false);
+
+  store.setFileLayoutMode("single");
+  expect(store.getSnapshot().fileLayoutMode).toBe("single");
 });
 
 // ============================================================================
