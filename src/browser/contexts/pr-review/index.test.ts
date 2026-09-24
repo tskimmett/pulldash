@@ -446,6 +446,21 @@ test("cancelCommenting clears commenting state", () => {
   expect(store.getSnapshot().commentingOnLine).toBeNull();
 });
 
+test("comment drafts persist until cleared or emptied", () => {
+  const store = createStore();
+
+  store.setDraft("new:src/index.ts:RIGHT:42-42", "half-written");
+  expect(store.getDraft("new:src/index.ts:RIGHT:42-42")).toBe("half-written");
+  expect(store.getDraft("reply:1")).toBeUndefined();
+
+  store.setDraft("new:src/index.ts:RIGHT:42-42", "");
+  expect(store.getDraft("new:src/index.ts:RIGHT:42-42")).toBeUndefined();
+
+  store.setDraft("reply:1", "thanks");
+  store.clearDraft("reply:1");
+  expect(store.getDraft("reply:1")).toBeUndefined();
+});
+
 test("addPendingComment adds comment and clears selection", () => {
   const store = createStore();
   store.selectFile("src/index.ts");
@@ -1021,4 +1036,131 @@ test("isThreadCollapsed reads state without the store instance", () => {
   const state = store.getSnapshot();
   expect(isThreadCollapsed(state, "t1", false)).toBe(false);
   expect(isThreadCollapsed(state, "other", false)).toBe(true);
+});
+
+// ============================================================================
+// Diff range ("changes since your last review")
+// ============================================================================
+
+function createRangeStore() {
+  const commits = [
+    { sha: "c1", commit: { message: "one" } },
+    { sha: "c2", commit: { message: "two" } },
+    { sha: "abc123", commit: { message: "head" } },
+  ];
+  const reviews = [
+    {
+      user: { login: "me" },
+      state: "APPROVED",
+      commit_id: "c1",
+      submitted_at: "2026-01-01T00:00:00Z",
+    },
+  ];
+  const github = {
+    ...createMockGitHubStore(),
+    getPRCommits: async () => commits,
+    getPRReviews: async () => reviews,
+  } as unknown as GitHubStore;
+  const store = new PRReviewStore(github, {
+    pr: createMockPR(),
+    files: [
+      createMockFile("src/index.ts"),
+      createMockFile("src/utils.ts"),
+      createMockFile("README.md"),
+    ],
+    comments: [],
+    owner: "test",
+    repo: "repo",
+    viewerPermission: "WRITE",
+  });
+  store.setCurrentUser("me");
+  return store;
+}
+
+test("setDiffRange narrows files, drops parsed diffs, and restores on clear", async () => {
+  const store = createRangeStore();
+  await store.loadPRData();
+  store.selectFile("README.md");
+  store.setLoadedDiff("README.md", { hunks: [] });
+
+  expect(store.lastReviewedSha()).toBe("c1");
+
+  const requested: string[] = [];
+  await store.setDiffRange(
+    { startSha: "c1", source: "review" },
+    async (s, h) => {
+      requested.push(`${s}...${h}`);
+      return [createMockFile("src/utils.ts")];
+    }
+  );
+
+  const state = store.getSnapshot();
+  expect(requested).toEqual(["c1...abc123"]);
+  expect(state.diffRange).toEqual({ startSha: "c1", source: "review" });
+  expect(state.files.map((f) => f.filename)).toEqual(["src/utils.ts"]);
+  expect(state.allFiles.length).toBe(3);
+  // README dropped out of the range, so selection moves to the first in-range file
+  expect(state.selectedFile).toBe("src/utils.ts");
+  expect(state.loadedDiffs).toEqual({});
+
+  await store.clearDiffRange();
+  expect(store.getSnapshot().diffRange).toBeNull();
+  expect(store.getSnapshot().files.length).toBe(3);
+});
+
+test("setDiffRange rejects a start commit that is gone or already head", async () => {
+  const store = createRangeStore();
+  await store.loadPRData();
+
+  await store.setDiffRange({ startSha: "force-pushed-away", source: "manual" });
+  expect(store.getSnapshot().diffRange).toBeNull();
+  expect(store.getSnapshot().diffRangeError).toContain("force-pushed");
+
+  await store.clearDiffRange();
+  expect(store.getSnapshot().diffRangeError).toBeNull();
+
+  await store.setDiffRange({ startSha: "abc123", source: "manual" });
+  expect(store.getSnapshot().diffRange).toBeNull();
+});
+
+test("setDiffRange surfaces a failed compare fetch and blocks LEFT comments while active", async () => {
+  const store = createRangeStore();
+  await store.loadPRData();
+
+  await store.setDiffRange(
+    { startSha: "c2", source: "manual" },
+    async () => null
+  );
+  expect(store.getSnapshot().diffRange).toBeNull();
+  expect(store.getSnapshot().diffRangeError).toContain("Couldn't load");
+
+  await store.setDiffRange({ startSha: "c2", source: "manual" }, async () => [
+    createMockFile("src/index.ts"),
+  ]);
+  store.selectFile("src/index.ts");
+  store.setLoadedDiff("src/index.ts", {
+    hunks: [
+      {
+        type: "hunk",
+        oldStart: 1,
+        newStart: 1,
+        lines: [
+          {
+            type: "delete",
+            oldLineNumber: 1,
+            content: [{ value: "x", html: "x", type: "normal" }],
+          },
+          {
+            type: "insert",
+            newLineNumber: 1,
+            content: [{ value: "y", html: "y", type: "normal" }],
+          },
+        ],
+      },
+    ],
+  });
+  store.startCommenting(1, undefined, "old");
+  expect(store.getSnapshot().commentingOnLine).toBeNull();
+  store.startCommenting(1, undefined, "new");
+  expect(store.getSnapshot().commentingOnLine?.side).toBe("RIGHT");
 });

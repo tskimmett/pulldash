@@ -11,13 +11,18 @@ const pendingFetches = new Map<
 >();
 const MAX_CACHE_SIZE = 100;
 
-// Check if a diff is already cached with full syntax highlighting (sync check)
-function getFullDiffFromCache(file: PullRequestFile): ParsedDiff | null {
+// Check if a diff is already cached with full syntax highlighting (sync check).
+// Keyed by base ref as well as blob sha: the same head blob has a different
+// patch when the diff is narrowed to "changes since" an intermediate commit.
+function getFullDiffFromCache(
+  file: PullRequestFile,
+  baseRef: string
+): ParsedDiff | null {
   if (!file.patch || !file.sha) {
     return { hunks: [] };
   }
   // Only return if we have the full content version with proper syntax highlighting
-  return diffCache.get(`${file.sha}:full`) ?? null;
+  return diffCache.get(`${baseRef}:${file.sha}:full`) ?? null;
 }
 
 // Abort all pending fetches (used when navigating rapidly)
@@ -44,7 +49,9 @@ async function fetchParsedDiff(
 
   // Cache key includes whether we have file content (for better highlighting)
   const hasContent = !!(getFileContent && baseRef && headRef);
-  const cacheKey = hasContent ? `${file.sha}:full` : file.sha;
+  const cacheKey = hasContent
+    ? `${baseRef}:${file.sha}:full`
+    : `${baseRef ?? ""}:${file.sha}`;
 
   // Check cache first
   if (diffCache.has(cacheKey)) {
@@ -153,6 +160,9 @@ export function useDiffLoader() {
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
   const files = usePRReviewSelector((s) => s.files);
   const loadedDiffs = usePRReviewSelector((s) => s.loadedDiffs);
+  const diffRange = usePRReviewSelector((s) => s.diffRange);
+  // In a narrowed range the "old" side is the start commit, not the PR base.
+  const baseRef = diffRange?.startSha ?? pr.base.sha;
 
   useEffect(() => {
     if (!selectedFile) return;
@@ -163,7 +173,7 @@ export function useDiffLoader() {
     const currentFile = selectedFile;
 
     // Check cache synchronously - only use if we have full content version
-    const cached = getFullDiffFromCache(file);
+    const cached = getFullDiffFromCache(file, baseRef);
     if (cached) {
       if (!loadedDiffs[currentFile]) {
         store.setLoadedDiff(currentFile, cached);
@@ -193,7 +203,7 @@ export function useDiffLoader() {
       github.getFileContent(owner, repo, path, ref);
 
     // Fetch immediately with full file content for better highlighting
-    fetchParsedDiff(file, undefined, getFileContent, pr.base.sha, pr.head.sha)
+    fetchParsedDiff(file, undefined, getFileContent, baseRef, pr.head.sha)
       .then((diff) => {
         if (store.getSnapshot().selectedFile === currentFile) {
           store.setLoadedDiff(currentFile, diff);
@@ -210,7 +220,7 @@ export function useDiffLoader() {
           ].filter(
             (f) =>
               !store.getSnapshot().loadedDiffs[f.filename] &&
-              !getFullDiffFromCache(f)
+              !getFullDiffFromCache(f, baseRef)
           );
 
           // Prefetch with full file content for proper syntax highlighting
@@ -221,7 +231,7 @@ export function useDiffLoader() {
                 pfile,
                 undefined,
                 getFileContent,
-                pr.base.sha,
+                baseRef,
                 pr.head.sha
               )
                 .then((pdiff) => store.setLoadedDiff(pfile.filename, pdiff))
@@ -253,7 +263,7 @@ export function useDiffLoader() {
     github,
     owner,
     repo,
-    pr.base.sha,
+    baseRef,
     pr.head.sha,
   ]);
 }

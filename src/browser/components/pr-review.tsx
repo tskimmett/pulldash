@@ -51,6 +51,7 @@ import {
 import { cn } from "../cn";
 import { PRHeader } from "./pr-header";
 import { SemanticReviewButton } from "./semantic-review-button";
+import { DiffRangeBanner, DiffRangeButton } from "./diff-range-button";
 import { SemanticLayerBar, SemanticSidebar } from "./semantic-panel";
 import { layerFilesInOrder } from "@/semantic/layer-files";
 import { FileTree } from "./file-tree";
@@ -442,6 +443,22 @@ function PRReviewLayout() {
   }, [selectedFile, pr.number, owner, repo, track]);
 
   const canWrite = useCanWrite();
+  // Primitive selectors: useSyncExternalStore needs a stable snapshot, so
+  // don't build an object inside the selector.
+  const rangeActive = usePRReviewSelector((s) => s.diffRange !== null);
+  const rangeAdditions = usePRReviewSelector((s) =>
+    s.diffRange ? s.files.reduce((n, f) => n + f.additions, 0) : 0
+  );
+  const rangeDeletions = usePRReviewSelector((s) =>
+    s.diffRange ? s.files.reduce((n, f) => n + f.deletions, 0) : 0
+  );
+  const rangeStats = useMemo(
+    () =>
+      rangeActive
+        ? { additions: rangeAdditions, deletions: rangeDeletions }
+        : undefined,
+    [rangeActive, rangeAdditions, rangeDeletions]
+  );
 
   return (
     <div className="flex flex-col h-full">
@@ -449,9 +466,11 @@ function PRReviewLayout() {
         pr={pr}
         owner={owner}
         repo={repo}
+        stats={rangeStats}
         onToggleSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
         rightContent={
           <>
+            <DiffRangeButton />
             <SemanticReviewButton />
             {canWrite && <SubmitReviewDropdown />}
           </>
@@ -766,6 +785,7 @@ const DiffPanel = memo(function DiffPanel() {
     return (
       <main className="flex-1 overflow-hidden flex flex-col">
         <ReadOnlyBanner />
+        <DiffRangeBanner />
         <PROverview />
       </main>
     );
@@ -774,6 +794,7 @@ const DiffPanel = memo(function DiffPanel() {
   return (
     <main className="flex-1 overflow-hidden flex flex-col">
       <ReadOnlyBanner />
+      <DiffRangeBanner />
 
       {viewMode === "semantic" && <SemanticLayerBar />}
 
@@ -2872,6 +2893,41 @@ const SkipBlockRow = memo(function SkipBlockRow({
 });
 
 // ============================================================================
+// Comment Drafts
+// ============================================================================
+
+/**
+ * Editor text backed by the store's draft map, so it survives the form being
+ * unmounted when the diff virtualizer scrolls it out of view. A null key
+ * disables persistence (e.g. no reply is open).
+ */
+function useCommentDraft(key: string | null, initial = "") {
+  const store = usePRReviewStore();
+  const read = (k: string | null) => (k && store.getDraft(k)) ?? initial;
+  const [draft, setDraftState] = useState(() => ({ key, text: read(key) }));
+  let current = draft;
+  if (draft.key !== key) {
+    current = { key, text: read(key) };
+    setDraftState(current);
+  }
+
+  const setText = useCallback(
+    (text: string) => {
+      setDraftState({ key, text });
+      if (key) store.setDraft(key, text);
+    },
+    [key, store]
+  );
+
+  const clear = useCallback(() => {
+    if (key) store.clearDraft(key);
+    setDraftState({ key, text: "" });
+  }, [key, store]);
+
+  return [current.text, setText, clear] as const;
+}
+
+// ============================================================================
 // Inline Comment Form
 // ============================================================================
 
@@ -2891,7 +2947,10 @@ const InlineCommentForm = memo(function InlineCommentForm({
   const currentUser = useCurrentUser();
   const { startDeviceAuth } = useAuth();
   const { addPendingComment } = useCommentActions();
-  const [text, setText] = useState("");
+  const selectedFile = usePRReviewSelector((s) => s.selectedFile);
+  const [text, setText, clearText] = useCommentDraft(
+    `new:${selectedFile}:${side}:${startLine ?? line}-${line}`
+  );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -2902,7 +2961,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
     setError(null);
     try {
       await addPendingComment(line, text.trim(), startLine, side);
-      setText("");
+      clearText();
     } catch (e) {
       // Keep the text so the user can retry
       setError(
@@ -2916,7 +2975,12 @@ const InlineCommentForm = memo(function InlineCommentForm({
     } finally {
       setSubmitting(false);
     }
-  }, [text, line, startLine, side, addPendingComment]);
+  }, [text, line, startLine, side, addPendingComment, clearText]);
+
+  const handleCancel = useCallback(() => {
+    clearText();
+    store.cancelCommenting();
+  }, [clearText, store]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -2926,10 +2990,10 @@ const InlineCommentForm = memo(function InlineCommentForm({
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        store.cancelCommenting();
+        handleCancel();
       }
     },
-    [handleSubmit, store]
+    [handleSubmit, handleCancel]
   );
 
   const lineLabel = startLine ? `lines ${startLine}-${line}` : `line ${line}`;
@@ -2944,7 +3008,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
             <span>Comment on {lineLabel}</span>
           </div>
           <button
-            onClick={store.cancelCommenting}
+            onClick={handleCancel}
             className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted/50"
           >
             <X className="w-4 h-4" />
@@ -2989,7 +3053,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
           </span>
         </div>
         <button
-          onClick={store.cancelCommenting}
+          onClick={handleCancel}
           className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted/50"
         >
           <X className="w-4 h-4" />
@@ -3020,7 +3084,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
         style={{ fontFamily: "var(--font-sans)" }}
       >
         <button
-          onClick={store.cancelCommenting}
+          onClick={handleCancel}
           className="px-4 py-2 text-sm font-medium rounded-md border border-border bg-background hover:bg-muted transition-colors"
           style={{ fontFamily: "var(--font-sans)" }}
         >
@@ -3082,12 +3146,14 @@ const CommentThread = memo(function CommentThread({
   const repo = usePRReviewSelector((s) => s.repo);
   const { replyToComment, updateComment, deleteComment } = useCommentActions();
   const { resolveThread, unresolveThread } = useThreadActions();
-  const [replyText, setReplyText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [resolving, setResolving] = useState(false);
 
   const replyingTo =
     comments.find((c) => c.id === replyingToCommentId)?.id ?? null;
+  const [replyText, setReplyText, clearReplyText] = useCommentDraft(
+    replyingTo ? `reply:${replyingTo}` : null
+  );
 
   // Get resolution info from first comment (all comments in thread share same resolution status)
   const firstComment = comments[0];
@@ -3132,11 +3198,11 @@ const CommentThread = memo(function CommentThread({
     setSubmitting(true);
     try {
       await replyToComment(replyingTo, replyText.trim());
-      setReplyText("");
+      clearReplyText();
     } finally {
       setSubmitting(false);
     }
-  }, [replyText, replyingTo, replyToComment]);
+  }, [replyText, replyingTo, replyToComment, clearReplyText]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -3147,16 +3213,16 @@ const CommentThread = memo(function CommentThread({
       if (e.key === "Escape") {
         e.preventDefault();
         store.cancelReplying();
-        setReplyText("");
+        clearReplyText();
       }
     },
-    [handleSubmitReply, store]
+    [handleSubmitReply, store, clearReplyText]
   );
 
   const handleCancel = useCallback(() => {
     store.cancelReplying();
-    setReplyText("");
-  }, [store]);
+    clearReplyText();
+  }, [store, clearReplyText]);
 
   const handleResolve = useCallback(async () => {
     if (!threadId) return;
@@ -3421,15 +3487,12 @@ const CommentItem = memo(function CommentItem({
     () => getTimeAgo(new Date(comment.created_at)),
     [comment.created_at]
   );
-  const [editText, setEditText] = useState(comment.body);
+  const [editText, setEditText, clearEditText] = useCommentDraft(
+    isEditing ? `edit:${comment.id}` : null,
+    comment.body
+  );
   const [saving, setSaving] = useState(false);
   const commentRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (isEditing) {
-      setEditText(comment.body);
-    }
-  }, [isEditing, comment.body]);
 
   useEffect(() => {
     if (isFocused && commentRef.current) {
@@ -3440,18 +3503,31 @@ const CommentItem = memo(function CommentItem({
     }
   }, [isFocused]);
 
+  const handleCancelEdit = useCallback(() => {
+    clearEditText();
+    store.cancelEditing();
+  }, [clearEditText, store]);
+
   const handleSave = useCallback(async () => {
     if (!editText.trim() || editText === comment.body) {
-      store.cancelEditing();
+      handleCancelEdit();
       return;
     }
     setSaving(true);
     try {
       await onUpdate(comment.id, editText.trim());
+      clearEditText();
     } finally {
       setSaving(false);
     }
-  }, [editText, comment.id, comment.body, onUpdate, store]);
+  }, [
+    editText,
+    comment.id,
+    comment.body,
+    onUpdate,
+    handleCancelEdit,
+    clearEditText,
+  ]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -3461,10 +3537,10 @@ const CommentItem = memo(function CommentItem({
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        store.cancelEditing();
+        handleCancelEdit();
       }
     },
-    [handleSave, store]
+    [handleSave, handleCancelEdit]
   );
 
   // Handle click to focus this comment for keyboard navigation
@@ -3510,7 +3586,7 @@ const CommentItem = memo(function CommentItem({
               />
               <div className="flex justify-end gap-2 mt-3">
                 <button
-                  onClick={store.cancelEditing}
+                  onClick={handleCancelEdit}
                   className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
                 >
                   Cancel
@@ -3815,15 +3891,12 @@ const PendingCommentItem = memo(function PendingCommentItem({
   const store = usePRReviewStore();
   const { removePendingComment, updatePendingComment } = useCommentActions();
   const currentUser = usePRReviewSelector((s) => s.currentUser);
-  const [editText, setEditText] = useState(comment.body);
+  const [editText, setEditText, clearEditText] = useCommentDraft(
+    isEditing ? `edit-pending:${comment.id}` : null,
+    comment.body
+  );
   const [saving, setSaving] = useState(false);
   const commentRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (isEditing) {
-      setEditText(comment.body);
-    }
-  }, [isEditing, comment.body]);
 
   useEffect(() => {
     if (isFocused && commentRef.current) {
@@ -3834,18 +3907,31 @@ const PendingCommentItem = memo(function PendingCommentItem({
     }
   }, [isFocused]);
 
+  const handleCancelEdit = useCallback(() => {
+    clearEditText();
+    store.cancelEditingPendingComment();
+  }, [clearEditText, store]);
+
   const handleSave = useCallback(async () => {
     if (!editText.trim() || editText === comment.body) {
-      store.cancelEditingPendingComment();
+      handleCancelEdit();
       return;
     }
     setSaving(true);
     try {
       await updatePendingComment(comment.id, editText.trim());
+      clearEditText();
     } finally {
       setSaving(false);
     }
-  }, [editText, comment.id, comment.body, updatePendingComment, store]);
+  }, [
+    editText,
+    comment.id,
+    comment.body,
+    updatePendingComment,
+    handleCancelEdit,
+    clearEditText,
+  ]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -3855,10 +3941,10 @@ const PendingCommentItem = memo(function PendingCommentItem({
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        store.cancelEditingPendingComment();
+        handleCancelEdit();
       }
     },
-    [handleSave, store]
+    [handleSave, handleCancelEdit]
   );
 
   // Handle click to focus this comment for keyboard navigation
@@ -3914,7 +4000,7 @@ const PendingCommentItem = memo(function PendingCommentItem({
                 />
                 <div className="flex justify-end gap-2 mt-3">
                   <button
-                    onClick={store.cancelEditingPendingComment}
+                    onClick={handleCancelEdit}
                     className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
                   >
                     Cancel
@@ -4097,14 +4183,14 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
   return (
     <DropdownMenu open={isOpen} onOpenChange={setIsOpen} modal={false}>
       <DropdownMenuTrigger asChild>
-        <button className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors">
+        <button className="flex items-center gap-1.5 px-2 py-1 text-xs leading-4 font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors">
           <span>Submit review</span>
           {pendingCount > 0 && (
-            <span className="px-1 py-0.5 text-[10px] bg-green-500/50 rounded">
+            <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 text-[10px] leading-none bg-green-500/50 rounded tabular-nums">
               {pendingCount}
             </span>
           )}
-          <span className="px-1 py-0.5 text-[10px] bg-green-500/50 rounded font-mono">
+          <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 text-[10px] leading-none bg-green-500/50 rounded font-mono">
             S
           </span>
           <ChevronsUpDown className="w-3.5 h-3.5 opacity-70" />

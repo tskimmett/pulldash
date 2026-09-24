@@ -3535,7 +3535,7 @@ function MergeSection({
           )}
 
           {/* Merge button with dropdown */}
-          <div className="flex items-center gap-0.5">
+          <div className="flex items-stretch">
             {/* Main merge button */}
             <button
               onClick={onMerge}
@@ -3560,10 +3560,10 @@ function MergeSection({
               onClick={handleToggleDropdown}
               disabled={merging}
               className={cn(
-                "px-2 py-2 rounded-r-md text-sm font-medium transition-colors border-l border-green-700",
+                "flex items-center px-2 rounded-r-md text-sm font-medium transition-colors border-l",
                 canMergePR || bypassRules
-                  ? "bg-green-600 text-white hover:bg-green-700"
-                  : "bg-muted text-muted-foreground cursor-not-allowed"
+                  ? "bg-green-600 text-white hover:bg-green-700 border-green-800"
+                  : "bg-muted text-muted-foreground cursor-not-allowed border-border"
               )}
             >
               <ChevronDown

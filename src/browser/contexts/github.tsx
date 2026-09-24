@@ -1136,6 +1136,68 @@ function createGitHubStore() {
     return promise;
   }
 
+  /**
+   * Files changed between two commits of a PR (GitHub's compare endpoint).
+   * Used for "changes since your last review". Returns null when the start
+   * commit no longer exists (force-pushed away).
+   */
+  async function getCompareFiles(
+    owner: string,
+    repo: string,
+    startSha: string,
+    headSha: string
+  ): Promise<PullRequestFile[] | null> {
+    if (!octokit) throw new Error("Not initialized");
+
+    const cacheKey = `compare:${owner}/${repo}/${startSha}...${headSha}`;
+
+    const cached = cache.get<PullRequestFile[]>(cacheKey);
+    if (cached) return cached;
+
+    const pending = cache.getPending<PullRequestFile[] | null>(cacheKey);
+    if (pending) return pending;
+
+    const promise = (async () => {
+      const files: PullRequestFile[] = [];
+      let page = 1;
+
+      try {
+        while (true) {
+          const { data } = await octokit!.request(
+            "GET /repos/{owner}/{repo}/compare/{basehead}",
+            {
+              owner,
+              repo,
+              basehead: `${startSha}...${headSha}`,
+              per_page: 100,
+              page,
+            }
+          );
+          const pageFiles = data.files ?? [];
+          files.push(...pageFiles);
+          if (pageFiles.length < 100) break;
+          page++;
+        }
+      } catch (error: unknown) {
+        if (
+          error &&
+          typeof error === "object" &&
+          "status" in error &&
+          error.status === 404
+        ) {
+          return null;
+        }
+        throw error;
+      }
+
+      cache.set(cacheKey, files);
+      return files;
+    })();
+
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
+
   async function getPRComments(
     owner: string,
     repo: string,
@@ -2767,6 +2829,7 @@ function createGitHubStore() {
     searchUsers,
     getPR,
     getPRFiles,
+    getCompareFiles,
     getPRComments,
     createPRComment,
     getPRReviews,

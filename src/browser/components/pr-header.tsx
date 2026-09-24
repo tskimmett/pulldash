@@ -17,6 +17,8 @@ interface PRHeaderProps {
   repo: string;
   onToggleSidebar?: () => void;
   rightContent?: ReactNode;
+  /** Override the line stats (e.g. when only a commit range is shown). */
+  stats?: { additions: number; deletions: number };
 }
 
 export const PRHeader = memo(function PRHeader({
@@ -25,7 +27,10 @@ export const PRHeader = memo(function PRHeader({
   repo,
   onToggleSidebar,
   rightContent,
+  stats,
 }: PRHeaderProps) {
+  const additions = stats?.additions ?? pr.additions;
+  const deletions = stats?.deletions ?? pr.deletions;
   const stateIcon = pr.merged ? (
     <GitMerge className="w-3.5 h-3.5" />
   ) : pr.state === "open" ? (
@@ -123,8 +128,8 @@ export const PRHeader = memo(function PRHeader({
       <div className="flex items-center gap-2 sm:gap-3 shrink-0">
         {/* Line diff stats */}
         <span className="text-xs hidden sm:inline">
-          <span className="text-green-500">+{pr.additions}</span>{" "}
-          <span className="text-red-500">−{pr.deletions}</span>
+          <span className="text-green-500">+{additions}</span>{" "}
+          <span className="text-red-500">−{deletions}</span>
         </span>
 
         {/* Right content slot (e.g., Submit Review button) */}

@@ -20,6 +20,11 @@ import {
 import { isTestFile } from "@/browser/lib/test-file";
 import { enrichCommentsWithThreads } from "@/browser/lib/review-threads";
 import {
+  findLastReviewedSha,
+  isRangeAvailable,
+  type DiffRange,
+} from "@/browser/lib/review-range";
+import {
   cancelSemanticJob,
   fetchCachedSemanticReview,
   fetchSemanticProviders,
@@ -185,7 +190,18 @@ export interface ExpandedSkipBlock {
 interface PRReviewState {
   // Core data
   pr: PullRequest;
+  /** Files currently shown - the full PR, or only those in `diffRange`. */
   files: PullRequestFile[];
+  /** Every file in the PR, regardless of the active range. */
+  allFiles: PullRequestFile[];
+  /**
+   * "Changes since" narrowing: when set, `files` and every diff cover only
+   * commits after `diffRange.startSha` up to the PR head.
+   */
+  diffRange: DiffRange | null;
+  diffRangeLoading: boolean;
+  /** Set when the requested start commit was force-pushed out of the PR. */
+  diffRangeError: string | null;
   owner: string;
   repo: string;
   currentUser: string | null;
@@ -495,6 +511,10 @@ export class PRReviewStore {
     this.state = {
       ...initialState,
       files: sortedFiles,
+      allFiles: sortedFiles,
+      diffRange: null,
+      diffRangeLoading: false,
+      diffRangeError: null,
       viewerCanMergeAsAdmin: false,
 
       // PR data (loaded separately)
@@ -1056,9 +1076,118 @@ export class PRReviewStore {
     this.semanticJobId = null;
   };
 
+  // ---------------------------------------------------------------------------
+  // Diff Range ("changes since your last review")
+  // ---------------------------------------------------------------------------
+
+  /** Commit the viewer's latest submitted review was made against, if any. */
+  lastReviewedSha = (): string | null =>
+    findLastReviewedSha(this.state.reviews, this.state.currentUser);
+
+  /**
+   * Narrow the diff to commits after `startSha`. Passing null restores the
+   * full PR. Files outside the range disappear from the tree; the selected
+   * file falls back to the first in-range file when it drops out.
+   */
+  setDiffRange = async (
+    range: DiffRange | null,
+    fetchFiles?: (
+      startSha: string,
+      headSha: string
+    ) => Promise<PullRequestFile[] | null>
+  ): Promise<void> => {
+    const { pr, owner, repo, commits } = this.state;
+
+    if (!range) {
+      if (!this.state.diffRange && !this.state.diffRangeError) return;
+      this.applyFiles(this.state.allFiles, null);
+      this.set({ diffRangeError: null, diffRangeLoading: false });
+      return;
+    }
+
+    if (this.state.diffRange?.startSha === range.startSha) return;
+
+    if (!isRangeAvailable(commits, range.startSha, pr.head.sha)) {
+      this.set({
+        diffRangeError:
+          "That commit is no longer part of this pull request (the branch was force-pushed).",
+        diffRangeLoading: false,
+      });
+      return;
+    }
+
+    this.set({ diffRangeLoading: true, diffRangeError: null });
+    const load =
+      fetchFiles ??
+      ((start: string, head: string) =>
+        this.github.getCompareFiles(owner, repo, start, head));
+
+    let files: PullRequestFile[] | null;
+    try {
+      files = await load(range.startSha, pr.head.sha);
+    } catch (error) {
+      console.error("Failed to load changes since commit:", error);
+      files = null;
+    }
+
+    // A newer range request (or a reset) won the race; drop this result.
+    if (!this.state.diffRangeLoading) return;
+
+    if (!files) {
+      this.set({
+        diffRangeLoading: false,
+        diffRangeError: "Couldn't load the changes since that commit.",
+      });
+      return;
+    }
+
+    this.applyFiles(sortFilesLikeTree(files), range);
+    this.set({ diffRangeLoading: false });
+  };
+
+  /** Narrow to everything pushed after the viewer's last submitted review. */
+  showChangesSinceLastReview = (): Promise<void> => {
+    const sha = this.lastReviewedSha();
+    if (!sha) return Promise.resolve();
+    return this.setDiffRange({ startSha: sha, source: "review" });
+  };
+
+  clearDiffRange = () => this.setDiffRange(null);
+
+  /**
+   * Swap the visible file set. Parsed diffs are keyed by filename, so they
+   * must be dropped: the same file has a different patch in a different range.
+   */
+  private applyFiles(files: PullRequestFile[], range: DiffRange | null) {
+    const { selectedFile, showOverview } = this.state;
+    const stillVisible =
+      selectedFile !== null && files.some((f) => f.filename === selectedFile);
+    // The semantic tree references files outside a narrowed range.
+    const viewMode = range ? "files" : this.state.viewMode;
+    this.set({
+      files,
+      diffRange: range,
+      viewMode,
+      loadedDiffs: {},
+      loadingFiles: new Set(),
+      expandedSkipBlocks: {},
+      expandingSkipBlocks: new Set(),
+      fullyExpandedFiles: new Set(),
+      navigableItems: {},
+      commentRangeLookup: {},
+      selectedFiles: new Set(),
+    });
+    if (!showOverview && !stillVisible) {
+      if (files.length > 0) this.selectFile(files[0].filename);
+      else this.selectOverview();
+    }
+  }
+
   setViewMode = (mode: "files" | "semantic") => {
     if (this.state.viewMode === mode) return;
     if (mode === "semantic" && !this.state.semanticReview) return;
+    // The semantic tree spans the whole PR; it can't be narrowed to a range.
+    if (mode === "semantic" && this.state.diffRange) return;
     this.set({ viewMode: mode });
     // Entering semantic mode with no selection: open the first layer.
     if (mode === "semantic" && !this.state.selectedLayerId) {
@@ -2305,6 +2434,9 @@ export class PRReviewStore {
   ) => {
     const side = toCommentSide(lineSide);
     const { selectedFile } = this.state;
+    // In a narrowed range the old side is an intermediate commit, not the PR
+    // base, so LEFT line numbers would not match what GitHub expects.
+    if (side === "LEFT" && this.state.diffRange) return;
     // GitHub rejects comments outside diff hunks (e.g. expanded context), so
     // don't offer a form that can never be submitted.
     if (
@@ -2338,6 +2470,29 @@ export class PRReviewStore {
 
   cancelCommenting = () => {
     this.set({ commentingOnLine: null });
+  };
+
+  // ---------------------------------------------------------------------------
+  // Comment Drafts
+  // ---------------------------------------------------------------------------
+
+  // Unsubmitted editor text, keyed per form. Lives outside reactive state so
+  // keystrokes don't notify subscribers, and so text survives the form
+  // unmounting when the diff virtualizer scrolls it out of view.
+  private drafts = new Map<string, string>();
+
+  getDraft = (key: string): string | undefined => this.drafts.get(key);
+
+  setDraft = (key: string, text: string) => {
+    if (text) {
+      this.drafts.set(key, text);
+    } else {
+      this.drafts.delete(key);
+    }
+  };
+
+  clearDraft = (key: string) => {
+    this.drafts.delete(key);
   };
 
   enterGotoMode = () => {
