@@ -7,28 +7,12 @@
  * pull in the SDK.
  */
 
-import { existsSync, readFileSync } from "fs";
+import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import type { SemanticProvider, ProviderRunOptions } from "./types";
 
-/**
- * The SDK's events never report which model served the turn, so read the
- * user's configured default from the Codex CLI config. Best-effort: absent
- * or unparseable config just means we log without a model name.
- */
-function detectCodexModel(): string | null {
-  try {
-    const config = readFileSync(
-      join(homedir(), ".codex", "config.toml"),
-      "utf8"
-    );
-    const match = config.match(/^model\s*=\s*"([^"]+)"/m);
-    return match?.[1] ?? null;
-  } catch {
-    return null;
-  }
-}
+const CODEX_MODEL = "gpt-6-luna";
 
 export const codexProvider: SemanticProvider = {
   id: "codex",
@@ -48,11 +32,9 @@ export const codexProvider: SemanticProvider = {
   async run(prompt: string, options: ProviderRunOptions): Promise<string> {
     const { Codex } = await import("@openai/codex-sdk");
 
-    const model = detectCodexModel();
-    options.onProgress(
-      model ? `starting Codex agent (${model})` : "starting Codex agent"
-    );
+    options.onProgress(`starting Codex agent (${CODEX_MODEL})`);
     const thread = new Codex().startThread({
+      model: CODEX_MODEL,
       // Pure analysis over an inlined diff: no repo or network access needed.
       sandboxMode: "read-only",
       skipGitRepoCheck: true,

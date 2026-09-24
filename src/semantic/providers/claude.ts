@@ -12,6 +12,8 @@ import { homedir } from "os";
 import { join } from "path";
 import type { SemanticProvider, ProviderRunOptions } from "./types";
 
+const CLAUDE_MODEL = "claude-opus-5-5";
+
 export const claudeProvider: SemanticProvider = {
   id: "claude",
   displayName: "Claude",
@@ -55,6 +57,7 @@ export const claudeProvider: SemanticProvider = {
           allowedTools: [],
           disallowedTools: ["Bash", "Write", "Edit"],
           maxTurns: 1,
+          model: CLAUDE_MODEL,
           abortController: controller,
         },
       });
