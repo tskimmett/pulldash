@@ -46,7 +46,7 @@
     "url": "https://coder.com"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.245",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.282",
     "@electron/asar": "^4.0.1",
     "@hono/node-server": "^1.19.6",
     "@octokit/core": "^7.0.6",
