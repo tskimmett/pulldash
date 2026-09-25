@@ -11,11 +11,18 @@ import {
 import { cn } from "../cn";
 import { usePRReviewSelector, usePRReviewStore } from "../contexts/pr-review";
 import { parsePatchLines, type PatchLine } from "../lib/patch-lines";
+import { isTestFile } from "../lib/test-file";
 import type { PullRequestFile } from "@/api/types";
 
 export const AllFilesDiff = memo(function AllFilesDiff() {
   const store = usePRReviewStore();
-  const files = usePRReviewSelector((s) => s.files);
+  const prFiles = usePRReviewSelector((s) => s.files);
+  const hideTestFiles = usePRReviewSelector((s) => s.hideTestFiles);
+  const files = useMemo(
+    () =>
+      hideTestFiles ? prFiles.filter((f) => !isTestFile(f.filename)) : prFiles,
+    [prFiles, hideTestFiles]
+  );
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
   const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
   const scrollRef = useRef<HTMLDivElement>(null);
