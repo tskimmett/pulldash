@@ -275,10 +275,10 @@ function TabItem({ tab, isActive, onSelect, onClose }: TabItemProps) {
         }
       }}
       className={cn(
-        "group flex items-center gap-1.5 h-7 px-2.5 text-xs font-medium rounded-md transition-colors shrink-0 max-w-[180px] cursor-pointer",
+        "group flex items-center gap-1.5 h-full px-2.5 text-xs font-medium border-b-2 transition-colors shrink-0 max-w-[180px] cursor-pointer",
         isActive
-          ? "bg-background text-foreground"
-          : "text-muted-foreground hover:text-foreground hover:bg-foreground/5"
+          ? "border-orange-500 bg-background text-foreground"
+          : "border-transparent text-muted-foreground hover:text-foreground hover:bg-foreground/5"
       )}
     >
       {isHome ? (
