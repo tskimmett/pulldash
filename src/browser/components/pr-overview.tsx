@@ -58,6 +58,7 @@ import {
   getTimeAgo,
 } from "../contexts/pr-review";
 import { parseDiffCached, type ParsedDiff } from "../lib/diff";
+import { getLatestReviewsByUser } from "../lib/latest-reviews";
 import {
   useGitHub,
   useCurrentUser,
@@ -829,6 +830,12 @@ export const PROverview = memo(function PROverview() {
     workflowRunsAwaitingApproval
   );
   const latestReviews = getLatestReviewsByUser(reviews);
+  // Re-requested reviewers render as pending, so drop their older review here
+  const sidebarReviews = getLatestReviewsByUser(
+    reviews,
+    (pr.requested_reviewers ?? []).map((r) => r.login)
+  );
+  const hasRequestedReviewers = (pr.requested_reviewers?.length ?? 0) > 0;
   const canMergePR = canMerge(pr, checkStatus);
 
   // Tab counts
@@ -1435,10 +1442,10 @@ export const PROverview = memo(function PROverview() {
                 ) : undefined
               }
             >
-              {pr.requested_reviewers && pr.requested_reviewers.length > 0 ? (
+              {hasRequestedReviewers && (
                 <TooltipProvider delayDuration={200}>
                   <div className="space-y-2">
-                    {pr.requested_reviewers.map((reviewer) => (
+                    {(pr.requested_reviewers ?? []).map((reviewer) => (
                       <div
                         key={reviewer.login}
                         className="flex items-center gap-2 group"
@@ -1458,7 +1465,7 @@ export const PROverview = memo(function PROverview() {
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <span className="ml-auto cursor-default">
-                              <Clock className="w-3.5 h-3.5 text-yellow-500" />
+                              <Clock className="w-4 h-4 text-yellow-500" />
                             </span>
                           </TooltipTrigger>
                           <TooltipContent>
@@ -1478,10 +1485,13 @@ export const PROverview = memo(function PROverview() {
                     ))}
                   </div>
                 </TooltipProvider>
-              ) : latestReviews.length > 0 ? (
+              )}
+              {sidebarReviews.length > 0 && (
                 <TooltipProvider delayDuration={200}>
-                  <div className="space-y-2">
-                    {latestReviews.map((review) => (
+                  <div
+                    className={cn("space-y-2", hasRequestedReviewers && "mt-2")}
+                  >
+                    {sidebarReviews.map((review) => (
                       <div key={review.id} className="flex items-center gap-2">
                         {review.user && (
                           <UserHoverCard login={review.user.login}>
@@ -1494,17 +1504,24 @@ export const PROverview = memo(function PROverview() {
                         )}
                         {review.user && (
                           <UserHoverCard login={review.user.login}>
-                            <span className="text-sm hover:text-blue-400 hover:underline cursor-pointer">
+                            <span className="text-sm flex-1 hover:text-blue-400 hover:underline cursor-pointer">
                               {review.user.login}
                             </span>
                           </UserHoverCard>
                         )}
-                        <ReviewStateIcon state={review.state} showTooltip />
+                        <span className="ml-auto">
+                          <ReviewStateIcon state={review.state} showTooltip />
+                        </span>
+                        {/* Matches the remove-button slot on pending rows */}
+                        {canMergeRepo && !pr.merged && (
+                          <span className="w-4 shrink-0" />
+                        )}
                       </div>
                     ))}
                   </div>
                 </TooltipProvider>
-              ) : (
+              )}
+              {!hasRequestedReviewers && sidebarReviews.length === 0 && (
                 <span className="text-sm text-muted-foreground">
                   No reviews yet
                 </span>
@@ -2527,7 +2544,7 @@ function ReviewStateIcon({
         };
       case "COMMENTED":
         return {
-          icon: <Eye className="w-4 h-4" />,
+          icon: <Eye className="w-4 h-4 text-muted-foreground" />,
           tooltip: "Left review comments",
         };
       case "DISMISSED":
@@ -4115,30 +4132,6 @@ function calculateCheckStatus(
   if (allChecks.some((c) => c === "failure" || c === "error")) return "failure";
   if (allChecks.some((c) => c === "pending" || c === null)) return "pending";
   return "success";
-}
-
-function getLatestReviewsByUser(reviews: Review[]): Review[] {
-  const byUser = new Map<string, Review>();
-  const sorted = [...reviews]
-    .filter((r) => r.submitted_at && r.user)
-    .sort(
-      (a, b) =>
-        new Date(a.submitted_at!).getTime() -
-        new Date(b.submitted_at!).getTime()
-    );
-
-  // Only include actual reviews (APPROVED or CHANGES_REQUESTED)
-  // COMMENTED is not a review decision - it's just leaving comments
-  for (const review of sorted) {
-    if (
-      (review.state === "APPROVED" || review.state === "CHANGES_REQUESTED") &&
-      review.user
-    ) {
-      byUser.set(review.user.login, review);
-    }
-  }
-
-  return [...byUser.values()];
 }
 
 interface PRData {
