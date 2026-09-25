@@ -13,6 +13,7 @@
   "scripts": {
     "dev": "concurrently \"bun run build:browser --watch\" \"bun run dev:node\"",
     "dev:node": "bun run src/node/main.ts",
+    "start": "bun run build:browser && bun run src/node/main.ts",
     "typecheck": "tsgo --noEmit",
     "build:browser": "bun run ./scripts/build-browser.ts",
     "electron:dev": "concurrently \"bun run build:browser --watch\" \"bun run scripts/electron-dev.ts\"",

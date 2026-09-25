@@ -1355,6 +1355,29 @@ const DiffViewer = memo(function DiffViewer({
   const hunks = diff?.hunks ?? [];
   const store = usePRReviewStore();
   const parentRef = useRef<HTMLDivElement>(null);
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findIndex, setFindIndex] = useState(0);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f")
+        return;
+      const target = event.target as HTMLElement;
+      if (
+        target !== findInputRef.current &&
+        (target.closest("input, textarea, [contenteditable='true']") ||
+          !parentRef.current)
+      )
+        return;
+      event.preventDefault();
+      setFindOpen(true);
+      requestAnimationFrame(() => findInputRef.current?.select());
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   // Get all comments and pending comments for building virtual rows
   const comments = useCurrentFileComments();
@@ -1743,6 +1766,44 @@ const DiffViewer = memo(function DiffViewer({
     return result;
   }, [staticRows, commentingOnLine]);
 
+  // Index all row text once while find is open, including unmounted rows.
+  const searchableRows = useMemo(
+    () =>
+      findOpen
+        ? virtualRows.map((row) => {
+            const lines =
+              row.type === "line"
+                ? [row.line]
+                : row.type === "split-line"
+                  ? [row.pair.left, row.pair.right]
+                  : [];
+            return lines.map((line) =>
+              line
+                ? line.content
+                    .map((segment) => segment.value)
+                    .join("")
+                    .toLocaleLowerCase()
+                : ""
+            );
+          })
+        : [],
+    [virtualRows, findOpen]
+  );
+  const findMatches = useMemo(() => {
+    const needle = findQuery.toLocaleLowerCase();
+    if (!needle) return [];
+    const matches: number[] = [];
+    searchableRows.forEach((lines, rowIndex) => {
+      if (lines.some((content) => content.includes(needle)))
+        matches.push(rowIndex);
+    });
+    return matches;
+  }, [searchableRows, findQuery]);
+
+  const activeFindIndex = Math.min(findIndex, findMatches.length - 1);
+  const activeFindRow = findMatches[activeFindIndex];
+  const matchingRows = useMemo(() => new Set(findMatches), [findMatches]);
+
   // Create O(1) lookup map for line numbers -> row indices
   // For split view, we need to map both old and new line numbers
   const lineNumToRowIndex = useMemo(() => {
@@ -1830,6 +1891,19 @@ const DiffViewer = memo(function DiffViewer({
     // Add padding at the end so we can scroll the last line to center
     paddingEnd: 300,
   });
+
+  useEffect(() => {
+    if (findOpen && activeFindRow !== undefined) {
+      virtualizer.scrollToIndex(activeFindRow, { align: "center" });
+    }
+  }, [findOpen, activeFindRow, virtualizer]);
+
+  const stepFind = (direction: number) => {
+    if (!findMatches.length) return;
+    setFindIndex(
+      (index) => (index + direction + findMatches.length) % findMatches.length
+    );
+  };
 
   const totalSize = virtualizer.getTotalSize();
 
@@ -2242,12 +2316,78 @@ const DiffViewer = memo(function DiffViewer({
   return (
     <LineDragContext.Provider value={dragValue}>
       <div className="relative flex-1 min-h-0 flex flex-col">
+        {findOpen && (
+          <div className="flex items-center gap-2 border-b border-border bg-background px-3 py-1.5">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <input
+              ref={findInputRef}
+              autoFocus
+              aria-label="Find in diff"
+              placeholder="Find in diff"
+              className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+              value={findQuery}
+              onChange={(event) => {
+                setFindQuery(event.target.value);
+                setFindIndex(0);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  stepFind(event.shiftKey ? -1 : 1);
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  setFindOpen(false);
+                  setFindQuery("");
+                  parentRef.current?.focus();
+                }
+              }}
+            />
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {findQuery
+                ? `${findMatches.length ? activeFindIndex + 1 : 0} / ${findMatches.length}`
+                : ""}
+            </span>
+            <button
+              type="button"
+              aria-label="Previous match"
+              disabled={!findMatches.length}
+              onClick={() => stepFind(-1)}
+              className="p-1 disabled:opacity-40"
+            >
+              <ChevronUp className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              aria-label="Next match"
+              disabled={!findMatches.length}
+              onClick={() => stepFind(1)}
+              className="p-1 disabled:opacity-40"
+            >
+              <ChevronDown className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              aria-label="Close find"
+              onClick={() => {
+                setFindOpen(false);
+                setFindQuery("");
+              }}
+              className="p-1"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
         <DiffOverviewRuler
           marks={rulerMarks}
           scrollElRef={parentRef}
           contentSize={totalSize}
         />
-        <div ref={parentRef} className="flex-1 overflow-auto diff-scrollbar">
+        <div
+          ref={parentRef}
+          tabIndex={-1}
+          className="flex-1 overflow-auto diff-scrollbar"
+        >
           <div className="p-4">
             <div className="border border-border rounded-lg overflow-hidden">
               <div
@@ -2262,7 +2402,13 @@ const DiffViewer = memo(function DiffViewer({
                   return (
                     <div
                       key={virtualRow.key}
-                      className="absolute top-0 left-0 w-full"
+                      className={cn(
+                        "absolute top-0 left-0 w-full",
+                        matchingRows.has(virtualRow.index) &&
+                          "outline outline-1 outline-yellow-400",
+                        activeFindRow === virtualRow.index &&
+                          "z-10 outline-2 outline-yellow-500"
+                      )}
                       style={{
                         transform: `translateY(${virtualRow.start}px)`,
                       }}

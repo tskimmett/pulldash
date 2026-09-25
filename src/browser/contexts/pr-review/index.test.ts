@@ -8,7 +8,7 @@ import {
   visibleComments,
   type ParsedDiff,
 } from "./index";
-import type { GitHubStore } from "@/browser/contexts/github";
+import type { GitHubStore, TimelineEvent } from "@/browser/contexts/github";
 import {
   SEMANTIC_REVIEW_VERSION,
   type SemanticReview,
@@ -127,6 +127,28 @@ function createStore(overrides?: {
 
 beforeEach(() => {
   storage.clear();
+});
+
+test("loadPRData keeps the complete timeline in API order", async () => {
+  const events = Array.from(
+    { length: 182 },
+    (_, id) => ({ event: "labeled", id }) as TimelineEvent
+  );
+  const github = {
+    ...createMockGitHubStore(),
+    getPRTimeline: async () => events,
+  } as GitHubStore;
+  const store = new PRReviewStore(github, {
+    pr: createMockPR(),
+    files: [],
+    comments: [],
+    owner: "test",
+    repo: "repo",
+    viewerPermission: "WRITE",
+  });
+
+  await store.loadPRData();
+  expect(store.getSnapshot().timeline).toEqual(events);
 });
 
 // ============================================================================

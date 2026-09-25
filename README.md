@@ -50,6 +50,21 @@ GitHub's API supports [CORS](https://docs.github.com/en/rest/using-the-rest-api/
 
 - **Virtualized rendering**: Diffs, file lists, and the command palette only render visible rows.
 
+## Run Locally
+
+Requires [Bun](https://bun.sh).
+
+```bash
+git clone https://github.com/tskimmett/pulldash.git
+cd pulldash
+bun install
+bun start
+```
+
+Open http://pulldash.localhost:3002 (set `PORT` to change the port). Semantic review is available when [Claude Code](https://claude.com/claude-code) or Codex is logged in on your machine.
+
+To update, `git pull && bun install && bun start`.
+
 ## Development
 
 ```bash
