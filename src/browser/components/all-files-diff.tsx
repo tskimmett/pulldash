@@ -10,9 +10,12 @@ import {
 } from "lucide-react";
 import { cn } from "../cn";
 import { usePRReviewSelector, usePRReviewStore } from "../contexts/pr-review";
+import { diffService } from "../lib/diff";
 import { parsePatchLines, type PatchLine } from "../lib/patch-lines";
 import { isTestFile } from "../lib/test-file";
 import type { PullRequestFile } from "@/api/types";
+
+const highlightedPatchCache = new WeakMap<PullRequestFile, string[]>();
 
 export const AllFilesDiff = memo(function AllFilesDiff() {
   const store = usePRReviewStore();
@@ -263,6 +266,50 @@ const AllFileSection = memo(function AllFileSection({
     () => (isViewed ? [] : parsePatchLines(file.patch ?? "")),
     [file.patch, isViewed]
   );
+  const [highlighted, setHighlighted] = useState<{
+    file: PullRequestFile;
+    lines: string[];
+  } | null>(() => {
+    const cached = highlightedPatchCache.get(file);
+    return cached ? { file, lines: cached } : null;
+  });
+  const highlightedLines =
+    highlighted?.file === file
+      ? highlighted.lines
+      : highlightedPatchCache.get(file);
+
+  useEffect(() => {
+    const cached = highlightedPatchCache.get(file);
+    if (cached) {
+      setHighlighted({ file, lines: cached });
+      return;
+    }
+    if (isViewed || !lines.length) return;
+
+    let active = true;
+    const codeLines = lines.filter((line) => line.type !== "hunk");
+    if (!codeLines.length) return;
+    diffService
+      .highlightLines(
+        codeLines.map((line) => line.content).join("\n"),
+        file.filename,
+        1,
+        codeLines.length
+      )
+      .then((result) => {
+        const highlighted = result.map((line) => line.content[0].html);
+        highlightedPatchCache.set(file, highlighted);
+        if (active) setHighlighted({ file, lines: highlighted });
+      })
+      .catch(() => {
+        // Keep plain text visible if highlighting fails.
+      });
+    return () => {
+      active = false;
+    };
+  }, [file, isViewed, lines]);
+
+  let codeLineIndex = 0;
 
   return (
     <section className="border border-border rounded-lg overflow-hidden">
@@ -309,7 +356,14 @@ const AllFileSection = memo(function AllFileSection({
                   "relative z-10 outline-2 outline-yellow-500"
               )}
             >
-              <AllFileLine line={line} />
+              <AllFileLine
+                line={line}
+                html={
+                  line.type === "hunk"
+                    ? undefined
+                    : highlightedLines?.[codeLineIndex++]
+                }
+              />
             </div>
           ))}
         </div>
@@ -322,7 +376,7 @@ const AllFileSection = memo(function AllFileSection({
   );
 });
 
-function AllFileLine({ line }: { line: PatchLine }) {
+function AllFileLine({ line, html }: { line: PatchLine; html?: string }) {
   if (line.type === "hunk") {
     return (
       <div className="h-5 px-2 whitespace-pre bg-blue-500/10 text-blue-400">
@@ -360,7 +414,11 @@ function AllFileLine({ line }: { line: PatchLine }) {
         {line.newLine}
       </span>
       <span className="flex-1 whitespace-pre-wrap break-words pr-6 overflow-hidden pl-2">
-        {line.content || " "}
+        {html === undefined ? (
+          line.content || " "
+        ) : (
+          <span dangerouslySetInnerHTML={{ __html: html || " " }} />
+        )}
       </span>
     </div>
   );
