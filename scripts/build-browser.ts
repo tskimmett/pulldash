@@ -42,8 +42,13 @@ async function build() {
     (o) => o.kind === "entry-point" && o.path.endsWith(".js")
   );
   if (entryJs) {
-    const entryName = entryJs.path.split("/").pop()!;
-    indexHtml = indexHtml.replace(/src="\/[^"]+\.js"/, `src="/${entryName}"`);
+    // Split on both separators and match any src (Windows emits absolute
+    // paths like "D:/repo/dist/browser/chunk.js" or with backslashes).
+    const entryName = entryJs.path.split(/[\\/]/).pop()!;
+    indexHtml = indexHtml.replace(
+      /(<script\b[^>]*\bsrc=")[^"]+\.js(")/,
+      `$1/${entryName}$2`
+    );
   }
   await Bun.write(indexPath, indexHtml);
 
