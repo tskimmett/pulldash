@@ -15,6 +15,7 @@ export function useThreadActions() {
           ? { ...c, is_resolved: true }
           : c
       );
+      store.updateReviewThread(threadId, (t) => ({ ...t, isResolved: true }));
       store.setComments(updatedComments);
     } catch (error) {
       console.error("Failed to resolve thread:", error);
@@ -31,6 +32,11 @@ export function useThreadActions() {
           ? { ...c, is_resolved: false }
           : c
       );
+      store.updateReviewThread(threadId, (t) => ({
+        ...t,
+        isResolved: false,
+        resolvedBy: null,
+      }));
       store.setComments(updatedComments);
     } catch (error) {
       console.error("Failed to unresolve thread:", error);

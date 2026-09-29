@@ -1,7 +1,18 @@
 import { test, expect, beforeEach } from "bun:test";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
-import { PRReviewStore, sortFilesLikeTree } from "./index";
-import type { GitHubStore } from "@/browser/contexts/github";
+import {
+  PRReviewStore,
+  commentThreadKey,
+  isThreadCollapsed,
+  sortFilesLikeTree,
+  visibleComments,
+  type ParsedDiff,
+} from "./index";
+import type { GitHubStore, TimelineEvent } from "@/browser/contexts/github";
+import {
+  SEMANTIC_REVIEW_VERSION,
+  type SemanticReview,
+} from "@/semantic/schema";
 
 // Mock localStorage
 const storage = new Map<string, string>();
@@ -116,6 +127,28 @@ function createStore(overrides?: {
 
 beforeEach(() => {
   storage.clear();
+});
+
+test("loadPRData keeps the complete timeline in API order", async () => {
+  const events = Array.from(
+    { length: 182 },
+    (_, id) => ({ event: "labeled", id }) as TimelineEvent
+  );
+  const github = {
+    ...createMockGitHubStore(),
+    getPRTimeline: async () => events,
+  } as GitHubStore;
+  const store = new PRReviewStore(github, {
+    pr: createMockPR(),
+    files: [],
+    comments: [],
+    owner: "test",
+    repo: "repo",
+    viewerPermission: "WRITE",
+  });
+
+  await store.loadPRData();
+  expect(store.getSnapshot().timeline).toEqual(events);
 });
 
 // ============================================================================
@@ -266,6 +299,17 @@ test("toggleViewed navigates to next file when marking current file as viewed", 
   expect(store.getSnapshot().selectedFile).toBe("src/utils.ts");
 });
 
+test("toggleViewed keeps scroll position in all files mode", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+  store.setFileLayoutMode("all");
+
+  store.toggleViewed("src/index.ts");
+
+  expect(store.getSnapshot().viewedFiles.has("src/index.ts")).toBe(true);
+  expect(store.getSnapshot().selectedFile).toBe("src/index.ts");
+});
+
 test("toggleViewedMultiple marks multiple files", () => {
   const store = createStore();
 
@@ -338,7 +382,91 @@ test("startCommenting sets commenting state", () => {
   store.startCommenting(42, 38);
 
   const state = store.getSnapshot();
-  expect(state.commentingOnLine).toEqual({ line: 42, startLine: 38 });
+  expect(state.commentingOnLine).toEqual({
+    line: 42,
+    startLine: 38,
+    side: "RIGHT",
+  });
+});
+
+test("startCommenting records LEFT side for old-side lines", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+
+  store.startCommenting(7, undefined, "old");
+
+  expect(store.getSnapshot().commentingOnLine).toEqual({
+    line: 7,
+    startLine: undefined,
+    side: "LEFT",
+  });
+});
+
+test("startCommentingOnFocusedLine derives side from focused line", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+  store.setFocusedLine(7, "old");
+
+  store.startCommentingOnFocusedLine();
+
+  expect(store.getSnapshot().commentingOnLine).toEqual({
+    line: 7,
+    startLine: undefined,
+    side: "LEFT",
+  });
+});
+
+function diffWithOneHunk(): ParsedDiff {
+  return {
+    hunks: [
+      { type: "skip", count: 9, content: "" },
+      {
+        type: "hunk",
+        oldStart: 10,
+        newStart: 10,
+        lines: [
+          { type: "normal", oldLineNumber: 10, newLineNumber: 10, content: [] },
+          { type: "delete", oldLineNumber: 11, content: [] },
+          { type: "insert", newLineNumber: 11, content: [] },
+          { type: "normal", oldLineNumber: 12, newLineNumber: 12, content: [] },
+        ],
+      },
+    ],
+  };
+}
+
+test("isLineInDiff only accepts hunk lines on the matching side", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+  store.setLoadedDiff("src/index.ts", diffWithOneHunk());
+
+  expect(store.isLineInDiff("src/index.ts", 10, "RIGHT")).toBe(true);
+  expect(store.isLineInDiff("src/index.ts", 11, "RIGHT")).toBe(true);
+  expect(store.isLineInDiff("src/index.ts", 11, "LEFT")).toBe(true);
+  // Line 5 is only reachable by expanding the gap
+  expect(store.isLineInDiff("src/index.ts", 5, "RIGHT")).toBe(false);
+  expect(store.isLineInDiff("src/index.ts", 5, "LEFT")).toBe(false);
+  // Unloaded diffs are not validated
+  expect(store.isLineInDiff("src/utils.ts", 5, "RIGHT")).toBe(true);
+});
+
+test("startCommenting ignores lines outside the diff hunks", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+  store.setLoadedDiff("src/index.ts", diffWithOneHunk());
+
+  store.startCommenting(5);
+  expect(store.getSnapshot().commentingOnLine).toBeNull();
+
+  store.startCommenting(12, 5);
+  expect(store.getSnapshot().commentingOnLine).toBeNull();
+
+  store.startCommenting(12, 10);
+  expect(store.getSnapshot().commentingOnLine).toEqual({
+    line: 12,
+    startLine: 10,
+    side: "RIGHT",
+  });
 });
 
 test("cancelCommenting clears commenting state", () => {
@@ -349,6 +477,21 @@ test("cancelCommenting clears commenting state", () => {
   store.cancelCommenting();
 
   expect(store.getSnapshot().commentingOnLine).toBeNull();
+});
+
+test("comment drafts persist until cleared or emptied", () => {
+  const store = createStore();
+
+  store.setDraft("new:src/index.ts:RIGHT:42-42", "half-written");
+  expect(store.getDraft("new:src/index.ts:RIGHT:42-42")).toBe("half-written");
+  expect(store.getDraft("reply:1")).toBeUndefined();
+
+  store.setDraft("new:src/index.ts:RIGHT:42-42", "");
+  expect(store.getDraft("new:src/index.ts:RIGHT:42-42")).toBeUndefined();
+
+  store.setDraft("reply:1", "thanks");
+  store.clearDraft("reply:1");
+  expect(store.getDraft("reply:1")).toBeUndefined();
 });
 
 test("addPendingComment adds comment and clears selection", () => {
@@ -527,6 +670,18 @@ test("toggleDiffViewMode toggles between unified and split", () => {
   expect(store.getSnapshot().diffViewMode).toBe("unified");
 });
 
+test("file layout starts in single mode and can show all files from overview", () => {
+  const store = createStore();
+  expect(store.getSnapshot().fileLayoutMode).toBe("single");
+
+  store.setFileLayoutMode("all");
+  expect(store.getSnapshot().fileLayoutMode).toBe("all");
+  expect(store.getSnapshot().showOverview).toBe(false);
+
+  store.setFileLayoutMode("single");
+  expect(store.getSnapshot().fileLayoutMode).toBe("single");
+});
+
 // ============================================================================
 // Goto Line Mode
 // ============================================================================
@@ -687,4 +842,417 @@ test("clearOverviewScrollTarget clears the target", () => {
   store.clearOverviewScrollTarget();
 
   expect(store.getSnapshot().overviewScrollTarget).toBeNull();
+});
+
+// ============================================================================
+// Semantic review layer <-> file sync
+// ============================================================================
+
+function createSemanticStore() {
+  const store = createStore();
+  const review: SemanticReview = {
+    version: SEMANTIC_REVIEW_VERSION,
+    provider: "test",
+    headSha: "abc123",
+    generatedAt: new Date().toISOString(),
+    overview: "overview",
+    cohorts: [
+      {
+        id: "c1",
+        title: "Cohort 1",
+        summary: "s",
+        layers: [
+          {
+            id: "l1",
+            title: "Layer 1",
+            summary: "s",
+            ranges: [
+              { file: "src/index.ts", side: "new", startLine: 1, endLine: 2 },
+            ],
+          },
+          {
+            id: "l2",
+            title: "Layer 2",
+            summary: "s",
+            ranges: [
+              { file: "src/utils.ts", side: "new", startLine: 3, endLine: 4 },
+              { file: "src/index.ts", side: "new", startLine: 9, endLine: 9 },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  (store as unknown as { set: (p: Record<string, unknown>) => void }).set({
+    semanticReview: review,
+  });
+  store.setViewMode("semantic");
+  return store;
+}
+
+test("setViewMode semantic selects the first layer and its file", () => {
+  const store = createSemanticStore();
+
+  expect(store.getSnapshot().selectedLayerId).toBe("c1/l1");
+  expect(store.getSnapshot().selectedFile).toBe("src/index.ts");
+});
+
+test("selectFile in semantic mode syncs selectedLayerId to a covering layer", () => {
+  const store = createSemanticStore();
+
+  store.selectFile("src/utils.ts");
+
+  expect(store.getSnapshot().selectedLayerId).toBe("c1/l2");
+});
+
+test("file navigation in semantic mode syncs the selected layer", () => {
+  const store = createSemanticStore();
+
+  store.navigateToFile("next");
+
+  expect(store.getSnapshot().selectedFile).toBe("src/utils.ts");
+  expect(store.getSnapshot().selectedLayerId).toBe("c1/l2");
+});
+
+test("jumpToSemanticRange with a layer key selects that layer, not the first covering one", () => {
+  const store = createSemanticStore();
+
+  // src/index.ts is covered by l1 and l2; jumping from l2's row must keep l2.
+  store.jumpToSemanticRange(
+    { file: "src/index.ts", side: "new", startLine: 9, endLine: 9 },
+    "c1/l2"
+  );
+
+  const state = store.getSnapshot();
+  expect(state.selectedLayerId).toBe("c1/l2");
+  expect(state.selectedFile).toBe("src/index.ts");
+  expect(state.focusedLine).toBe(9);
+});
+
+test("selecting a layer keeps that layer even when other layers cover the file", () => {
+  const store = createSemanticStore();
+
+  store.selectSemanticLayer("c1/l2");
+
+  // l2's first range is src/utils.ts; selecting it must not bounce to l1.
+  expect(store.getSnapshot().selectedLayerId).toBe("c1/l2");
+  expect(store.getSnapshot().selectedFile).toBe("src/utils.ts");
+
+  // src/index.ts is covered by both l1 and l2; l2 is already selected and
+  // covers it, so the intentional layer selection is preserved.
+  store.selectFile("src/index.ts");
+  expect(store.getSnapshot().selectedLayerId).toBe("c1/l2");
+});
+
+test("selectFile leaves the layer alone for files no layer covers", () => {
+  const store = createSemanticStore();
+
+  store.selectFile("README.md");
+
+  expect(store.getSnapshot().selectedFile).toBe("README.md");
+  expect(store.getSnapshot().selectedLayerId).toBe("c1/l1");
+});
+
+// ============================================================================
+// Comment Collapse
+// ============================================================================
+
+test("commentThreadKey prefers the review thread id over the root comment id", () => {
+  const rooted = createMockComment(1, "src/index.ts", 10);
+  expect(commentThreadKey([rooted])).toBe("c1");
+
+  const threaded = {
+    ...rooted,
+    pull_request_review_thread_id: "PRRT_abc",
+  } as ReviewComment;
+  expect(
+    commentThreadKey([threaded, createMockComment(2, "src/index.ts", 10)])
+  ).toBe("PRRT_abc");
+});
+
+test("toggleAllCommentsCollapsed flips the global default and persists it", () => {
+  const store = createStore();
+
+  expect(store.getSnapshot().allCommentsCollapsed).toBe(false);
+
+  store.toggleAllCommentsCollapsed();
+
+  expect(store.getSnapshot().allCommentsCollapsed).toBe(true);
+  expect(storage.get("pulldash_collapse_all_comments")).toBe("true");
+
+  // A fresh store picks up the persisted preference.
+  expect(createStore().getSnapshot().allCommentsCollapsed).toBe(true);
+});
+
+test("toggleHideResolvedComments flips the flag and persists it", () => {
+  const store = createStore();
+
+  expect(store.getSnapshot().hideResolvedComments).toBe(false);
+
+  store.toggleHideResolvedComments();
+
+  expect(store.getSnapshot().hideResolvedComments).toBe(true);
+  expect(storage.get("pulldash_hide_resolved_comments")).toBe("true");
+  expect(createStore().getSnapshot().hideResolvedComments).toBe(true);
+
+  store.toggleHideResolvedComments();
+  expect(store.getSnapshot().hideResolvedComments).toBe(false);
+});
+
+test("hiding resolved comments drops focus from a resolved comment", () => {
+  const store = createStore();
+  const resolved = {
+    ...createMockComment(1, "src/index.ts", 10),
+    is_resolved: true,
+  } as ReviewComment;
+  const open = createMockComment(2, "src/index.ts", 12);
+  store.setComments([resolved, open]);
+
+  store.setFocusedCommentId(1);
+  store.setHideResolvedComments(true);
+  expect(store.getSnapshot().focusedCommentId).toBeNull();
+
+  store.setFocusedCommentId(2);
+  store.setHideResolvedComments(true);
+  expect(store.getSnapshot().focusedCommentId).toBe(2);
+});
+
+test("visibleComments filters resolved threads only when hiding", () => {
+  const resolved = {
+    ...createMockComment(1, "a.ts", 1),
+    is_resolved: true,
+  } as ReviewComment;
+  const open = createMockComment(2, "a.ts", 2);
+  const all = [resolved, open];
+
+  expect(visibleComments(all, false)).toBe(all);
+  expect(visibleComments(all, true)).toEqual([open]);
+  // Nothing filtered: same array back so memoized consumers stay stable.
+  expect(visibleComments([open], true)).toEqual([open]);
+});
+
+test("toggleThreadCollapsed overrides the global default per thread", () => {
+  const store = createStore();
+
+  store.toggleThreadCollapsed("t1");
+  expect(store.isThreadCollapsed("t1")).toBe(true);
+  expect(store.isThreadCollapsed("t2")).toBe(false);
+
+  store.toggleThreadCollapsed("t1");
+  expect(store.isThreadCollapsed("t1")).toBe(false);
+  // Returning to the default drops the override entirely.
+  expect(store.getSnapshot().collapsedThreadOverrides.size).toBe(0);
+});
+
+test("resolved threads collapse by default but stay expandable", () => {
+  const store = createStore();
+
+  expect(store.isThreadCollapsed("t1", true)).toBe(true);
+
+  store.toggleThreadCollapsed("t1", true);
+
+  expect(store.isThreadCollapsed("t1", true)).toBe(false);
+  expect(store.getSnapshot().collapsedThreadOverrides.get("t1")).toBe(false);
+});
+
+test("collapse-all clears per-thread overrides", () => {
+  const store = createStore();
+
+  store.toggleThreadCollapsed("t1");
+  expect(store.getSnapshot().collapsedThreadOverrides.size).toBe(1);
+
+  store.setAllCommentsCollapsed(true);
+
+  expect(store.getSnapshot().collapsedThreadOverrides.size).toBe(0);
+  expect(store.isThreadCollapsed("t1")).toBe(true);
+  expect(store.isThreadCollapsed("t2")).toBe(true);
+
+  // Expanding a single thread while the global default is collapsed works.
+  store.toggleThreadCollapsed("t2");
+  expect(store.isThreadCollapsed("t2")).toBe(false);
+  expect(store.isThreadCollapsed("t1")).toBe(true);
+});
+
+test("isThreadCollapsed reads state without the store instance", () => {
+  const store = createStore();
+  store.setAllCommentsCollapsed(true);
+  store.toggleThreadCollapsed("t1");
+
+  const state = store.getSnapshot();
+  expect(isThreadCollapsed(state, "t1", false)).toBe(false);
+  expect(isThreadCollapsed(state, "other", false)).toBe(true);
+});
+
+// ============================================================================
+// Diff range ("changes since your last review")
+// ============================================================================
+
+function createRangeStore() {
+  const commits = [
+    { sha: "c1", commit: { message: "one" } },
+    { sha: "c2", commit: { message: "two" } },
+    { sha: "abc123", commit: { message: "head" } },
+  ];
+  const reviews = [
+    {
+      user: { login: "me" },
+      state: "APPROVED",
+      commit_id: "c1",
+      submitted_at: "2026-01-01T00:00:00Z",
+    },
+  ];
+  const github = {
+    ...createMockGitHubStore(),
+    getPRCommits: async () => commits,
+    getPRReviews: async () => reviews,
+  } as unknown as GitHubStore;
+  const store = new PRReviewStore(github, {
+    pr: createMockPR(),
+    files: [
+      createMockFile("src/index.ts"),
+      createMockFile("src/utils.ts"),
+      createMockFile("README.md"),
+    ],
+    comments: [],
+    owner: "test",
+    repo: "repo",
+    viewerPermission: "WRITE",
+  });
+  store.setCurrentUser("me");
+  return store;
+}
+
+test("setDiffRange narrows files, drops parsed diffs, and restores on clear", async () => {
+  const store = createRangeStore();
+  await store.loadPRData();
+  store.selectFile("README.md");
+  store.setLoadedDiff("README.md", { hunks: [] });
+
+  expect(store.lastReviewedSha()).toBe("c1");
+
+  const requested: string[] = [];
+  await store.setDiffRange(
+    { startSha: "c1", source: "review" },
+    async (s, h) => {
+      requested.push(`${s}...${h}`);
+      return [createMockFile("src/utils.ts")];
+    }
+  );
+
+  const state = store.getSnapshot();
+  expect(requested).toEqual(["c1...abc123"]);
+  expect(state.diffRange).toEqual({ startSha: "c1", source: "review" });
+  expect(state.files.map((f) => f.filename)).toEqual(["src/utils.ts"]);
+  expect(state.allFiles.length).toBe(3);
+  // README dropped out of the range, so selection moves to the first in-range file
+  expect(state.selectedFile).toBe("src/utils.ts");
+  expect(state.loadedDiffs).toEqual({});
+
+  await store.clearDiffRange();
+  expect(store.getSnapshot().diffRange).toBeNull();
+  expect(store.getSnapshot().files.length).toBe(3);
+});
+
+test("setDiffRange rejects a start commit that is gone or already head", async () => {
+  const store = createRangeStore();
+  await store.loadPRData();
+
+  await store.setDiffRange({ startSha: "force-pushed-away", source: "manual" });
+  expect(store.getSnapshot().diffRange).toBeNull();
+  expect(store.getSnapshot().diffRangeError).toContain("force-pushed");
+
+  await store.clearDiffRange();
+  expect(store.getSnapshot().diffRangeError).toBeNull();
+
+  await store.setDiffRange({ startSha: "abc123", source: "manual" });
+  expect(store.getSnapshot().diffRange).toBeNull();
+
+  await store.setDiffRange({ startSha: "c2", endSha: "c1", source: "manual" });
+  expect(store.getSnapshot().diffRange).toBeNull();
+});
+
+test("setDiffRange compares through a selected end commit and can extend to head", async () => {
+  const store = createRangeStore();
+  await store.loadPRData();
+  const requested: string[] = [];
+  const fetchFiles = async (start: string, end: string) => {
+    requested.push(`${start}...${end}`);
+    return [createMockFile("src/index.ts")];
+  };
+
+  await store.setDiffRange(
+    { startSha: "c1", endSha: "c2", source: "manual" },
+    fetchFiles
+  );
+  expect(store.getSnapshot().diffRange?.endSha).toBe("c2");
+  await store.setDiffRange({ startSha: "c1", source: "manual" }, fetchFiles);
+  expect(requested).toEqual(["c1...c2", "c1...abc123"]);
+});
+
+test("setDiffRange keeps the latest range when compare requests finish out of order", async () => {
+  const store = createRangeStore();
+  await store.loadPRData();
+  let finishFirst: (files: PullRequestFile[]) => void = () => {};
+  const first = store.setDiffRange(
+    { startSha: "c1", endSha: "c2", source: "manual" },
+    () =>
+      new Promise<PullRequestFile[]>((resolve) => {
+        finishFirst = resolve;
+      })
+  );
+  await store.setDiffRange({ startSha: "c1", source: "manual" }, async () => [
+    createMockFile("src/utils.ts"),
+  ]);
+  finishFirst([createMockFile("README.md")]);
+  await first;
+
+  expect(store.getSnapshot().diffRange).toEqual({
+    startSha: "c1",
+    source: "manual",
+  });
+  expect(store.getSnapshot().files.map((file) => file.filename)).toEqual([
+    "src/utils.ts",
+  ]);
+});
+
+test("setDiffRange surfaces a failed compare fetch and blocks LEFT comments while active", async () => {
+  const store = createRangeStore();
+  await store.loadPRData();
+
+  await store.setDiffRange(
+    { startSha: "c2", source: "manual" },
+    async () => null
+  );
+  expect(store.getSnapshot().diffRange).toBeNull();
+  expect(store.getSnapshot().diffRangeError).toContain("Couldn't load");
+
+  await store.setDiffRange({ startSha: "c2", source: "manual" }, async () => [
+    createMockFile("src/index.ts"),
+  ]);
+  store.selectFile("src/index.ts");
+  store.setLoadedDiff("src/index.ts", {
+    hunks: [
+      {
+        type: "hunk",
+        oldStart: 1,
+        newStart: 1,
+        lines: [
+          {
+            type: "delete",
+            oldLineNumber: 1,
+            content: [{ value: "x", html: "x", type: "normal" }],
+          },
+          {
+            type: "insert",
+            newLineNumber: 1,
+            content: [{ value: "y", html: "y", type: "normal" }],
+          },
+        ],
+      },
+    ],
+  });
+  store.startCommenting(1, undefined, "old");
+  expect(store.getSnapshot().commentingOnLine).toBeNull();
+  store.startCommenting(1, undefined, "new");
+  expect(store.getSnapshot().commentingOnLine?.side).toBe("RIGHT");
 });

@@ -7,7 +7,12 @@ import { TabProvider } from "./contexts/tabs";
 import { CommandPaletteProvider } from "./components/command-palette";
 import { AppShell } from "./components/app-shell";
 import { WelcomeDialog } from "./components/welcome-dialog";
+import { getTheme } from "./lib/theme";
 import "./index.css";
+
+// Re-applies the persisted theme (index.html already set it pre-paint) and
+// starts listening for system colour-scheme changes.
+getTheme();
 
 createRoot(document.getElementById("app")!).render(
   <AuthProvider>

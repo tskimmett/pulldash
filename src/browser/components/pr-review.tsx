@@ -15,6 +15,8 @@ import {
   Send,
   X,
   ChevronsUpDown,
+  ChevronsUp,
+  ChevronsDown,
   Check,
   XCircle,
   MessageCircle,
@@ -33,6 +35,10 @@ import {
   ExternalLink,
   BookOpen,
   Smile,
+  FlaskConical,
+  FlaskConicalOff,
+  AlertCircle,
+  List,
 } from "lucide-react";
 import type { Reaction, ReactionContent } from "../contexts/github";
 import { Skeleton } from "../ui/skeleton";
@@ -45,8 +51,19 @@ import {
 } from "../ui/tooltip";
 import { cn } from "../cn";
 import { PRHeader } from "./pr-header";
+import { SemanticReviewButton } from "./semantic-review-button";
+import { DiffRangeBanner, DiffRangeButton } from "./diff-range-button";
+import { SemanticLayerBar, SemanticSidebar } from "./semantic-panel";
+import { layerFilesInOrder } from "@/semantic/layer-files";
 import { FileTree } from "./file-tree";
+import {
+  SidebarResizeHandle,
+  useSidebarWidth,
+} from "@/browser/lib/sidebar-width";
+import { isTestFile } from "@/browser/lib/test-file";
+import { enrichCommentsWithThreads } from "@/browser/lib/review-threads";
 import { FileHeader } from "./file-header";
+import { AllFilesDiff } from "./all-files-diff";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import {
   useGitHub,
@@ -71,23 +88,30 @@ import {
   useReviewActions,
   useFileCopyActions,
   useSkipBlockExpansion,
+  SKIP_EXPAND_STEP,
   useThreadActions,
   useCurrentFile,
   useCurrentDiff,
   useIsCurrentFileLoading,
   useCurrentFileComments,
+  useCurrentFileResolvedCount,
   useCurrentFilePendingComments,
   useCommentCountsByFile,
   usePendingCommentCountsByFile,
   useCommentingRange,
   useCommentRangeLookup,
   getTimeAgo,
+  commentThreadKey,
+  isThreadCollapsed,
   type LocalPendingComment,
+  type CommentSide,
   type ParsedDiff,
   type DiffLine,
   type DiffHunk,
   type DiffSkipBlock,
   type DiffViewMode,
+  type ExpandDirection,
+  type ExpandedSkipBlock,
 } from "../contexts/pr-review";
 import {
   DropdownMenu,
@@ -227,7 +251,14 @@ export function PRReviewContent({
 
         setPr(prData);
         setFiles(filesData);
-        setComments(commentsData as ReviewComment[]);
+        // REST comments carry no thread/resolution info; stamp it on from
+        // the GraphQL threads so resolved threads render as such.
+        setComments(
+          enrichCommentsWithThreads(
+            commentsData as ReviewComment[],
+            reviewThreadsResult.threads
+          )
+        );
         setViewerPermission(reviewThreadsResult.viewerPermission);
         setViewerCanMergeAsAdmin(reviewThreadsResult.viewerCanMergeAsAdmin);
 
@@ -319,6 +350,8 @@ function PRReviewLayout() {
     setMobileSidebarOpen(false);
   }, []);
 
+  const viewMode = usePRReviewSelector((s) => s.viewMode);
+
   // Initialize hooks that load data
   useKeyboardNavigation();
   useHashNavigation();
@@ -396,6 +429,7 @@ function PRReviewLayout() {
   const owner = usePRReviewSelector((s) => s.owner);
   const repo = usePRReviewSelector((s) => s.repo);
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
+  const fileLayoutMode = usePRReviewSelector((s) => s.fileLayoutMode);
 
   // Track file views (only once per file per session)
   const trackedFilesRef = useRef<Set<string>>(new Set());
@@ -412,6 +446,22 @@ function PRReviewLayout() {
   }, [selectedFile, pr.number, owner, repo, track]);
 
   const canWrite = useCanWrite();
+  // Primitive selectors: useSyncExternalStore needs a stable snapshot, so
+  // don't build an object inside the selector.
+  const rangeActive = usePRReviewSelector((s) => s.diffRange !== null);
+  const rangeAdditions = usePRReviewSelector((s) =>
+    s.diffRange ? s.files.reduce((n, f) => n + f.additions, 0) : 0
+  );
+  const rangeDeletions = usePRReviewSelector((s) =>
+    s.diffRange ? s.files.reduce((n, f) => n + f.deletions, 0) : 0
+  );
+  const rangeStats = useMemo(
+    () =>
+      rangeActive
+        ? { additions: rangeAdditions, deletions: rangeDeletions }
+        : undefined,
+    [rangeActive, rangeAdditions, rangeDeletions]
+  );
 
   return (
     <div className="flex flex-col h-full">
@@ -419,8 +469,37 @@ function PRReviewLayout() {
         pr={pr}
         owner={owner}
         repo={repo}
+        stats={rangeStats}
         onToggleSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
-        rightContent={canWrite ? <SubmitReviewDropdown /> : undefined}
+        rightContent={
+          <>
+            <button
+              onClick={() =>
+                store.setFileLayoutMode(
+                  fileLayoutMode === "single" ? "all" : "single"
+                )
+              }
+              aria-pressed={fileLayoutMode === "all"}
+              title={
+                fileLayoutMode === "all"
+                  ? "Switch to single file view"
+                  : "Show all file diffs"
+              }
+              className={cn(
+                "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md transition-colors",
+                fileLayoutMode === "all"
+                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                  : "bg-muted text-muted-foreground hover:bg-muted/70"
+              )}
+            >
+              <List className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">All files</span>
+            </button>
+            <DiffRangeButton />
+            <SemanticReviewButton />
+            {canWrite && <SubmitReviewDropdown />}
+          </>
+        }
       />
 
       <div className="flex flex-1 overflow-hidden min-h-0">
@@ -431,12 +510,20 @@ function PRReviewLayout() {
             onClick={() => setMobileSidebarOpen(false)}
           />
         )}
-        <FilePanel
-          onOpenSearch={openCommandPalette}
-          mobileOpen={mobileSidebarOpen}
-          onMobileClose={() => setMobileSidebarOpen(false)}
-          onFileSelect={handleMobileFileSelect}
-        />
+        {viewMode === "semantic" ? (
+          <SemanticSidebar
+            mobileOpen={mobileSidebarOpen}
+            onMobileClose={() => setMobileSidebarOpen(false)}
+            onLayerSelect={handleMobileFileSelect}
+          />
+        ) : (
+          <FilePanel
+            onOpenSearch={openCommandPalette}
+            mobileOpen={mobileSidebarOpen}
+            onMobileClose={() => setMobileSidebarOpen(false)}
+            onFileSelect={handleMobileFileSelect}
+          />
+        )}
         <DiffPanel />
       </div>
 
@@ -471,8 +558,22 @@ const FilePanel = memo(function FilePanel({
   const selectedFiles = usePRReviewSelector((s) => s.selectedFiles);
   const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
   const hideViewed = usePRReviewSelector((s) => s.hideViewed);
+  const hideTestFiles = usePRReviewSelector((s) => s.hideTestFiles);
   const showOverview = usePRReviewSelector((s) => s.showOverview);
 
+  const testFileCount = useMemo(
+    () => files.reduce((n, f) => n + (isTestFile(f.filename) ? 1 : 0), 0),
+    [files]
+  );
+  const visibleFiles = useMemo(
+    () =>
+      hideTestFiles && testFileCount > 0
+        ? files.filter((f) => !isTestFile(f.filename))
+        : files,
+    [files, hideTestFiles, testFileCount]
+  );
+
+  const sidebarWidth = useSidebarWidth();
   const commentCounts = useCommentCountsByFile();
   const pendingCommentCounts = usePendingCommentCountsByFile();
   const { copyDiff, copyFile, copyMainVersion } = useFileCopyActions();
@@ -494,11 +595,12 @@ const FilePanel = memo(function FilePanel({
   return (
     <aside
       className={cn(
-        "w-64 border-r border-border flex flex-col overflow-hidden shrink-0 bg-background",
+        "max-w-[85vw] border-r border-border flex flex-col overflow-hidden shrink-0 bg-background",
         // Mobile: absolute positioned drawer
         "fixed inset-y-0 left-0 z-50 transition-transform duration-200 ease-in-out md:relative md:translate-x-0",
         mobileOpen ? "translate-x-0" : "-translate-x-full"
       )}
+      style={{ width: sidebarWidth }}
     >
       {/* Mobile close button */}
       <div className="flex items-center justify-between px-2 py-2 border-b border-border md:hidden">
@@ -546,7 +648,7 @@ const FilePanel = memo(function FilePanel({
                 className={cn(
                   "p-1.5 rounded-md border border-border transition-colors",
                   hideViewed
-                    ? "bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border-blue-500/30"
+                    ? "bg-blue-500/20 text-blue-600 dark:text-blue-400 hover:bg-blue-500/30 border-blue-500/30"
                     : "text-muted-foreground bg-muted/50 hover:bg-muted"
                 )}
               >
@@ -561,13 +663,45 @@ const FilePanel = memo(function FilePanel({
               {hideViewed ? "Show viewed files" : "Hide viewed files"}
             </TooltipContent>
           </Tooltip>
+          {testFileCount > 0 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={store.toggleHideTestFiles}
+                  className={cn(
+                    "p-1.5 rounded-md border border-border transition-colors",
+                    hideTestFiles
+                      ? "bg-amber-500/20 text-amber-600 dark:text-amber-400 hover:bg-amber-500/30 border-amber-500/30"
+                      : "text-muted-foreground bg-muted/50 hover:bg-muted"
+                  )}
+                >
+                  {hideTestFiles ? (
+                    <FlaskConicalOff className="w-3.5 h-3.5" />
+                  ) : (
+                    <FlaskConical className="w-3.5 h-3.5" />
+                  )}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {hideTestFiles
+                  ? `Show ${testFileCount} test file${testFileCount === 1 ? "" : "s"}`
+                  : `Hide ${testFileCount} test file${testFileCount === 1 ? "" : "s"}`}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </TooltipProvider>
       </div>
+
+      {hideTestFiles && testFileCount > 0 && (
+        <div className="mx-2 mb-1 px-2 text-[11px] text-muted-foreground">
+          {testFileCount} test file{testFileCount === 1 ? "" : "s"} hidden
+        </div>
+      )}
 
       <div className="border-t border-border/50" />
 
       <FileTree
-        files={files}
+        files={visibleFiles}
         selectedFile={selectedFile}
         selectedFiles={selectedFiles}
         viewedFiles={viewedFiles}
@@ -583,6 +717,7 @@ const FilePanel = memo(function FilePanel({
         onCopyFile={copyFile}
         onCopyMainVersion={copyMainVersion}
       />
+      <SidebarResizeHandle />
     </aside>
   );
 });
@@ -631,22 +766,63 @@ const DiffPanel = memo(function DiffPanel() {
   const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
   const selectedFiles = usePRReviewSelector((s) => s.selectedFiles);
   const showOverview = usePRReviewSelector((s) => s.showOverview);
+  const fileLayoutMode = usePRReviewSelector((s) => s.fileLayoutMode);
   const diffViewMode = usePRReviewSelector((s) => s.diffViewMode);
+  const allCommentsCollapsed = usePRReviewSelector(
+    (s) => s.allCommentsCollapsed
+  );
+  const currentFileComments = useCurrentFileComments();
+  const currentFileCommentCount = currentFileComments.length;
+  const currentFileResolvedCount = useCurrentFileResolvedCount();
+  const hasResolvedComments = usePRReviewSelector((s) =>
+    s.comments.some((c) => c.is_resolved)
+  );
+  const hideResolvedComments = usePRReviewSelector(
+    (s) => s.hideResolvedComments
+  );
+
+  const viewMode = usePRReviewSelector((s) => s.viewMode);
 
   const currentFile = useCurrentFile();
   const parsedDiff = useCurrentDiff();
   const isLoading = useIsCurrentFileLoading();
 
-  const currentIndex = selectedFile
-    ? files.findIndex((f) => f.filename === selectedFile)
-    : -1;
+  // In semantic mode the arrows walk the selected layer's files, so the
+  // "N / M" counter should count within that layer rather than the whole PR.
+  const selectedLayerId = usePRReviewSelector((s) => s.selectedLayerId);
+  const semanticLayer =
+    viewMode === "semantic" && selectedLayerId
+      ? (store.getSemanticLayer(selectedLayerId)?.layer ?? null)
+      : null;
+  const navFiles = useMemo(
+    () =>
+      semanticLayer
+        ? layerFilesInOrder(
+            semanticLayer,
+            new Set(files.map((f) => f.filename))
+          ).map((e) => e.file)
+        : files.map((f) => f.filename),
+    [semanticLayer, files]
+  );
+  const currentIndex = selectedFile ? navFiles.indexOf(selectedFile) : -1;
 
   // Show overview panel
   if (showOverview) {
     return (
       <main className="flex-1 overflow-hidden flex flex-col">
         <ReadOnlyBanner />
+        <DiffRangeBanner />
         <PROverview />
+      </main>
+    );
+  }
+
+  if (fileLayoutMode === "all") {
+    return (
+      <main className="flex-1 overflow-hidden flex flex-col">
+        <ReadOnlyBanner />
+        <DiffRangeBanner />
+        <AllFilesDiff />
       </main>
     );
   }
@@ -654,6 +830,9 @@ const DiffPanel = memo(function DiffPanel() {
   return (
     <main className="flex-1 overflow-hidden flex flex-col">
       <ReadOnlyBanner />
+      <DiffRangeBanner />
+
+      {viewMode === "semantic" && <SemanticLayerBar />}
 
       {currentFile ? (
         <div className="flex flex-col flex-1 min-h-0">
@@ -665,11 +844,26 @@ const DiffPanel = memo(function DiffPanel() {
                 isViewed={viewedFiles.has(currentFile.filename)}
                 onToggleViewed={() => store.toggleViewed(currentFile.filename)}
                 currentIndex={currentIndex}
-                totalFiles={files.length}
-                onPrevFile={() => store.navigateToPrevUnviewedFile()}
-                onNextFile={() => store.navigateToNextUnviewedFile()}
+                totalFiles={navFiles.length}
+                onPrevFile={() =>
+                  store.getSnapshot().viewMode === "semantic"
+                    ? store.navigateSemanticFile("prev")
+                    : store.navigateToPrevUnviewedFile()
+                }
+                onNextFile={() =>
+                  store.getSnapshot().viewMode === "semantic"
+                    ? store.navigateSemanticFile("next")
+                    : store.navigateToNextUnviewedFile()
+                }
                 diffViewMode={diffViewMode}
                 onToggleDiffViewMode={() => store.toggleDiffViewMode()}
+                commentCount={currentFileCommentCount}
+                allCommentsCollapsed={allCommentsCollapsed}
+                onToggleAllComments={() => store.toggleAllCommentsCollapsed()}
+                resolvedCommentCount={currentFileResolvedCount}
+                hasResolvedComments={hasResolvedComments}
+                hideResolvedComments={hideResolvedComments}
+                onToggleHideResolved={() => store.toggleHideResolvedComments()}
               />
             </div>
           </div>
@@ -755,20 +949,20 @@ const KeybindsBar = memo(function KeybindsBar() {
           {gotoLineMode ? (
             <>
               <span className="flex items-center gap-2">
-                <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
+                <span className="px-2 py-0.5 bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded text-xs font-medium">
                   GOTO
                 </span>
                 <span
                   className={cn(
                     "px-1.5 py-0.5 rounded text-xs font-medium",
                     gotoLineSide === "new"
-                      ? "bg-green-500/20 text-green-400"
-                      : "bg-orange-500/20 text-orange-400"
+                      ? "bg-green-500/20 text-green-600 dark:text-green-400"
+                      : "bg-orange-500/20 text-orange-600 dark:text-orange-400"
                   )}
                 >
                   {gotoLineSide === "new" ? "new" : "old"}
                 </span>
-                <span className="font-mono text-blue-400">
+                <span className="font-mono text-blue-600 dark:text-blue-400">
                   {gotoLineInput || "..."}
                 </span>
               </span>
@@ -781,10 +975,10 @@ const KeybindsBar = memo(function KeybindsBar() {
             </>
           ) : commentingOnLine ? (
             <>
-              <span className="px-2 py-0.5 bg-green-500/20 text-green-400 rounded text-xs font-medium">
+              <span className="px-2 py-0.5 bg-green-500/20 text-green-600 dark:text-green-400 rounded text-xs font-medium">
                 COMMENT
               </span>
-              <span className="font-mono text-green-400">
+              <span className="font-mono text-green-600 dark:text-green-400">
                 L
                 {commentingOnLine.startLine
                   ? `${commentingOnLine.startLine}-`
@@ -797,7 +991,7 @@ const KeybindsBar = memo(function KeybindsBar() {
             </>
           ) : focusedPendingCommentId ? (
             <>
-              <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs font-medium">
+              <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 rounded text-xs font-medium">
                 PENDING
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -812,7 +1006,7 @@ const KeybindsBar = memo(function KeybindsBar() {
             </>
           ) : focusedCommentId ? (
             <>
-              <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-400 rounded text-xs font-medium">
+              <span className="px-2 py-0.5 bg-yellow-500/20 text-yellow-600 dark:text-yellow-400 rounded text-xs font-medium">
                 COMMENT
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -830,7 +1024,7 @@ const KeybindsBar = memo(function KeybindsBar() {
             </>
           ) : focusedSkipBlockIndex !== null ? (
             <>
-              <span className="px-2 py-0.5 bg-blue-500/20 text-blue-400 rounded text-xs font-medium">
+              <span className="px-2 py-0.5 bg-blue-500/20 text-blue-600 dark:text-blue-400 rounded text-xs font-medium">
                 EXPAND
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -842,7 +1036,7 @@ const KeybindsBar = memo(function KeybindsBar() {
             </>
           ) : focusedLine ? (
             <>
-              <span className="font-mono text-blue-400">
+              <span className="font-mono text-blue-600 dark:text-blue-400">
                 {selectionAnchor
                   ? `L${Math.min(focusedLine, selectionAnchor)}-${Math.max(focusedLine, selectionAnchor)}`
                   : `L${focusedLine}`}
@@ -858,7 +1052,8 @@ const KeybindsBar = memo(function KeybindsBar() {
                 <KeycapGroup keys={["up", "down"]} size="xs" /> select range
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
-                <KeycapGroup keys={["cmd", "up", "down"]} size="xs" /> jump 10
+                <KeycapGroup keys={["cmd", "up", "down"]} size="xs" /> prev/next
+                change
               </span>
             </>
           ) : (
@@ -870,7 +1065,8 @@ const KeybindsBar = memo(function KeybindsBar() {
                 <KeycapGroup keys={["up", "down"]} size="xs" /> select line
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
-                <KeycapGroup keys={["cmd", "up", "down"]} size="xs" /> jump 10
+                <KeycapGroup keys={["cmd", "up", "down"]} size="xs" /> prev/next
+                change
               </span>
               <span className="flex items-center gap-1.5 text-muted-foreground">
                 <Keycap keyName="g" size="xs" /> goto line
@@ -887,7 +1083,7 @@ const KeybindsBar = memo(function KeybindsBar() {
         </div>
         <div className="flex items-center gap-3">
           {pendingCommentsCount > 0 && (
-            <span className="text-yellow-400 text-xs">
+            <span className="text-yellow-600 dark:text-yellow-400 text-xs">
               {pendingCommentsCount} pending comment
               {pendingCommentsCount !== 1 ? "s" : ""}
             </span>
@@ -947,12 +1143,25 @@ type VirtualRowType =
       type: "skip";
       hunk: DiffSkipBlock;
       skipIndex: number;
+      /** Start line (new file) of the still-collapsed portion of the gap */
       startLine: number;
+      /** Lines still hidden in this gap */
+      remainingCount: number;
+      /** True when the gap sits above the first hunk (top of file) */
+      isTopOfFile: boolean;
+      /** True for the synthesized gap below the last hunk */
+      isEndOfFile: boolean;
       index: number;
     }
   | { type: "line"; line: DiffLine; lineNum: number | undefined; index: number }
   | { type: "split-line"; pair: SplitLinePair; index: number }
-  | { type: "comment-form"; lineNum: number; startLine?: number; index: number }
+  | {
+      type: "comment-form";
+      lineNum: number;
+      startLine?: number;
+      side: CommentSide;
+      index: number;
+    }
   | { type: "pending-comment"; comment: LocalPendingComment; index: number }
   | {
       type: "comment-thread";
@@ -961,6 +1170,174 @@ type VirtualRowType =
       index: number;
     }
   | { type: "skip-spacer"; position: "before" | "after"; index: number };
+
+// ============================================================================
+// Overview Ruler (VS Code-style change markers in the scrollbar track)
+// ============================================================================
+
+type RulerMarkKind = "insert" | "delete" | "comment";
+
+interface RulerMark {
+  kind: RulerMarkKind;
+  /** Content-space start offset in px */
+  start: number;
+  /** Content-space end offset in px */
+  end: number;
+}
+
+const RULER_MARK_CLASS: Record<RulerMarkKind, string> = {
+  insert: "left-1/2 w-1/2 bg-green-500/80",
+  delete: "left-0 w-1/2 bg-orange-600/80",
+  comment: "left-0 w-full bg-amber-500/90",
+};
+
+interface DiffOverviewRulerProps {
+  marks: RulerMark[];
+  scrollElRef: React.RefObject<HTMLDivElement | null>;
+  /** Any value that changes when the scroll height may have changed */
+  contentSize: number;
+}
+
+/**
+ * Renders behind the (transparent-tracked) native scrollbar of the diff
+ * viewer so change/comment locations show through the translucent thumb.
+ */
+const RULER_MIN_THUMB = 24;
+
+const DiffOverviewRuler = memo(function DiffOverviewRuler({
+  marks,
+  scrollElRef,
+  contentSize,
+}: DiffOverviewRulerProps) {
+  const [metrics, setMetrics] = useState({ track: 0, scroll: 0 });
+  const thumbRef = useRef<HTMLDivElement>(null);
+  const { track, scroll } = metrics;
+  const thumbHeight = Math.max(RULER_MIN_THUMB, (track * track) / scroll);
+  // Ratio between scrollTop and thumb offset (accounts for min thumb size)
+  const thumbTravel = track - thumbHeight;
+  const scrollRange = scroll - track;
+
+  useEffect(() => {
+    const el = scrollElRef.current;
+    if (!el) return;
+    const update = () => {
+      const t = el.clientHeight;
+      const s = el.scrollHeight;
+      setMetrics((m) =>
+        m.track === t && m.scroll === s ? m : { track: t, scroll: s }
+      );
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [scrollElRef, contentSize]);
+
+  // Position the thumb directly from scroll events - no React re-render per frame.
+  useEffect(() => {
+    const el = scrollElRef.current;
+    if (!el || scrollRange <= 0) return;
+    const position = () => {
+      const thumb = thumbRef.current;
+      if (!thumb) return;
+      const y = (el.scrollTop / scrollRange) * thumbTravel;
+      thumb.style.transform = `translateY(${y}px)`;
+    };
+    position();
+    el.addEventListener("scroll", position, { passive: true });
+    return () => el.removeEventListener("scroll", position);
+  }, [scrollElRef, scrollRange, thumbTravel]);
+
+  const onPointerDown = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      const el = scrollElRef.current;
+      if (!el || e.button !== 0 || scrollRange <= 0) return;
+      e.preventDefault();
+      const ruler = e.currentTarget;
+      const rulerTop = ruler.getBoundingClientRect().top;
+      const y = e.clientY - rulerTop;
+      const thumbTop = (el.scrollTop / scrollRange) * thumbTravel;
+      const onThumb = y >= thumbTop && y <= thumbTop + thumbHeight;
+
+      if (!onThumb) {
+        // Jump so the clicked spot in the file is centered in the viewport.
+        const target = (y / track) * scroll - track / 2;
+        el.scrollTop = Math.max(0, Math.min(scrollRange, target));
+      }
+
+      // Continue as a drag from wherever the thumb is now.
+      const startY = e.clientY;
+      const startScrollTop = el.scrollTop;
+      const pxPerThumbPx = scrollRange / thumbTravel;
+      ruler.setPointerCapture(e.pointerId);
+      ruler.dataset.dragging = "true";
+      const onMove = (ev: PointerEvent) => {
+        el.scrollTop = startScrollTop + (ev.clientY - startY) * pxPerThumbPx;
+      };
+      const onUp = () => {
+        delete ruler.dataset.dragging;
+        ruler.removeEventListener("pointermove", onMove);
+        ruler.removeEventListener("pointerup", onUp);
+        ruler.removeEventListener("pointercancel", onUp);
+      };
+      ruler.addEventListener("pointermove", onMove);
+      ruler.addEventListener("pointerup", onUp);
+      ruler.addEventListener("pointercancel", onUp);
+    },
+    [scrollElRef, scrollRange, thumbTravel, thumbHeight, track, scroll]
+  );
+
+  // Nothing to scroll: hide the ruler like a native scrollbar would.
+  if (track === 0 || scrollRange <= 0) return null;
+
+  const scale = track / scroll;
+
+  return (
+    <div
+      aria-hidden
+      onPointerDown={onPointerDown}
+      className="group absolute top-0 right-0 z-20 w-[14px] cursor-default select-none touch-none bg-[var(--scrollbar-track)]"
+      style={{ height: track }}
+    >
+      {marks.map((mark, i) => {
+        const top = mark.start * scale;
+        const height = Math.max(2, (mark.end - mark.start) * scale);
+        return (
+          <div
+            key={i}
+            className={cn("absolute", RULER_MARK_CLASS[mark.kind])}
+            style={{ top, height }}
+          />
+        );
+      })}
+      <div
+        ref={thumbRef}
+        className="absolute left-0 top-0 w-full rounded-full border-2 border-transparent bg-clip-padding bg-[color-mix(in_oklch,var(--scrollbar-thumb)_60%,transparent)] group-hover:bg-[color-mix(in_oklch,var(--scrollbar-thumb-hover)_75%,transparent)] group-data-[dragging=true]:bg-[color-mix(in_oklch,var(--scrollbar-thumb-hover)_75%,transparent)]"
+        style={{ height: thumbHeight }}
+      />
+    </div>
+  );
+});
+
+function rowRulerKinds(row: VirtualRowType): RulerMarkKind[] | null {
+  switch (row.type) {
+    case "line":
+      if (row.line.type === "insert") return ["insert"];
+      if (row.line.type === "delete") return ["delete"];
+      return null;
+    case "split-line": {
+      const kinds: RulerMarkKind[] = [];
+      if (row.pair.left?.type === "delete") kinds.push("delete");
+      if (row.pair.right?.type === "insert") kinds.push("insert");
+      return kinds.length ? kinds : null;
+    }
+    case "comment-thread":
+    case "pending-comment":
+      return ["comment"];
+    default:
+      return null;
+  }
+}
 
 // ============================================================================
 // Diff Viewer (Virtualized)
@@ -978,6 +1355,29 @@ const DiffViewer = memo(function DiffViewer({
   const hunks = diff?.hunks ?? [];
   const store = usePRReviewStore();
   const parentRef = useRef<HTMLDivElement>(null);
+  const findInputRef = useRef<HTMLInputElement>(null);
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findIndex, setFindIndex] = useState(0);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f")
+        return;
+      const target = event.target as HTMLElement;
+      if (
+        target !== findInputRef.current &&
+        (target.closest("input, textarea, [contenteditable='true']") ||
+          !parentRef.current)
+      )
+        return;
+      event.preventDefault();
+      setFindOpen(true);
+      requestAnimationFrame(() => findInputRef.current?.select());
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   // Get all comments and pending comments for building virtual rows
   const comments = useCurrentFileComments();
@@ -991,6 +1391,14 @@ const DiffViewer = memo(function DiffViewer({
 
   // Subscribe to expanded skip blocks directly for re-render triggering
   const expandedSkipBlocks = usePRReviewSelector((s) => s.expandedSkipBlocks);
+  const fileLineCounts = usePRReviewSelector((s) => s.fileLineCounts);
+  const totalFileLines = selectedFile
+    ? fileLineCounts[selectedFile]
+    : undefined;
+  const currentFile = useCurrentFile();
+  // Added/removed files have no unshown lines below the diff
+  const mayHaveTrailingGap =
+    currentFile?.status !== "added" && currentFile?.status !== "removed";
 
   // Skip block expansion
   const { expandSkipBlock, isExpanding } = useSkipBlockExpansion();
@@ -1008,10 +1416,16 @@ const DiffViewer = memo(function DiffViewer({
     (s) => s.editingPendingCommentId
   );
   const replyingToCommentId = usePRReviewSelector((s) => s.replyingToCommentId);
+  const allCommentsCollapsed = usePRReviewSelector(
+    (s) => s.allCommentsCollapsed
+  );
+  const collapsedThreadOverrides = usePRReviewSelector(
+    (s) => s.collapsedThreadOverrides
+  );
 
   // Helper to get expanded lines for a skip block
   const getExpandedLines = useCallback(
-    (skipIndex: number): DiffLine[] | null => {
+    (skipIndex: number): ExpandedSkipBlock | null => {
       if (!selectedFile) return null;
       const key = `${selectedFile}:${skipIndex}`;
       return expandedSkipBlocks[key] ?? null;
@@ -1078,8 +1492,9 @@ const DiffViewer = memo(function DiffViewer({
     return result;
   }, [commentsByLine]);
 
-  // Pre-compute skip block start lines by looking at adjacent hunks
-  const skipBlockStartLines = useMemo(() => {
+  // Pre-compute skip block start lines by looking at adjacent hunks, plus
+  // where the file continues after the last hunk (the end-of-file gap).
+  const { skipBlockStartLines, trailingStart } = useMemo(() => {
     const startLines: number[] = [];
     let expectedNextLine = 1;
 
@@ -1101,7 +1516,7 @@ const DiffViewer = memo(function DiffViewer({
         expectedNextLine = maxNewLine + 1;
       }
     }
-    return startLines;
+    return { skipBlockStartLines: startLines, trailingStart: expectedNextLine };
   }, [hunks]);
 
   // Helper to convert lines to split pairs for side-by-side view
@@ -1198,29 +1613,36 @@ const DiffViewer = memo(function DiffViewer({
       }
     };
 
+    const addExpandedLines = (lines: DiffLine[]) => {
+      if (lines.length === 0) return;
+      if (viewMode === "split") {
+        const pairs = convertToSplitPairs(lines);
+        for (const pair of pairs) {
+          rows.push({ type: "split-line", pair, index: index++ });
+          addCommentsForLine(pair.lineNum);
+        }
+      } else {
+        for (const line of lines) {
+          const lineNum = line.newLineNumber || line.oldLineNumber;
+          rows.push({ type: "line", line, lineNum, index: index++ });
+          addCommentsForLine(lineNum);
+        }
+      }
+    };
+
+    let seenHunk = false;
     for (const hunk of hunks) {
       if (hunk.type === "skip") {
         const currentSkipIndex = skipIndex++;
         const startLine = skipBlockStartLines[currentSkipIndex] ?? 1;
-        const expandedLines = getExpandedLines(currentSkipIndex);
+        const expanded = getExpandedLines(currentSkipIndex);
+        const top = expanded?.top ?? [];
+        const bottom = expanded?.bottom ?? [];
+        const remainingCount = hunk.count - top.length - bottom.length;
 
-        if (expandedLines && expandedLines.length > 0) {
-          // Show expanded lines
-          if (viewMode === "split") {
-            const pairs = convertToSplitPairs(expandedLines);
-            for (const pair of pairs) {
-              rows.push({ type: "split-line", pair, index: index++ });
-              addCommentsForLine(pair.lineNum);
-            }
-          } else {
-            for (const line of expandedLines) {
-              const lineNum = line.newLineNumber || line.oldLineNumber;
-              rows.push({ type: "line", line, lineNum, index: index++ });
-              addCommentsForLine(lineNum);
-            }
-          }
-        } else {
-          // Show collapsed skip block with spacers
+        addExpandedLines(top);
+        if (remainingCount > 0) {
+          // Part of the gap is still collapsed
           rows.push({
             type: "skip-spacer",
             position: "before",
@@ -1230,12 +1652,17 @@ const DiffViewer = memo(function DiffViewer({
             type: "skip",
             hunk,
             skipIndex: currentSkipIndex,
-            startLine,
+            startLine: startLine + top.length,
+            remainingCount,
+            isTopOfFile: !seenHunk,
+            isEndOfFile: false,
             index: index++,
           });
           rows.push({ type: "skip-spacer", position: "after", index: index++ });
         }
+        addExpandedLines(bottom);
       } else {
+        seenHunk = true;
         if (viewMode === "split") {
           // Convert to split pairs
           const pairs = convertToSplitPairs(hunk.lines);
@@ -1254,10 +1681,43 @@ const DiffViewer = memo(function DiffViewer({
       }
     }
 
+    // End-of-file gap: the diff can't tell whether the file continues past
+    // the last hunk, so offer a trailing expander until the file's real
+    // length (learned on first expansion) says otherwise.
+    if (seenHunk && mayHaveTrailingGap) {
+      const trailingIndex = skipIndex;
+      const expanded = getExpandedLines(trailingIndex);
+      const top = expanded?.top ?? [];
+      const start = trailingStart + top.length;
+      const remainingCount =
+        totalFileLines !== undefined
+          ? totalFileLines - start + 1
+          : Number.POSITIVE_INFINITY;
+
+      addExpandedLines(top);
+      if (remainingCount > 0) {
+        rows.push({ type: "skip-spacer", position: "before", index: index++ });
+        rows.push({
+          type: "skip",
+          hunk: { type: "skip", count: 0, content: "" },
+          skipIndex: trailingIndex,
+          startLine: start,
+          remainingCount,
+          isTopOfFile: false,
+          isEndOfFile: true,
+          index: index++,
+        });
+        rows.push({ type: "skip-spacer", position: "after", index: index++ });
+      }
+    }
+
     return rows;
   }, [
     hunks,
     skipBlockStartLines,
+    trailingStart,
+    totalFileLines,
+    mayHaveTrailingGap,
     pendingCommentsByLine,
     threadsByLine,
     getExpandedLines,
@@ -1297,6 +1757,7 @@ const DiffViewer = memo(function DiffViewer({
           type: "comment-form",
           lineNum: targetLine,
           startLine: commentingOnLine.startLine,
+          side: commentingOnLine.side,
           index: newIndex++,
         });
       }
@@ -1304,6 +1765,44 @@ const DiffViewer = memo(function DiffViewer({
 
     return result;
   }, [staticRows, commentingOnLine]);
+
+  // Index all row text once while find is open, including unmounted rows.
+  const searchableRows = useMemo(
+    () =>
+      findOpen
+        ? virtualRows.map((row) => {
+            const lines =
+              row.type === "line"
+                ? [row.line]
+                : row.type === "split-line"
+                  ? [row.pair.left, row.pair.right]
+                  : [];
+            return lines.map((line) =>
+              line
+                ? line.content
+                    .map((segment) => segment.value)
+                    .join("")
+                    .toLocaleLowerCase()
+                : ""
+            );
+          })
+        : [],
+    [virtualRows, findOpen]
+  );
+  const findMatches = useMemo(() => {
+    const needle = findQuery.toLocaleLowerCase();
+    if (!needle) return [];
+    const matches: number[] = [];
+    searchableRows.forEach((lines, rowIndex) => {
+      if (lines.some((content) => content.includes(needle)))
+        matches.push(rowIndex);
+    });
+    return matches;
+  }, [searchableRows, findQuery]);
+
+  const activeFindIndex = Math.min(findIndex, findMatches.length - 1);
+  const activeFindRow = findMatches[activeFindIndex];
+  const matchingRows = useMemo(() => new Set(findMatches), [findMatches]);
 
   // Create O(1) lookup map for line numbers -> row indices
   // For split view, we need to map both old and new line numbers
@@ -1363,13 +1862,21 @@ const DiffViewer = memo(function DiffViewer({
           return 180;
         case "pending-comment":
           return 100;
-        case "comment-thread":
-          return 80 + row.comments.length * 60;
+        case "comment-thread": {
+          // Collapsed threads render as a single-line stub.
+          const first = row.comments[0];
+          const collapsed = isThreadCollapsed(
+            store.getSnapshot(),
+            commentThreadKey(row.comments),
+            first?.is_resolved ?? false
+          );
+          return collapsed ? 40 : 80 + row.comments.length * 60;
+        }
         default:
           return 20;
       }
     },
-    [virtualRows]
+    [virtualRows, store, allCommentsCollapsed, collapsedThreadOverrides]
   );
 
   const virtualizer = useVirtualizer({
@@ -1384,6 +1891,59 @@ const DiffViewer = memo(function DiffViewer({
     // Add padding at the end so we can scroll the last line to center
     paddingEnd: 300,
   });
+
+  useEffect(() => {
+    if (findOpen && activeFindRow !== undefined) {
+      virtualizer.scrollToIndex(activeFindRow, { align: "center" });
+    }
+  }, [findOpen, activeFindRow, virtualizer]);
+
+  const stepFind = (direction: number) => {
+    if (!findMatches.length) return;
+    setFindIndex(
+      (index) => (index + direction + findMatches.length) % findMatches.length
+    );
+  };
+
+  const totalSize = virtualizer.getTotalSize();
+
+  // Merge adjacent rows of the same kind into ruler marks. Uses measured
+  // offsets when available so comment threads of varying height stay aligned.
+  const rulerMarks = useMemo((): RulerMark[] => {
+    const marks: RulerMark[] = [];
+    const lastByKind: Partial<Record<RulerMarkKind, RulerMark>> = {};
+    // Comments are rarer and drawn on top, so collect them separately.
+    const commentMarks: RulerMark[] = [];
+    const cache = virtualizer.measurementsCache;
+    let cursor = 0;
+
+    for (let i = 0; i < virtualRows.length; i++) {
+      const measured = cache[i];
+      const start = measured?.start ?? cursor;
+      const end = measured?.end ?? start + estimateSize(i);
+      cursor = end;
+
+      const row = virtualRows[i];
+      if (!row) continue;
+      const kinds = rowRulerKinds(row);
+      if (!kinds) continue;
+
+      for (const kind of kinds) {
+        const last = lastByKind[kind];
+        if (last && start <= last.end + 1) {
+          last.end = end;
+        } else {
+          const mark = { kind, start, end };
+          lastByKind[kind] = mark;
+          (kind === "comment" ? commentMarks : marks).push(mark);
+        }
+      }
+    }
+
+    return marks.concat(commentMarks);
+    // totalSize is a proxy for "measurements changed"
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [virtualRows, virtualizer, estimateSize, totalSize]);
 
   const onDragStart = useCallback(
     (lineNum: number, side: "old" | "new", shiftKey?: boolean) => {
@@ -1438,12 +1998,13 @@ const DiffViewer = memo(function DiffViewer({
       const anchor = state.selectionAnchor;
 
       if (focusedLine !== null) {
+        const side = dragSideRef.current ?? state.focusedLineSide;
         if (anchor !== null && anchor !== focusedLine) {
           const startLine = Math.min(anchor, focusedLine);
           const endLine = Math.max(anchor, focusedLine);
-          store.startCommenting(endLine, startLine);
+          store.startCommenting(endLine, startLine, side);
         } else {
-          store.startCommenting(focusedLine);
+          store.startCommenting(focusedLine, undefined, side);
         }
       }
     }
@@ -1459,7 +2020,7 @@ const DiffViewer = memo(function DiffViewer({
         handledByMouseEventsRef.current = false;
         return;
       }
-      store.startCommenting(lineNum);
+      store.startCommenting(lineNum, undefined, side);
     },
     [store]
   );
@@ -1491,21 +2052,72 @@ const DiffViewer = memo(function DiffViewer({
           currentSkipIndex++;
         }
       }
-      if (count > 0) {
-        expandSkipBlock(skipIndex, startLine, count);
+      // Account for lines already revealed from either edge
+      const expanded = getExpandedLines(skipIndex);
+      const topCount = expanded?.top.length ?? 0;
+      const remaining = count - topCount - (expanded?.bottom.length ?? 0);
+      if (remaining > 0) {
+        expandSkipBlock(skipIndex, startLine + topCount, remaining, "all");
       }
+    };
+
+    // Expand every remaining gap in the file (header button). The file
+    // content fetch is cached/deduped, so this only downloads the file once.
+    const handleExpandAll = () => {
+      let currentSkipIndex = 0;
+      for (const hunk of hunks) {
+        if (hunk.type !== "skip") continue;
+        const idx = currentSkipIndex++;
+        const startLine = skipBlockStartLines[idx] ?? 1;
+        const expanded = getExpandedLines(idx);
+        const topCount = expanded?.top.length ?? 0;
+        const remaining =
+          hunk.count - topCount - (expanded?.bottom.length ?? 0);
+        if (remaining > 0) {
+          expandSkipBlock(idx, startLine + topCount, remaining, "all");
+        }
+      }
+      if (mayHaveTrailingGap) {
+        const trailingIndex = currentSkipIndex;
+        const topCount = getExpandedLines(trailingIndex)?.top.length ?? 0;
+        expandSkipBlock(
+          trailingIndex,
+          trailingStart + topCount,
+          Number.POSITIVE_INFINITY,
+          "all"
+        );
+      }
+      if (selectedFile) store.setFileFullyExpanded(selectedFile);
     };
 
     window.addEventListener(
       "pr-review:expand-skip-block",
       handleExpandSkipBlock as EventListener
     );
-    return () =>
+    window.addEventListener(
+      "pr-review:expand-all-skip-blocks",
+      handleExpandAll
+    );
+    return () => {
       window.removeEventListener(
         "pr-review:expand-skip-block",
         handleExpandSkipBlock as EventListener
       );
-  }, [hunks, skipBlockStartLines, expandSkipBlock]);
+      window.removeEventListener(
+        "pr-review:expand-all-skip-blocks",
+        handleExpandAll
+      );
+    };
+  }, [
+    hunks,
+    skipBlockStartLines,
+    trailingStart,
+    mayHaveTrailingGap,
+    expandSkipBlock,
+    getExpandedLines,
+    store,
+    selectedFile,
+  ]);
 
   // Handle mousemove during drag to extend selection even when not directly over line gutters
   useEffect(() => {
@@ -1596,6 +2208,9 @@ const DiffViewer = memo(function DiffViewer({
   const focusedLineSide = usePRReviewSelector((s) => s.focusedLineSide);
   const selectionAnchor = usePRReviewSelector((s) => s.selectionAnchor);
   const selectionAnchorSide = usePRReviewSelector((s) => s.selectionAnchorSide);
+  const suppressFocusHighlight = usePRReviewSelector(
+    (s) => s.suppressFocusHighlight
+  );
 
   // Combined scroll + selection effect using RAF to prevent jitter
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1621,7 +2236,7 @@ const DiffViewer = memo(function DiffViewer({
           el.removeAttribute("data-sel-last");
         });
 
-        if (focusedLine && focusedLineSide) {
+        if (focusedLine && focusedLineSide && !suppressFocusHighlight) {
           // Compute selection range
           let selStart = focusedLine;
           let selEnd = focusedLine;
@@ -1652,9 +2267,10 @@ const DiffViewer = memo(function DiffViewer({
       if (focusedLine && !isDraggingState) {
         const rowIndex = getRowIndexForLine(focusedLine, focusedLineSide);
         if (rowIndex !== undefined) {
-          // Use "auto" alignment - only scrolls if needed, keeps row visible
+          // "auto" only scrolls if needed; change navigation requests
+          // "center" so the jumped-to line lands mid-viewport.
           virtualizer.scrollToIndex(rowIndex, {
-            align: "auto",
+            align: store.consumeScrollAlign(),
           });
 
           // Account for KeybindsBar: if line is near bottom of viewport, scroll a bit more
@@ -1691,6 +2307,7 @@ const DiffViewer = memo(function DiffViewer({
     focusedLineSide,
     selectionAnchor,
     selectionAnchorSide,
+    suppressFocusHighlight,
     isDraggingState,
     getRowIndexForLine,
     virtualizer,
@@ -1698,42 +2315,121 @@ const DiffViewer = memo(function DiffViewer({
 
   return (
     <LineDragContext.Provider value={dragValue}>
-      <div ref={parentRef} className="flex-1 overflow-auto themed-scrollbar">
-        <div className="p-4">
-          <div className="border border-border rounded-lg overflow-hidden">
-            <div
-              ref={containerRef}
-              className="relative w-full font-mono text-[0.8rem] [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)] diff-line-container"
-              style={{ height: `${virtualizer.getTotalSize()}px` }}
+      <div className="relative flex-1 min-h-0 flex flex-col">
+        {findOpen && (
+          <div className="flex items-center gap-2 border-b border-border bg-background px-3 py-1.5">
+            <Search className="h-4 w-4 shrink-0 text-muted-foreground" />
+            <input
+              ref={findInputRef}
+              autoFocus
+              aria-label="Find in diff"
+              placeholder="Find in diff"
+              className="min-w-0 flex-1 bg-transparent text-sm outline-none"
+              value={findQuery}
+              onChange={(event) => {
+                setFindQuery(event.target.value);
+                setFindIndex(0);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  stepFind(event.shiftKey ? -1 : 1);
+                } else if (event.key === "Escape") {
+                  event.preventDefault();
+                  setFindOpen(false);
+                  setFindQuery("");
+                  parentRef.current?.focus();
+                }
+              }}
+            />
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {findQuery
+                ? `${findMatches.length ? activeFindIndex + 1 : 0} / ${findMatches.length}`
+                : ""}
+            </span>
+            <button
+              type="button"
+              aria-label="Previous match"
+              disabled={!findMatches.length}
+              onClick={() => stepFind(-1)}
+              className="p-1 disabled:opacity-40"
             >
-              {virtualizer.getVirtualItems().map((virtualRow) => {
-                const row = virtualRows[virtualRow.index];
-                if (!row) return null;
+              <ChevronUp className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              aria-label="Next match"
+              disabled={!findMatches.length}
+              onClick={() => stepFind(1)}
+              className="p-1 disabled:opacity-40"
+            >
+              <ChevronDown className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              aria-label="Close find"
+              onClick={() => {
+                setFindOpen(false);
+                setFindQuery("");
+              }}
+              className="p-1"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        )}
+        <DiffOverviewRuler
+          marks={rulerMarks}
+          scrollElRef={parentRef}
+          contentSize={totalSize}
+        />
+        <div
+          ref={parentRef}
+          tabIndex={-1}
+          className="flex-1 overflow-auto diff-scrollbar"
+        >
+          <div className="p-4">
+            <div className="border border-border rounded-lg overflow-hidden">
+              <div
+                ref={containerRef}
+                className="relative w-full font-mono text-[0.75rem] [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)] diff-line-container"
+                style={{ height: `${totalSize}px` }}
+              >
+                {virtualizer.getVirtualItems().map((virtualRow) => {
+                  const row = virtualRows[virtualRow.index];
+                  if (!row) return null;
 
-                return (
-                  <div
-                    key={virtualRow.key}
-                    className="absolute top-0 left-0 w-full"
-                    style={{
-                      transform: `translateY(${virtualRow.start}px)`,
-                    }}
-                    data-index={virtualRow.index}
-                    ref={virtualizer.measureElement}
-                  >
-                    <VirtualRowRenderer
-                      row={row}
-                      focusedSkipBlockIndex={focusedSkipBlockIndex}
-                      focusedCommentId={focusedCommentId}
-                      focusedPendingCommentId={focusedPendingCommentId}
-                      editingCommentId={editingCommentId}
-                      editingPendingCommentId={editingPendingCommentId}
-                      replyingToCommentId={replyingToCommentId}
-                      expandSkipBlock={expandSkipBlock}
-                      isExpanding={isExpanding}
-                    />
-                  </div>
-                );
-              })}
+                  return (
+                    <div
+                      key={virtualRow.key}
+                      className={cn(
+                        "absolute top-0 left-0 w-full",
+                        matchingRows.has(virtualRow.index) &&
+                          "outline outline-1 outline-yellow-400",
+                        activeFindRow === virtualRow.index &&
+                          "z-10 outline-2 outline-yellow-500"
+                      )}
+                      style={{
+                        transform: `translateY(${virtualRow.start}px)`,
+                      }}
+                      data-index={virtualRow.index}
+                      ref={virtualizer.measureElement}
+                    >
+                      <VirtualRowRenderer
+                        row={row}
+                        focusedSkipBlockIndex={focusedSkipBlockIndex}
+                        focusedCommentId={focusedCommentId}
+                        focusedPendingCommentId={focusedPendingCommentId}
+                        editingCommentId={editingCommentId}
+                        editingPendingCommentId={editingPendingCommentId}
+                        replyingToCommentId={replyingToCommentId}
+                        expandSkipBlock={expandSkipBlock}
+                        isExpanding={isExpanding}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
@@ -1758,7 +2454,8 @@ interface VirtualRowRendererProps {
   expandSkipBlock: (
     skipIndex: number,
     startLine: number,
-    count: number
+    count: number,
+    direction?: ExpandDirection
   ) => void;
   isExpanding: (skipIndex: number) => boolean;
 }
@@ -1781,10 +2478,18 @@ const VirtualRowRenderer = memo(function VirtualRowRenderer({
       return (
         <SkipBlockRow
           hunk={row.hunk}
+          remainingCount={row.remainingCount}
+          isTopOfFile={row.isTopOfFile}
+          isEndOfFile={row.isEndOfFile}
           isFocused={focusedSkipBlockIndex === row.skipIndex}
           isExpanding={isExpanding(row.skipIndex)}
-          onExpand={() =>
-            expandSkipBlock(row.skipIndex, row.startLine, row.hunk.count)
+          onExpand={(direction) =>
+            expandSkipBlock(
+              row.skipIndex,
+              row.startLine,
+              row.remainingCount,
+              direction
+            )
           }
         />
       );
@@ -1793,7 +2498,13 @@ const VirtualRowRenderer = memo(function VirtualRowRenderer({
     case "split-line":
       return <SplitDiffLineRow pair={row.pair} />;
     case "comment-form":
-      return <InlineCommentForm line={row.lineNum} startLine={row.startLine} />;
+      return (
+        <InlineCommentForm
+          line={row.lineNum}
+          startLine={row.startLine}
+          side={row.side}
+        />
+      );
     case "pending-comment":
       return (
         <PendingCommentItem
@@ -1935,13 +2646,13 @@ const DiffLineRow = memo(function DiffLineRow({
 
     // Selection highlighting is now CSS-based via data-selected attribute
     if (isInCommentingRange) {
-      bgColor = "#19273e"; // opaque blue for commenting range
+      bgColor = "var(--diff-line-comment-range-bg)";
     } else if (line.type === "insert") {
-      bgColor = "#122218"; // opaque green
+      bgColor = "var(--diff-line-insert-bg)";
     } else if (line.type === "delete") {
-      bgColor = "#261710"; // opaque orange
+      bgColor = "var(--diff-line-delete-bg)";
     } else if (hasCommentRange) {
-      bgColor = "#1b1810"; // opaque yellow
+      bgColor = "var(--diff-line-has-comment-bg)";
     }
 
     const result: React.CSSProperties = {};
@@ -2012,10 +2723,8 @@ const DiffLineRow = memo(function DiffLineRow({
               <span
                 key={i}
                 className={cn(
-                  seg.type === "insert" &&
-                    "bg-[var(--code-added)]/20 text-green-400",
-                  seg.type === "delete" &&
-                    "bg-[var(--code-removed)]/20 text-orange-400 line-through decoration-orange-500/50",
+                  seg.type === "insert" && "bg-[var(--code-added)]/20",
+                  seg.type === "delete" && "bg-[var(--code-removed)]/20",
                   // Extra emphasis for tiny changes
                   isTinyChange &&
                     seg.type === "insert" &&
@@ -2139,13 +2848,13 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
 
     let bgColor: string | undefined;
     if (isInCommentingRange) {
-      bgColor = "#19273e";
+      bgColor = "var(--diff-line-comment-range-bg)";
     } else if (isInsert) {
-      bgColor = "#122218";
+      bgColor = "var(--diff-line-insert-bg)";
     } else if (isDelete) {
-      bgColor = "#261710";
+      bgColor = "var(--diff-line-delete-bg)";
     } else if (hasCommentRange) {
-      bgColor = "#1b1810";
+      bgColor = "var(--diff-line-has-comment-bg)";
     }
 
     const bgStyle: React.CSSProperties = bgColor
@@ -2201,9 +2910,8 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
                 <span
                   key={i}
                   className={cn(
-                    showInsert && "bg-[var(--code-added)]/20 text-green-400",
-                    showDelete &&
-                      "bg-[var(--code-removed)]/20 text-orange-400 line-through decoration-orange-500/50",
+                    showInsert && "bg-[var(--code-added)]/20",
+                    showDelete && "bg-[var(--code-removed)]/20",
                     isTinyChange &&
                       showInsert &&
                       "bg-[var(--code-added)]/40 font-semibold",
@@ -2223,7 +2931,7 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
 
   return (
     <div
-      className="flex h-5 min-h-5 whitespace-pre-wrap box-border group contain-layout split-diff-line-row font-mono text-[0.8rem]"
+      className="flex h-5 min-h-5 whitespace-pre-wrap box-border group contain-layout split-diff-line-row font-mono text-[0.75rem]"
       data-line-num={lineNum}
     >
       {/* Left side (old/delete) */}
@@ -2242,24 +2950,28 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
 
 interface SkipBlockRowProps {
   hunk: DiffSkipBlock;
+  /** Lines still hidden in this gap */
+  remainingCount: number;
+  /** Gap sits above the first hunk - only expanding upward makes sense */
+  isTopOfFile?: boolean;
+  /** Synthesized gap below the last hunk - only expanding downward makes
+   * sense, and the size may be unknown (remainingCount = Infinity) */
+  isEndOfFile?: boolean;
   isFocused?: boolean;
   isExpanding?: boolean;
-  onExpand?: () => void;
+  onExpand?: (direction: ExpandDirection) => void;
 }
 
 const SkipBlockRow = memo(function SkipBlockRow({
   hunk,
+  remainingCount,
+  isTopOfFile,
+  isEndOfFile,
   isFocused,
   isExpanding,
   onExpand,
 }: SkipBlockRowProps) {
   const skipBlockRef = useRef<HTMLDivElement>(null);
-
-  const handleClick = useCallback(() => {
-    if (onExpand && !isExpanding) {
-      onExpand();
-    }
-  }, [onExpand, isExpanding]);
 
   // Scroll into view when focused
   useEffect(() => {
@@ -2271,57 +2983,131 @@ const SkipBlockRow = memo(function SkipBlockRow({
     }
   }, [isFocused]);
 
+  // Small gaps expand in one click, like GitHub. Otherwise offer
+  // directional expanders that reveal SKIP_EXPAND_STEP lines at a time.
+  // The end-of-file gap's size is unknown (Infinity) until first expanded.
+  const sizeKnown = Number.isFinite(remainingCount);
+  const expandAllOnly = sizeKnown && remainingCount <= SKIP_EXPAND_STEP;
+
+  const expandButton = (
+    direction: ExpandDirection,
+    Icon: typeof ChevronsUp,
+    label: string
+  ) => (
+    <button
+      onClick={() => !isExpanding && onExpand?.(direction)}
+      disabled={isExpanding}
+      title={label}
+      aria-label={label}
+      className={cn(
+        "flex-1 w-full flex items-center justify-center transition-colors",
+        "text-blue-600/70 dark:text-blue-400/70",
+        !isExpanding &&
+          "hover:bg-blue-500/20 hover:text-blue-600 dark:hover:text-blue-300 cursor-pointer"
+      )}
+    >
+      <Icon className="w-4 h-4" />
+    </button>
+  );
+
   return (
     <div
       ref={skipBlockRef}
-      onClick={handleClick}
       className={cn(
-        "flex items-center h-10 font-mono bg-muted text-muted-foreground transition-colors group",
-        isExpanding ? "opacity-60" : "hover:bg-muted/80 cursor-pointer",
+        "flex items-stretch h-10 font-mono bg-muted text-muted-foreground group",
+        isExpanding && "opacity-60",
         isFocused && "ring-2 ring-blue-500 ring-inset bg-blue-500/10"
       )}
     >
       <div className="w-1 shrink-0" />
-      {/* Two line number columns to match diff lines */}
-      <div
-        className={cn(
-          "w-10 shrink-0 opacity-50 select-none flex items-center justify-center group-hover:opacity-70",
-          isFocused && "opacity-70"
-        )}
-      >
+      {/* Expander gutter - spans both line number columns */}
+      <div className="w-20 shrink-0 flex flex-col border-r border-border/30 bg-blue-500/5 select-none">
         {isExpanding ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
+          <div className="flex-1 flex items-center justify-center opacity-70">
+            <Loader2 className="w-4 h-4 animate-spin" />
+          </div>
+        ) : expandAllOnly ? (
+          expandButton(
+            "all",
+            isEndOfFile ? ChevronsDown : ChevronsUpDown,
+            `Expand all ${remainingCount} hidden lines`
+          )
         ) : (
-          <ChevronsUpDown className="w-4 h-4" />
+          <>
+            {!isEndOfFile &&
+              expandButton(
+                "up",
+                ChevronsUp,
+                `Expand ${SKIP_EXPAND_STEP} lines up`
+              )}
+            {!isTopOfFile &&
+              expandButton(
+                "down",
+                ChevronsDown,
+                `Expand ${SKIP_EXPAND_STEP} lines down`
+              )}
+          </>
         )}
       </div>
-      <div className="w-10 shrink-0 border-r border-border/30" />
-      <div className="flex-1">
+      <div className="flex-1 flex items-center min-w-0">
         <span
           className={cn(
-            "pl-2 italic opacity-50 group-hover:opacity-70",
+            "pl-2 italic opacity-50 truncate",
             isFocused && "opacity-70"
           )}
         >
-          {hunk.content || `${hunk.count} lines hidden`}
+          {sizeKnown
+            ? `${remainingCount} hidden line${remainingCount !== 1 ? "s" : ""}`
+            : "Lines below the last change"}
+          {hunk.content ? ` · ${hunk.content}` : ""}
         </span>
-        {!isExpanding && !isFocused && (
-          <span className="ml-2 text-xs opacity-0 group-hover:opacity-50 transition-opacity">
-            Click to expand
-          </span>
-        )}
         {!isExpanding && isFocused && (
-          <span className="ml-2 text-xs text-blue-400 opacity-70">
-            Press Enter to expand
+          <span className="ml-2 text-xs shrink-0 text-blue-600 dark:text-blue-400 opacity-70">
+            Press Enter to expand all
           </span>
         )}
         {isExpanding && (
-          <span className="ml-2 text-xs opacity-50">Loading...</span>
+          <span className="ml-2 text-xs shrink-0 opacity-50">Loading...</span>
         )}
       </div>
     </div>
   );
 });
+
+// ============================================================================
+// Comment Drafts
+// ============================================================================
+
+/**
+ * Editor text backed by the store's draft map, so it survives the form being
+ * unmounted when the diff virtualizer scrolls it out of view. A null key
+ * disables persistence (e.g. no reply is open).
+ */
+function useCommentDraft(key: string | null, initial = "") {
+  const store = usePRReviewStore();
+  const read = (k: string | null) => (k && store.getDraft(k)) ?? initial;
+  const [draft, setDraftState] = useState(() => ({ key, text: read(key) }));
+  let current = draft;
+  if (draft.key !== key) {
+    current = { key, text: read(key) };
+    setDraftState(current);
+  }
+
+  const setText = useCallback(
+    (text: string) => {
+      setDraftState({ key, text });
+      if (key) store.setDraft(key, text);
+    },
+    [key, store]
+  );
+
+  const clear = useCallback(() => {
+    if (key) store.clearDraft(key);
+    setDraftState({ key, text: "" });
+  }, [key, store]);
+
+  return [current.text, setText, clear] as const;
+}
 
 // ============================================================================
 // Inline Comment Form
@@ -2330,31 +3116,53 @@ const SkipBlockRow = memo(function SkipBlockRow({
 interface InlineCommentFormProps {
   line: number;
   startLine?: number;
+  side: CommentSide;
 }
 
 const InlineCommentForm = memo(function InlineCommentForm({
   line,
   startLine,
+  side,
 }: InlineCommentFormProps) {
   const store = usePRReviewStore();
   const canWrite = useCanWrite();
   const currentUser = useCurrentUser();
   const { startDeviceAuth } = useAuth();
   const { addPendingComment } = useCommentActions();
-  const [text, setText] = useState("");
+  const selectedFile = usePRReviewSelector((s) => s.selectedFile);
+  const [text, setText, clearText] = useCommentDraft(
+    `new:${selectedFile}:${side}:${startLine ?? line}-${line}`
+  );
   const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = useCallback(async () => {
     if (!text.trim()) return;
 
     setSubmitting(true);
+    setError(null);
     try {
-      await addPendingComment(line, text.trim(), startLine);
-      setText("");
+      await addPendingComment(line, text.trim(), startLine, side);
+      clearText();
+    } catch (e) {
+      // Keep the text so the user can retry
+      setError(
+        e instanceof Error
+          ? e.message.replace(
+              /^Request failed due to following response errors:\s*/i,
+              ""
+            )
+          : "Failed to add comment"
+      );
     } finally {
       setSubmitting(false);
     }
-  }, [text, line, startLine, addPendingComment]);
+  }, [text, line, startLine, side, addPendingComment, clearText]);
+
+  const handleCancel = useCallback(() => {
+    clearText();
+    store.cancelCommenting();
+  }, [clearText, store]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -2364,10 +3172,10 @@ const InlineCommentForm = memo(function InlineCommentForm({
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        store.cancelCommenting();
+        handleCancel();
       }
     },
-    [handleSubmit, store]
+    [handleSubmit, handleCancel]
   );
 
   const lineLabel = startLine ? `lines ${startLine}-${line}` : `line ${line}`;
@@ -2378,11 +3186,11 @@ const InlineCommentForm = memo(function InlineCommentForm({
       <div className="mx-4 my-3 rounded-lg border border-amber-500/30 bg-amber-500/5 overflow-hidden shadow-sm">
         <div className="flex items-center justify-between px-4 py-3 border-b border-amber-500/20">
           <div className="flex items-center gap-2.5 text-sm font-medium text-amber-200">
-            <MessageSquare className="w-4 h-4 text-amber-400" />
+            <MessageSquare className="w-4 h-4 text-amber-600 dark:text-amber-400" />
             <span>Comment on {lineLabel}</span>
           </div>
           <button
-            onClick={store.cancelCommenting}
+            onClick={handleCancel}
             className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted/50"
           >
             <X className="w-4 h-4" />
@@ -2427,7 +3235,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
           </span>
         </div>
         <button
-          onClick={store.cancelCommenting}
+          onClick={handleCancel}
           className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted/50"
         >
           <X className="w-4 h-4" />
@@ -2444,6 +3252,12 @@ const InlineCommentForm = memo(function InlineCommentForm({
           minHeight="100px"
           autoFocus
         />
+        {error && (
+          <div className="mt-2 flex items-start gap-2 text-xs text-destructive">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>Couldn't save comment to GitHub: {error}</span>
+          </div>
+        )}
       </div>
 
       {/* Action buttons */}
@@ -2452,7 +3266,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
         style={{ fontFamily: "var(--font-sans)" }}
       >
         <button
-          onClick={store.cancelCommenting}
+          onClick={handleCancel}
           className="px-4 py-2 text-sm font-medium rounded-md border border-border bg-background hover:bg-muted transition-colors"
           style={{ fontFamily: "var(--font-sans)" }}
         >
@@ -2480,6 +3294,21 @@ const InlineCommentForm = memo(function InlineCommentForm({
 // Comment Thread
 // ============================================================================
 
+/** Collapse a comment body to a short single-line preview. */
+function summarizeCommentBody(
+  body: string | undefined,
+  maxLength = 80
+): string {
+  if (!body) return "";
+  const flat = body
+    .replace(/```[\s\S]*?```/g, " ")
+    .replace(/[#>*_`~-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (flat.length <= maxLength) return flat;
+  return `${flat.slice(0, maxLength).trimEnd()}…`;
+}
+
 interface CommentThreadProps {
   comments: ReviewComment[];
   focusedCommentId: number | null;
@@ -2499,18 +3328,51 @@ const CommentThread = memo(function CommentThread({
   const repo = usePRReviewSelector((s) => s.repo);
   const { replyToComment, updateComment, deleteComment } = useCommentActions();
   const { resolveThread, unresolveThread } = useThreadActions();
-  const [replyText, setReplyText] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [isCollapsed, setIsCollapsed] = useState(false);
   const [resolving, setResolving] = useState(false);
 
   const replyingTo =
     comments.find((c) => c.id === replyingToCommentId)?.id ?? null;
+  const [replyText, setReplyText, clearReplyText] = useCommentDraft(
+    replyingTo ? `reply:${replyingTo}` : null
+  );
 
   // Get resolution info from first comment (all comments in thread share same resolution status)
   const firstComment = comments[0];
   const isResolved = firstComment?.is_resolved ?? false;
   const threadId = firstComment?.pull_request_review_thread_id;
+
+  // Collapse state lives in the store: a global default plus per-thread overrides.
+  const threadKey = commentThreadKey(comments);
+  const allCommentsCollapsed = usePRReviewSelector(
+    (s) => s.allCommentsCollapsed
+  );
+  const collapsedThreadOverrides = usePRReviewSelector(
+    (s) => s.collapsedThreadOverrides
+  );
+  const isCollapsed = isThreadCollapsed(
+    { allCommentsCollapsed, collapsedThreadOverrides },
+    threadKey,
+    isResolved
+  );
+  // Never collapse a thread the reviewer is actively replying to (unsaved
+  // input), editing in, or navigating to via the keyboard.
+  const forceExpanded =
+    replyingTo !== null ||
+    comments.some(
+      (c) => c.id === focusedCommentId || c.id === editingCommentId
+    );
+  const collapsed = isCollapsed && !forceExpanded;
+
+  const toggleCollapsed = useCallback(() => {
+    store.toggleThreadCollapsed(threadKey, isResolved);
+  }, [store, threadKey, isResolved]);
+
+  // One-line preview shown while collapsed so context isn't lost.
+  const summary = useMemo(
+    () => summarizeCommentBody(firstComment?.body),
+    [firstComment?.body]
+  );
 
   const handleSubmitReply = useCallback(async () => {
     if (!replyText.trim() || !replyingTo) return;
@@ -2518,11 +3380,11 @@ const CommentThread = memo(function CommentThread({
     setSubmitting(true);
     try {
       await replyToComment(replyingTo, replyText.trim());
-      setReplyText("");
+      clearReplyText();
     } finally {
       setSubmitting(false);
     }
-  }, [replyText, replyingTo, replyToComment]);
+  }, [replyText, replyingTo, replyToComment, clearReplyText]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -2533,46 +3395,39 @@ const CommentThread = memo(function CommentThread({
       if (e.key === "Escape") {
         e.preventDefault();
         store.cancelReplying();
-        setReplyText("");
+        clearReplyText();
       }
     },
-    [handleSubmitReply, store]
+    [handleSubmitReply, store, clearReplyText]
   );
 
   const handleCancel = useCallback(() => {
     store.cancelReplying();
-    setReplyText("");
-  }, [store]);
+    clearReplyText();
+  }, [store, clearReplyText]);
 
   const handleResolve = useCallback(async () => {
     if (!threadId) return;
     setResolving(true);
     try {
       await resolveThread(threadId);
-      // Auto-collapse when resolved
-      setIsCollapsed(true);
+      // Auto-collapse when resolved (clears any manual override)
+      store.setThreadCollapsed(threadKey, true, true);
     } finally {
       setResolving(false);
     }
-  }, [threadId, resolveThread]);
+  }, [threadId, resolveThread, store, threadKey]);
 
   const handleUnresolve = useCallback(async () => {
     if (!threadId) return;
     setResolving(true);
     try {
       await unresolveThread(threadId);
-      setIsCollapsed(false);
+      store.setThreadCollapsed(threadKey, false, false);
     } finally {
       setResolving(false);
     }
-  }, [threadId, unresolveThread]);
-
-  // Auto-collapse resolved threads
-  useEffect(() => {
-    if (isResolved) {
-      setIsCollapsed(true);
-    }
-  }, [isResolved]);
+  }, [threadId, unresolveThread, store, threadKey]);
 
   return (
     <div
@@ -2584,17 +3439,27 @@ const CommentThread = memo(function CommentThread({
           : "border-blue-500/50 bg-card/80"
       )}
     >
-      {/* Thread header with resolve/unresolve */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-border/30">
-        <div className="flex items-center gap-2">
+      {/* Thread header with resolve/unresolve + collapse */}
+      <div
+        className={cn(
+          "flex items-center justify-between px-4 py-2",
+          !collapsed && "border-b border-border/30"
+        )}
+      >
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          title={collapsed ? "Expand thread" : "Collapse thread"}
+          className="flex items-center gap-2 min-w-0 flex-1 text-left cursor-pointer group"
+        >
           {isResolved ? (
-            <CheckCircle2 className="w-4 h-4 text-green-500" />
+            <CheckCircle2 className="w-4 h-4 text-green-500 shrink-0" />
           ) : (
-            <Circle className="w-4 h-4 text-muted-foreground" />
+            <Circle className="w-4 h-4 text-muted-foreground shrink-0" />
           )}
           <span
             className={cn(
-              "text-xs font-medium",
+              "text-xs font-medium shrink-0",
               isResolved ? "text-green-500" : "text-muted-foreground"
             )}
           >
@@ -2602,13 +3467,14 @@ const CommentThread = memo(function CommentThread({
               ? "Resolved"
               : `${comments.length} comment${comments.length !== 1 ? "s" : ""}`}
           </span>
-          {isResolved && isCollapsed && (
-            <span className="text-xs text-muted-foreground">
-              by {firstComment.user.login}
+          {collapsed && firstComment && (
+            <span className="text-xs text-muted-foreground truncate group-hover:text-foreground transition-colors">
+              {firstComment.user.login}
+              {summary ? `: ${summary}` : ""}
             </span>
           )}
-        </div>
-        <div className="flex items-center gap-2">
+        </button>
+        <div className="flex items-center gap-2 shrink-0">
           {canWrite && threadId && (
             <button
               onClick={isResolved ? handleUnresolve : handleResolve}
@@ -2635,23 +3501,23 @@ const CommentThread = memo(function CommentThread({
               )}
             </button>
           )}
-          {isResolved && (
-            <button
-              onClick={() => setIsCollapsed(!isCollapsed)}
-              className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors"
-            >
-              {isCollapsed ? (
-                <ChevronDown className="w-4 h-4" />
-              ) : (
-                <ChevronUp className="w-4 h-4" />
-              )}
-            </button>
-          )}
+          <button
+            onClick={toggleCollapsed}
+            title={collapsed ? "Expand thread" : "Collapse thread"}
+            aria-label={collapsed ? "Expand thread" : "Collapse thread"}
+            className="p-1 text-muted-foreground hover:text-foreground rounded transition-colors"
+          >
+            {collapsed ? (
+              <ChevronDown className="w-4 h-4" />
+            ) : (
+              <ChevronUp className="w-4 h-4" />
+            )}
+          </button>
         </div>
       </div>
 
-      {/* Comment content (collapsible for resolved) */}
-      {!isCollapsed && (
+      {/* Comment content (collapsible) */}
+      {!collapsed && (
         <>
           {comments.map((comment, idx) => (
             <CommentItem
@@ -2803,15 +3669,12 @@ const CommentItem = memo(function CommentItem({
     () => getTimeAgo(new Date(comment.created_at)),
     [comment.created_at]
   );
-  const [editText, setEditText] = useState(comment.body);
+  const [editText, setEditText, clearEditText] = useCommentDraft(
+    isEditing ? `edit:${comment.id}` : null,
+    comment.body
+  );
   const [saving, setSaving] = useState(false);
   const commentRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (isEditing) {
-      setEditText(comment.body);
-    }
-  }, [isEditing, comment.body]);
 
   useEffect(() => {
     if (isFocused && commentRef.current) {
@@ -2822,18 +3685,31 @@ const CommentItem = memo(function CommentItem({
     }
   }, [isFocused]);
 
+  const handleCancelEdit = useCallback(() => {
+    clearEditText();
+    store.cancelEditing();
+  }, [clearEditText, store]);
+
   const handleSave = useCallback(async () => {
     if (!editText.trim() || editText === comment.body) {
-      store.cancelEditing();
+      handleCancelEdit();
       return;
     }
     setSaving(true);
     try {
       await onUpdate(comment.id, editText.trim());
+      clearEditText();
     } finally {
       setSaving(false);
     }
-  }, [editText, comment.id, comment.body, onUpdate, store]);
+  }, [
+    editText,
+    comment.id,
+    comment.body,
+    onUpdate,
+    handleCancelEdit,
+    clearEditText,
+  ]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -2843,10 +3719,10 @@ const CommentItem = memo(function CommentItem({
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        store.cancelEditing();
+        handleCancelEdit();
       }
     },
-    [handleSave, store]
+    [handleSave, handleCancelEdit]
   );
 
   // Handle click to focus this comment for keyboard navigation
@@ -2892,7 +3768,7 @@ const CommentItem = memo(function CommentItem({
               />
               <div className="flex justify-end gap-2 mt-3">
                 <button
-                  onClick={store.cancelEditing}
+                  onClick={handleCancelEdit}
                   className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
                 >
                   Cancel
@@ -3160,7 +4036,7 @@ function EmojiReactions({
                   className={cn(
                     "inline-flex items-center gap-1 px-2 py-0.5 text-xs rounded-full border transition-colors",
                     isUserReaction
-                      ? "bg-blue-500/20 border-blue-500/50 text-blue-400"
+                      ? "bg-blue-500/20 border-blue-500/50 text-blue-600 dark:text-blue-400"
                       : "bg-muted/50 border-border hover:border-blue-500/50"
                   )}
                 >
@@ -3197,15 +4073,12 @@ const PendingCommentItem = memo(function PendingCommentItem({
   const store = usePRReviewStore();
   const { removePendingComment, updatePendingComment } = useCommentActions();
   const currentUser = usePRReviewSelector((s) => s.currentUser);
-  const [editText, setEditText] = useState(comment.body);
+  const [editText, setEditText, clearEditText] = useCommentDraft(
+    isEditing ? `edit-pending:${comment.id}` : null,
+    comment.body
+  );
   const [saving, setSaving] = useState(false);
   const commentRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (isEditing) {
-      setEditText(comment.body);
-    }
-  }, [isEditing, comment.body]);
 
   useEffect(() => {
     if (isFocused && commentRef.current) {
@@ -3216,18 +4089,31 @@ const PendingCommentItem = memo(function PendingCommentItem({
     }
   }, [isFocused]);
 
+  const handleCancelEdit = useCallback(() => {
+    clearEditText();
+    store.cancelEditingPendingComment();
+  }, [clearEditText, store]);
+
   const handleSave = useCallback(async () => {
     if (!editText.trim() || editText === comment.body) {
-      store.cancelEditingPendingComment();
+      handleCancelEdit();
       return;
     }
     setSaving(true);
     try {
       await updatePendingComment(comment.id, editText.trim());
+      clearEditText();
     } finally {
       setSaving(false);
     }
-  }, [editText, comment.id, comment.body, updatePendingComment, store]);
+  }, [
+    editText,
+    comment.id,
+    comment.body,
+    updatePendingComment,
+    handleCancelEdit,
+    clearEditText,
+  ]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -3237,10 +4123,10 @@ const PendingCommentItem = memo(function PendingCommentItem({
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        store.cancelEditingPendingComment();
+        handleCancelEdit();
       }
     },
-    [handleSave, store]
+    [handleSave, handleCancelEdit]
   );
 
   // Handle click to focus this comment for keyboard navigation
@@ -3296,7 +4182,7 @@ const PendingCommentItem = memo(function PendingCommentItem({
                 />
                 <div className="flex justify-end gap-2 mt-3">
                   <button
-                    onClick={store.cancelEditingPendingComment}
+                    onClick={handleCancelEdit}
                     className="px-3 py-1.5 text-sm rounded-md hover:bg-muted transition-colors"
                   >
                     Cancel
@@ -3365,6 +4251,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
   const pendingComments = usePRReviewSelector((s) => s.pendingComments);
   const reviewBody = usePRReviewSelector((s) => s.reviewBody);
   const submitting = usePRReviewSelector((s) => s.submittingReview);
+  const submitError = usePRReviewSelector((s) => s.reviewSubmitError);
   const pr = usePRReviewSelector((s) => s.pr);
   const currentUser = usePRReviewSelector((s) => s.currentUser);
   const viewerPermission = usePRReviewSelector((s) => s.viewerPermission);
@@ -3424,9 +4311,19 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
   const pendingCount = pendingComments.length;
 
   const handleSubmit = useCallback(async () => {
-    await submitReview(reviewType);
-    setIsOpen(false);
+    try {
+      await submitReview(reviewType);
+      setIsOpen(false);
+    } catch (error) {
+      // Error is shown in the dropdown via reviewSubmitError; keep it open
+      console.error("Failed to submit review:", error);
+    }
   }, [submitReview, reviewType]);
+
+  // Clear a stale error when the dropdown is reopened
+  useEffect(() => {
+    if (isOpen) store.setReviewSubmitError(null);
+  }, [isOpen, store]);
 
   // Ctrl/Cmd+Enter to submit review when dropdown is open
   useEffect(() => {
@@ -3468,14 +4365,14 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
   return (
     <DropdownMenu open={isOpen} onOpenChange={setIsOpen} modal={false}>
       <DropdownMenuTrigger asChild>
-        <button className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors">
+        <button className="flex items-center gap-1.5 px-2 py-1 text-xs leading-4 font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors">
           <span>Submit review</span>
           {pendingCount > 0 && (
-            <span className="px-1 py-0.5 text-[10px] bg-green-500/50 rounded">
+            <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 text-[10px] leading-none bg-green-500/50 rounded tabular-nums">
               {pendingCount}
             </span>
           )}
-          <span className="px-1 py-0.5 text-[10px] bg-green-500/50 rounded font-mono">
+          <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 text-[10px] leading-none bg-green-500/50 rounded font-mono">
             S
           </span>
           <ChevronsUpDown className="w-3.5 h-3.5 opacity-70" />
@@ -3497,6 +4394,16 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
             autoFocus={openedViaKeyboard}
           />
         </div>
+
+        {submitError && (
+          <div
+            className="mx-3 mb-2 flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+            <span>{submitError}</span>
+          </div>
+        )}
 
         {/* Pending comments by file */}
         {pendingCount > 0 && (
@@ -3606,7 +4513,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
                 <label className="flex items-start gap-3 cursor-pointer group">
                   <RadioGroupItem value="APPROVE" className="mt-0.5" />
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-medium text-sm text-green-400">
+                    <span className="font-medium text-sm text-green-600 dark:text-green-400">
                       Approve
                     </span>
                     <span className="text-xs text-muted-foreground">
@@ -3618,7 +4525,7 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
                 <label className="flex items-start gap-3 cursor-pointer group">
                   <RadioGroupItem value="REQUEST_CHANGES" className="mt-0.5" />
                   <div className="flex flex-col gap-0.5">
-                    <span className="font-medium text-sm text-amber-400">
+                    <span className="font-medium text-sm text-amber-600 dark:text-amber-400">
                       Request changes
                     </span>
                     <span className="text-xs text-muted-foreground">
@@ -3681,9 +4588,9 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
             className={cn(
               "flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md transition-colors disabled:opacity-50",
               reviewType === "APPROVE" &&
-                "bg-green-500/20 text-green-400 hover:bg-green-500/30 border border-green-500/30",
+                "bg-green-500/20 text-green-600 dark:text-green-400 hover:bg-green-500/30 border border-green-500/30",
               reviewType === "REQUEST_CHANGES" &&
-                "bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 border border-amber-500/30",
+                "bg-amber-500/20 text-amber-600 dark:text-amber-400 hover:bg-amber-500/30 border border-amber-500/30",
               reviewType === "COMMENT" &&
                 "bg-primary text-primary-foreground hover:bg-primary/90"
             )}
@@ -3897,7 +4804,7 @@ function DiffSkeleton() {
   return (
     <div className="flex-1 overflow-auto p-4">
       <div className="border border-border rounded-lg overflow-hidden">
-        <div className="font-mono text-[0.8rem]">
+        <div className="font-mono text-[0.75rem]">
           {/* Hunk header skeleton */}
           <div className="bg-muted/50 px-4 py-2 border-b border-border">
             <Skeleton className="h-4 w-48" />

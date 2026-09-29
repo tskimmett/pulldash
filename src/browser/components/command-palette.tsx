@@ -16,6 +16,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useLocation } from "react-router-dom";
 import { cn } from "../cn";
 import { usePRReviewSelector, usePRReviewStore } from "../contexts/pr-review";
+import { isTestFile } from "@/browser/lib/test-file";
 import { Keycap, KeycapGroup } from "../ui/keycap";
 import type { PullRequestFile } from "@/api/types";
 
@@ -196,8 +197,17 @@ export const CommandPalette = memo(function CommandPalette({
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const store = usePRReviewStore();
-  const files = usePRReviewSelector((s) => s.files);
+  const allFiles = usePRReviewSelector((s) => s.files);
   const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
+  const hideTestFiles = usePRReviewSelector((s) => s.hideTestFiles);
+
+  const files = useMemo(
+    () =>
+      hideTestFiles
+        ? allFiles.filter((f) => !isTestFile(f.filename))
+        : allFiles,
+    [allFiles, hideTestFiles]
+  );
 
   // Defer the search query so typing stays responsive
   const deferredSearch = useDeferredValue(search);
@@ -436,7 +446,7 @@ const FileItem = memo(function FileItem({
           )}
         />
         {dirPath && (
-          <span className="text-xs text-muted-foreground group-data-[selected=true]:text-white/70 truncate transition-colors">
+          <span className="text-xs text-muted-foreground group-data-[selected=true]:text-accent-foreground/70 truncate transition-colors">
             {dirPath}
           </span>
         )}
@@ -468,7 +478,7 @@ const FileItem = memo(function FileItem({
           </span>
         )}
         {isViewed && (
-          <span className="px-1.5 py-0.5 bg-green-500/20 text-green-400 group-data-[selected=true]:bg-green-400/30 group-data-[selected=true]:text-green-200 rounded text-[10px]">
+          <span className="px-1.5 py-0.5 bg-green-500/20 text-green-700 dark:text-green-400 group-data-[selected=true]:bg-green-400/30 group-data-[selected=true]:text-green-800 dark:group-data-[selected=true]:text-green-200 rounded text-[10px]">
             viewed
           </span>
         )}
@@ -505,7 +515,7 @@ const HighlightedText = memo(function HighlightedText({
     return (
       <span className={className}>
         {text.slice(0, idx)}
-        <span className="bg-yellow-500/30 text-yellow-200 group-data-[selected=true]:bg-yellow-400/40 group-data-[selected=true]:text-white">
+        <span className="bg-yellow-500/30 text-yellow-800 dark:text-yellow-200 group-data-[selected=true]:bg-yellow-400/40 group-data-[selected=true]:text-accent-foreground">
           {text.slice(idx, idx + query.length)}
         </span>
         {text.slice(idx + query.length)}
@@ -522,7 +532,7 @@ const HighlightedText = memo(function HighlightedText({
       result.push(
         <span
           key={i}
-          className="bg-yellow-500/30 text-yellow-200 group-data-[selected=true]:bg-yellow-400/40 group-data-[selected=true]:text-white"
+          className="bg-yellow-500/30 text-yellow-800 dark:text-yellow-200 group-data-[selected=true]:bg-yellow-400/40 group-data-[selected=true]:text-accent-foreground"
         >
           {text[i]}
         </span>
@@ -579,6 +589,6 @@ const FileIcon = memo(function FileIcon({ extension }: FileIconProps) {
   }
 
   return (
-    <File className="w-4 h-4 text-muted-foreground group-data-[selected=true]:text-white shrink-0 transition-colors" />
+    <File className="w-4 h-4 text-muted-foreground group-data-[selected=true]:text-accent-foreground shrink-0 transition-colors" />
   );
 });

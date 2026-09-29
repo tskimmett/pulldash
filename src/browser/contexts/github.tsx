@@ -10,6 +10,7 @@ import {
 import { Octokit } from "@octokit/core";
 import type { components } from "@octokit/openapi-types";
 import { useAuth } from "./auth";
+import { fetchAllPages } from "../lib/fetch-all-pages";
 
 // Re-export types
 // Extended PullRequest with body_html from GitHub's HTML media type
@@ -1136,6 +1137,68 @@ function createGitHubStore() {
     return promise;
   }
 
+  /**
+   * Files changed between two commits of a PR (GitHub's compare endpoint).
+   * Used for "changes since your last review". Returns null when the start
+   * commit no longer exists (force-pushed away).
+   */
+  async function getCompareFiles(
+    owner: string,
+    repo: string,
+    startSha: string,
+    headSha: string
+  ): Promise<PullRequestFile[] | null> {
+    if (!octokit) throw new Error("Not initialized");
+
+    const cacheKey = `compare:${owner}/${repo}/${startSha}...${headSha}`;
+
+    const cached = cache.get<PullRequestFile[]>(cacheKey);
+    if (cached) return cached;
+
+    const pending = cache.getPending<PullRequestFile[] | null>(cacheKey);
+    if (pending) return pending;
+
+    const promise = (async () => {
+      const files: PullRequestFile[] = [];
+      let page = 1;
+
+      try {
+        while (true) {
+          const { data } = await octokit!.request(
+            "GET /repos/{owner}/{repo}/compare/{basehead}",
+            {
+              owner,
+              repo,
+              basehead: `${startSha}...${headSha}`,
+              per_page: 100,
+              page,
+            }
+          );
+          const pageFiles = data.files ?? [];
+          files.push(...pageFiles);
+          if (pageFiles.length < 100) break;
+          page++;
+        }
+      } catch (error: unknown) {
+        if (
+          error &&
+          typeof error === "object" &&
+          "status" in error &&
+          error.status === 404
+        ) {
+          return null;
+        }
+        throw error;
+      }
+
+      cache.set(cacheKey, files);
+      return files;
+    })();
+
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
+
   async function getPRComments(
     owner: string,
     repo: string,
@@ -1248,20 +1311,26 @@ function createGitHubStore() {
     const pending = cache.getPending<Review[]>(cacheKey);
     if (pending) return pending;
 
-    const promise = octokit
-      .request("GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews", {
-        owner,
-        repo,
-        pull_number: number,
-        headers: {
-          // Request full media type to get both body and body_html with signed attachment URLs
-          accept: "application/vnd.github.full+json",
-        },
-      })
-      .then((res) => {
-        cache.set(cacheKey, res.data as Review[]);
-        return res.data as Review[];
-      });
+    const promise = fetchAllPages(async (page) => {
+      const { data } = await octokit!.request(
+        "GET /repos/{owner}/{repo}/pulls/{pull_number}/reviews",
+        {
+          owner,
+          repo,
+          pull_number: number,
+          per_page: 100,
+          page,
+          headers: {
+            // Request full media type to get both body and body_html with signed attachment URLs
+            accept: "application/vnd.github.full+json",
+          },
+        }
+      );
+      return data as Review[];
+    }).then((reviews) => {
+      cache.set(cacheKey, reviews);
+      return reviews;
+    });
 
     cache.setPending(cacheKey, promise);
     return promise;
@@ -1491,17 +1560,22 @@ function createGitHubStore() {
       cache.getPending<components["schemas"]["commit"][]>(cacheKey);
     if (pending) return pending;
 
-    const promise = octokit
-      .request("GET /repos/{owner}/{repo}/pulls/{pull_number}/commits", {
-        owner,
-        repo,
-        pull_number: number,
-        per_page: 100,
-      })
-      .then((res) => {
-        cache.set(cacheKey, res.data);
-        return res.data;
-      });
+    const promise = fetchAllPages(async (page) => {
+      const { data } = await octokit!.request(
+        "GET /repos/{owner}/{repo}/pulls/{pull_number}/commits",
+        {
+          owner,
+          repo,
+          pull_number: number,
+          per_page: 100,
+          page,
+        }
+      );
+      return data;
+    }).then((commits) => {
+      cache.set(cacheKey, commits);
+      return commits;
+    });
 
     cache.setPending(cacheKey, promise);
     return promise;
@@ -2078,20 +2152,26 @@ function createGitHubStore() {
     const pending = cache.getPending<IssueComment[]>(cacheKey);
     if (pending) return pending;
 
-    const promise = octokit
-      .request("GET /repos/{owner}/{repo}/issues/{issue_number}/comments", {
-        owner,
-        repo,
-        issue_number: number,
-        headers: {
-          // Request full media type to get both body and body_html with signed attachment URLs
-          accept: "application/vnd.github.full+json",
-        },
-      })
-      .then((res) => {
-        cache.set(cacheKey, res.data as IssueComment[]);
-        return res.data as IssueComment[];
-      });
+    const promise = fetchAllPages(async (page) => {
+      const { data } = await octokit!.request(
+        "GET /repos/{owner}/{repo}/issues/{issue_number}/comments",
+        {
+          owner,
+          repo,
+          issue_number: number,
+          per_page: 100,
+          page,
+          headers: {
+            // Request full media type to get both body and body_html with signed attachment URLs
+            accept: "application/vnd.github.full+json",
+          },
+        }
+      );
+      return data as IssueComment[];
+    }).then((comments) => {
+      cache.set(cacheKey, comments);
+      return comments;
+    });
 
     cache.setPending(cacheKey, promise);
     return promise;
@@ -2133,17 +2213,22 @@ function createGitHubStore() {
     const pending = cache.getPending<TimelineEvent[]>(cacheKey);
     if (pending) return pending;
 
-    const promise = octokit
-      .request("GET /repos/{owner}/{repo}/issues/{issue_number}/timeline", {
-        owner,
-        repo,
-        issue_number: number,
-        per_page: 100,
-      })
-      .then((res) => {
-        cache.set(cacheKey, res.data as TimelineEvent[]);
-        return res.data as TimelineEvent[];
-      });
+    const promise = fetchAllPages(async (page) => {
+      const { data } = await octokit!.request(
+        "GET /repos/{owner}/{repo}/issues/{issue_number}/timeline",
+        {
+          owner,
+          repo,
+          issue_number: number,
+          per_page: 100,
+          page,
+        }
+      );
+      return data as TimelineEvent[];
+    }).then((timeline) => {
+      cache.set(cacheKey, timeline);
+      return timeline;
+    });
 
     cache.setPending(cacheKey, promise);
     return promise;
@@ -2468,22 +2553,14 @@ function createGitHubStore() {
       };
     }
 
-    const data = await batcher.query<{
-      repository: {
-        viewerPermission: string | null;
-        pullRequest: {
-          viewerCanMergeAsAdmin: boolean;
-          reviewThreads: { nodes: RawReviewThread[] };
-        };
-      };
-    }>(
-      `
-      query ($owner: String!, $repo: String!, $number: Int!) {
+    const query = `
+      query ($owner: String!, $repo: String!, $number: Int!, $cursor: String) {
         repository(owner: $owner, name: $repo) {
           viewerPermission
           pullRequest(number: $number) {
             viewerCanMergeAsAdmin
-            reviewThreads(first: 100) {
+            reviewThreads(first: 100, after: $cursor) {
+              pageInfo { hasNextPage endCursor }
               nodes {
                 id
                 isResolved
@@ -2514,25 +2591,48 @@ function createGitHubStore() {
           }
         }
       }
-    `,
-      { owner, repo, number }
-    );
+    `;
+
+    const allThreads: RawReviewThread[] = [];
+    let cursor: string | null = null;
+    let viewerPermission: string | null = null;
+    let viewerCanMergeAsAdmin = false;
+
+    while (true) {
+      const data: {
+        repository: {
+          viewerPermission: string | null;
+          pullRequest: {
+            viewerCanMergeAsAdmin: boolean;
+            reviewThreads: {
+              nodes: RawReviewThread[];
+              pageInfo: { hasNextPage: boolean; endCursor: string | null };
+            };
+          };
+        };
+      } = await batcher.query(query, { owner, repo, number, cursor });
+
+      viewerPermission = data.repository.viewerPermission;
+      viewerCanMergeAsAdmin = data.repository.pullRequest.viewerCanMergeAsAdmin;
+      allThreads.push(...data.repository.pullRequest.reviewThreads.nodes);
+      const pageInfo = data.repository.pullRequest.reviewThreads.pageInfo;
+      if (!pageInfo.hasNextPage || !pageInfo.endCursor) break;
+      cursor = pageInfo.endCursor;
+    }
 
     // Extract pullRequestReview from first comment into thread object
-    const threads = data.repository.pullRequest.reviewThreads.nodes.map(
-      (thread) => {
-        const firstComment = thread.comments.nodes[0];
-        return {
-          ...thread,
-          pullRequestReview: firstComment?.pullRequestReview ?? null,
-        };
-      }
-    );
+    const threads = allThreads.map((thread) => {
+      const firstComment = thread.comments.nodes[0];
+      return {
+        ...thread,
+        pullRequestReview: firstComment?.pullRequestReview ?? null,
+      };
+    });
 
     return {
       threads,
-      viewerPermission: data.repository.viewerPermission,
-      viewerCanMergeAsAdmin: data.repository.pullRequest.viewerCanMergeAsAdmin,
+      viewerPermission,
+      viewerCanMergeAsAdmin,
     };
   }
 
@@ -2598,7 +2698,13 @@ function createGitHubStore() {
     owner: string,
     repo: string,
     number: number,
-    options: { path: string; line: number; body: string; startLine?: number }
+    options: {
+      path: string;
+      line: number;
+      body: string;
+      startLine?: number;
+      side?: "LEFT" | "RIGHT";
+    }
   ): Promise<{
     reviewId: string;
     commentId: string;
@@ -2620,8 +2726,13 @@ function createGitHubStore() {
       body: options.body,
     };
 
+    if (options.side) {
+      input.side = options.side;
+    }
+
     if (options.startLine && options.startLine !== options.line) {
       input.startLine = options.startLine;
+      if (options.side) input.startSide = options.side;
     }
 
     const data = await batcher.query<{
@@ -2756,6 +2867,7 @@ function createGitHubStore() {
     searchUsers,
     getPR,
     getPRFiles,
+    getCompareFiles,
     getPRComments,
     createPRComment,
     getPRReviews,

@@ -17,6 +17,28 @@ import {
   MentionSuggestionsProvider,
   type MentionUser,
 } from "@/browser/ui/markdown";
+import { isTestFile } from "@/browser/lib/test-file";
+import { enrichCommentsWithThreads } from "@/browser/lib/review-threads";
+import {
+  findLastReviewedSha,
+  isRangeAvailable,
+  type DiffRange,
+} from "@/browser/lib/review-range";
+import {
+  cancelSemanticJob,
+  fetchCachedSemanticReview,
+  fetchSemanticProviders,
+  startSemanticAnalysis as apiStartSemanticAnalysis,
+  streamSemanticJob,
+  type ProviderInfo,
+} from "@/browser/lib/semantic-client";
+import type {
+  SemanticCohort,
+  SemanticLayer,
+  SemanticRange,
+  SemanticReview,
+} from "@/semantic/schema";
+import { layerFilesInOrder } from "@/semantic/layer-files";
 import {
   type GitHubStore,
   type Review,
@@ -107,11 +129,26 @@ export interface DiffSkipBlock {
 
 export interface ParsedDiff {
   hunks: (DiffHunk | DiffSkipBlock)[];
+  /** Default context around each gap, keyed by skip index (the index one
+   * past the last skip block is the end-of-file gap). */
+  gapContext?: Record<number, ExpandedSkipBlock>;
+  /** Total line count of the new file, when known. */
+  totalNewLines?: number;
 }
+
+export type CommentSide = "LEFT" | "RIGHT";
 
 export interface CommentingOnLine {
   line: number;
   startLine?: number;
+  /** GitHub diff side: LEFT for deleted lines, RIGHT for added/context. */
+  side: CommentSide;
+}
+
+export function toCommentSide(
+  side: "old" | "new" | null | undefined
+): CommentSide {
+  return side === "old" ? "LEFT" : "RIGHT";
 }
 
 // ============================================================================
@@ -145,10 +182,26 @@ export interface WorkflowRunAwaitingApproval {
 // Merge method type
 export type MergeMethod = "merge" | "squash" | "rebase";
 
+export interface ExpandedSkipBlock {
+  top: DiffLine[];
+  bottom: DiffLine[];
+}
+
 interface PRReviewState {
   // Core data
   pr: PullRequest;
+  /** Files currently shown - the full PR, or only those in `diffRange`. */
   files: PullRequestFile[];
+  /** Every file in the PR, regardless of the active range. */
+  allFiles: PullRequestFile[];
+  /**
+   * "Changes since" narrowing: when set, `files` and every diff cover only
+   * commits after `diffRange.startSha` through `diffRange.endSha` (or PR head).
+   */
+  diffRange: DiffRange | null;
+  diffRangeLoading: boolean;
+  /** Set when the requested start commit was force-pushed out of the PR. */
+  diffRangeError: string | null;
   owner: string;
   repo: string;
   currentUser: string | null;
@@ -189,6 +242,7 @@ interface PRReviewState {
 
   // Diff view mode (unified or split) - global user preference
   diffViewMode: DiffViewMode;
+  fileLayoutMode: "single" | "all";
 
   // File navigation
   selectedFile: string | null;
@@ -200,13 +254,21 @@ interface PRReviewState {
   // Viewed files
   viewedFiles: Set<string>;
   hideViewed: boolean;
+  hideTestFiles: boolean;
 
   // Diffs
   loadedDiffs: Record<string, ParsedDiff>;
   loadingFiles: Set<string>;
-  // Map of "filename:skipIndex" -> expanded lines content
-  expandedSkipBlocks: Record<string, DiffLine[]>;
+  // Map of "filename:skipIndex" -> lines revealed so far from each edge of
+  // the gap (GitHub-style incremental expansion). `top` grows downward from
+  // the hunk above; `bottom` grows upward from the hunk below.
+  expandedSkipBlocks: Record<string, ExpandedSkipBlock>;
   expandingSkipBlocks: Set<string>;
+  // Total line count of each file at the head commit, learned when file
+  // content is fetched for gap expansion. Sizes the end-of-file gap.
+  fileLineCounts: Record<string, number>;
+  /** Files whose entire diff was expanded via the header button. */
+  fullyExpandedFiles: Set<string>;
   // Pre-computed navigation arrays per file (Fix 2)
   navigableItems: Record<string, NavigableItem[]>;
   // Pre-computed comment range lookup per file (Fix 3)
@@ -214,6 +276,12 @@ interface PRReviewState {
 
   // Line selection
   focusedLine: number | null;
+  /**
+   * When true, the focused line is scrolled to but not visually
+   * highlighted (used by change-jump navigation). Any other focus
+   * change resets it - see set().
+   */
+  suppressFocusHighlight: boolean;
   focusedLineSide: "old" | "new" | null; // 'old' for delete lines, 'new' for insert/context
   selectionAnchor: number | null;
   selectionAnchorSide: "old" | "new" | null;
@@ -234,11 +302,31 @@ interface PRReviewState {
   focusedPendingCommentId: string | null;
   editingPendingCommentId: string | null;
 
+  // Comment collapse: global default (persisted) + per-thread in-memory overrides.
+  // Effective collapsed = override ?? (allCommentsCollapsed || threadIsResolved)
+  allCommentsCollapsed: boolean;
+  collapsedThreadOverrides: Map<string, boolean>;
+  // Hide resolved threads entirely from the diff (persisted).
+  hideResolvedComments: boolean;
+
+  // Semantic review (local-agent-powered; hidden when no providers)
+  semanticProviders: ProviderInfo[] | null; // null = not yet loaded
+  semanticStatus: "idle" | "running" | "done" | "error";
+  semanticReview: SemanticReview | null;
+  semanticWarnings: string[];
+  semanticProgress: string[];
+  semanticError: string | null;
+  viewMode: "files" | "semantic";
+  reviewedLayers: Set<string>; // "cohortId/layerId", persisted per PR
+  selectedLayerId: string | null; // "cohortId/layerId"
+
   // Review
   pendingReviewId: number | null;
   reviewBody: string;
   showReviewPanel: boolean;
   submittingReview: boolean;
+  /** Error from the last review submission attempt, shown in the submit dropdown. */
+  reviewSubmitError: string | null;
 }
 
 // ============================================================================
@@ -267,6 +355,94 @@ function setStoredDiffViewMode(mode: DiffViewMode): void {
   } catch {}
 }
 
+// Global storage key for hiding test files (user preference, not per-PR)
+const HIDE_TEST_FILES_KEY = "pulldash_hide_test_files";
+
+function getStoredHideTestFiles(): boolean {
+  try {
+    return localStorage.getItem(HIDE_TEST_FILES_KEY) === "true";
+  } catch {}
+  return false;
+}
+
+function setStoredHideTestFiles(hide: boolean): void {
+  try {
+    localStorage.setItem(HIDE_TEST_FILES_KEY, String(hide));
+  } catch {}
+}
+
+// Global storage key for collapsing all inline comments (user preference)
+const COLLAPSE_ALL_COMMENTS_KEY = "pulldash_collapse_all_comments";
+
+function getStoredCollapseAllComments(): boolean {
+  try {
+    return localStorage.getItem(COLLAPSE_ALL_COMMENTS_KEY) === "true";
+  } catch {}
+  return false;
+}
+
+function setStoredCollapseAllComments(collapsed: boolean): void {
+  try {
+    localStorage.setItem(COLLAPSE_ALL_COMMENTS_KEY, String(collapsed));
+  } catch {}
+}
+
+const HIDE_RESOLVED_COMMENTS_KEY = "pulldash_hide_resolved_comments";
+
+function getStoredHideResolvedComments(): boolean {
+  try {
+    return localStorage.getItem(HIDE_RESOLVED_COMMENTS_KEY) === "true";
+  } catch {}
+  return false;
+}
+
+function setStoredHideResolvedComments(hidden: boolean): void {
+  try {
+    localStorage.setItem(HIDE_RESOLVED_COMMENTS_KEY, String(hidden));
+  } catch {}
+}
+
+/**
+ * Comments that should appear in the diff. When "hide resolved" is on,
+ * comments in resolved threads are dropped entirely (not just collapsed).
+ * Returns the same array when nothing is filtered so memoized consumers
+ * don't re-render.
+ */
+export function visibleComments<T extends { is_resolved?: boolean }>(
+  comments: T[],
+  hideResolved: boolean
+): T[] {
+  if (!hideResolved) return comments;
+  const filtered = comments.filter((c) => !c.is_resolved);
+  return filtered.length === comments.length ? comments : filtered;
+}
+
+/**
+ * Stable key for a comment thread: the review thread id when available,
+ * otherwise the id of the first (root) comment in the thread.
+ */
+export function commentThreadKey(
+  comments: { id: number; pull_request_review_thread_id?: string | null }[]
+): string {
+  const first = comments[0];
+  if (!first) return "";
+  return first.pull_request_review_thread_id ?? `c${first.id}`;
+}
+
+/** Effective collapsed state for a thread given store state. */
+export function isThreadCollapsed(
+  state: Pick<
+    PRReviewState,
+    "allCommentsCollapsed" | "collapsedThreadOverrides"
+  >,
+  key: string,
+  isResolved: boolean
+): boolean {
+  const override = state.collapsedThreadOverrides.get(key);
+  if (override !== undefined) return override;
+  return state.allCommentsCollapsed || isResolved;
+}
+
 export class PRReviewStore {
   private state: PRReviewState;
   private listeners = new Set<Listener>();
@@ -274,6 +450,10 @@ export class PRReviewStore {
   private github: GitHubStore;
   // Track recently approved workflow IDs to filter out stale API responses
   private recentlyApprovedWorkflowIds = new Set<number>();
+  // Semantic analysis job tracking (SSE subscription lifecycle)
+  private semanticJobId: string | null = null;
+  private semanticUnsubscribe: (() => void) | null = null;
+  private diffRangeRequestId = 0;
 
   constructor(
     github: GitHubStore,
@@ -318,12 +498,25 @@ export class PRReviewStore {
       }
     } catch {}
 
+    // Load reviewed semantic layers from localStorage
+    let reviewedLayers = new Set<string>();
+    try {
+      const stored = localStorage.getItem(`${this.storageKey}-semantic-layers`);
+      if (stored) {
+        reviewedLayers = new Set(JSON.parse(stored));
+      }
+    } catch {}
+
     // Sort files to match file tree order (folders first, then alphabetically)
     const sortedFiles = sortFilesLikeTree(initialState.files);
 
     this.state = {
       ...initialState,
       files: sortedFiles,
+      allFiles: sortedFiles,
+      diffRange: null,
+      diffRangeLoading: false,
+      diffRangeError: null,
       viewerCanMergeAsAdmin: false,
 
       // PR data (loaded separately)
@@ -362,14 +555,19 @@ export class PRReviewStore {
       overviewScrollTarget: null,
       viewedFiles,
       hideViewed: true,
+      hideTestFiles: getStoredHideTestFiles(),
       diffViewMode,
+      fileLayoutMode: "single",
       loadedDiffs: {},
       loadingFiles: new Set(),
       expandedSkipBlocks: {},
       expandingSkipBlocks: new Set(),
+      fileLineCounts: {},
+      fullyExpandedFiles: new Set(),
       navigableItems: {},
       commentRangeLookup: {},
       focusedLine: null,
+      suppressFocusHighlight: false,
       focusedLineSide: null,
       selectionAnchor: null,
       selectionAnchorSide: null,
@@ -383,11 +581,24 @@ export class PRReviewStore {
       replyingToCommentId: null,
       focusedPendingCommentId: null,
       editingPendingCommentId: null,
+      allCommentsCollapsed: getStoredCollapseAllComments(),
+      hideResolvedComments: getStoredHideResolvedComments(),
+      collapsedThreadOverrides: new Map(),
+      semanticProviders: null,
+      semanticStatus: "idle",
+      semanticReview: null,
+      semanticWarnings: [],
+      semanticProgress: [],
+      semanticError: null,
+      viewMode: "files",
+      reviewedLayers,
+      selectedLayerId: null,
       pendingReviewId: null,
       pendingComments,
       reviewBody,
       showReviewPanel: false,
       submittingReview: false,
+      reviewSubmitError: null,
       currentUser: null,
     };
   }
@@ -416,6 +627,11 @@ export class PRReviewStore {
   }
 
   private set(partial: Partial<PRReviewState>) {
+    // Any focus movement re-enables the focus highlight unless the
+    // caller (change-jump navigation) explicitly suppresses it.
+    if ("focusedLine" in partial && !("suppressFocusHighlight" in partial)) {
+      partial = { ...partial, suppressFocusHighlight: false };
+    }
     this.state = { ...this.state, ...partial };
     this.emit();
   }
@@ -458,12 +674,23 @@ export class PRReviewStore {
   };
 
   selectFile = (filename: string) => {
-    if (this.state.selectedFile === filename && !this.state.showOverview)
+    // In semantic mode any path that lands on a file (tree click, file-header
+    // arrows, j/k, hash navigation) must keep the semantic UI pointed at a
+    // layer that actually covers the file. When the current layer already
+    // covers it - notably the layer -> file jump in selectSemanticLayer -
+    // this resolves to the existing selection, so no loop or clobbering.
+    const layerKey = this.semanticLayerKeyForFile(filename);
+    if (this.state.selectedFile === filename && !this.state.showOverview) {
+      if (layerKey && layerKey !== this.state.selectedLayerId) {
+        this.set({ selectedLayerId: layerKey });
+      }
       return;
+    }
     // Track for shift+click range selection
     this.lastSelectedFile = filename;
     this.set({
       selectedFile: filename,
+      ...(layerKey ? { selectedLayerId: layerKey } : {}),
       selectedFiles: new Set(),
       showOverview: false,
       // Reset line selection when changing files
@@ -479,6 +706,17 @@ export class PRReviewStore {
       replyingToCommentId: null,
       focusedPendingCommentId: null,
       editingPendingCommentId: null,
+    });
+  };
+
+  setFileLayoutMode = (mode: "single" | "all") => {
+    this.set({
+      fileLayoutMode: mode,
+      showOverview: mode === "all" ? false : this.state.showOverview,
+      selectedFile:
+        mode === "all" && !this.state.selectedFile
+          ? (this.state.files[0]?.filename ?? null)
+          : this.state.selectedFile,
     });
   };
 
@@ -528,6 +766,10 @@ export class PRReviewStore {
     }
   };
 
+  // Whether a file is hidden from the tree and skipped during navigation.
+  private isFileHidden = (filename: string): boolean =>
+    this.state.hideTestFiles && isTestFile(filename);
+
   navigateToNextUnviewedFile = () => {
     const { files, selectedFile, viewedFiles } = this.state;
     const currentIdx = selectedFile
@@ -537,6 +779,7 @@ export class PRReviewStore {
     // Search forward then wrap
     for (let i = 0; i < files.length; i++) {
       const idx = (currentIdx + 1 + i) % files.length;
+      if (this.isFileHidden(files[idx].filename)) continue;
       if (!viewedFiles.has(files[idx].filename)) {
         this.selectFile(files[idx].filename);
         return;
@@ -553,6 +796,7 @@ export class PRReviewStore {
     // Search backward then wrap
     for (let i = 0; i < files.length; i++) {
       const idx = (currentIdx - 1 - i + files.length) % files.length;
+      if (this.isFileHidden(files[idx].filename)) continue;
       if (!viewedFiles.has(files[idx].filename)) {
         this.selectFile(files[idx].filename);
         return;
@@ -615,7 +859,11 @@ export class PRReviewStore {
     this.set({ viewedFiles: next });
 
     // When marking a file as viewed, navigate to the next file
-    if (!wasViewed && filename === this.state.selectedFile) {
+    if (
+      !wasViewed &&
+      filename === this.state.selectedFile &&
+      this.state.fileLayoutMode === "single"
+    ) {
       this.navigateToFile("next");
     }
   };
@@ -656,6 +904,82 @@ export class PRReviewStore {
     this.set({ hideViewed: !this.state.hideViewed });
   };
 
+  toggleHideTestFiles = () => {
+    const hideTestFiles = !this.state.hideTestFiles;
+    setStoredHideTestFiles(hideTestFiles);
+    // If the currently selected file just became hidden, deselect it so the
+    // reviewer isn't left on a file that no longer exists in the tree.
+    const { selectedFile } = this.state;
+    this.set({ hideTestFiles });
+    if (hideTestFiles && selectedFile && isTestFile(selectedFile)) {
+      this.selectOverview();
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Comment Collapse Actions
+  // ---------------------------------------------------------------------------
+
+  /** Collapse or expand every comment thread at once, dropping per-thread overrides. */
+  setAllCommentsCollapsed = (collapsed: boolean) => {
+    setStoredCollapseAllComments(collapsed);
+    this.set({
+      allCommentsCollapsed: collapsed,
+      collapsedThreadOverrides: new Map(),
+    });
+  };
+
+  toggleAllCommentsCollapsed = () => {
+    this.setAllCommentsCollapsed(!this.state.allCommentsCollapsed);
+  };
+
+  /** Hide or show resolved threads in the diff. Drops focus if it was on a hidden comment. */
+  setHideResolvedComments = (hidden: boolean) => {
+    setStoredHideResolvedComments(hidden);
+    const { focusedCommentId, comments } = this.state;
+    const focused = focusedCommentId
+      ? comments.find((c) => c.id === focusedCommentId)
+      : undefined;
+    this.set({
+      hideResolvedComments: hidden,
+      focusedCommentId:
+        hidden && focused?.is_resolved ? null : focusedCommentId,
+    });
+  };
+
+  toggleHideResolvedComments = () => {
+    this.setHideResolvedComments(!this.state.hideResolvedComments);
+  };
+
+  /** Toggle a single thread, recording an override when it differs from the default. */
+  setThreadCollapsed = (
+    key: string,
+    collapsed: boolean,
+    isResolved = false
+  ) => {
+    const next = new Map(this.state.collapsedThreadOverrides);
+    const defaultCollapsed = this.state.allCommentsCollapsed || isResolved;
+    if (collapsed === defaultCollapsed) {
+      if (!next.has(key)) return;
+      next.delete(key);
+    } else {
+      if (next.get(key) === collapsed) return;
+      next.set(key, collapsed);
+    }
+    this.set({ collapsedThreadOverrides: next });
+  };
+
+  toggleThreadCollapsed = (key: string, isResolved = false) => {
+    this.setThreadCollapsed(
+      key,
+      !isThreadCollapsed(this.state, key, isResolved),
+      isResolved
+    );
+  };
+
+  isThreadCollapsed = (key: string, isResolved = false) =>
+    isThreadCollapsed(this.state, key, isResolved);
+
   // ---------------------------------------------------------------------------
   // Diff View Mode Actions
   // ---------------------------------------------------------------------------
@@ -670,6 +994,426 @@ export class PRReviewStore {
     const newMode = this.state.diffViewMode === "unified" ? "split" : "unified";
     this.setDiffViewMode(newMode);
   };
+
+  // ---------------------------------------------------------------------------
+  // Semantic Review Actions
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Load available providers and any cached review for this PR's head SHA.
+   * Called once on mount; no-op on repeat calls. When no providers exist
+   * (hosted deployment, no local agents) the UI hides the feature.
+   */
+  initSemanticReview = async () => {
+    if (this.state.semanticProviders !== null) return;
+    const { owner, repo, pr } = this.state;
+    const [providers, cached] = await Promise.all([
+      fetchSemanticProviders(),
+      fetchCachedSemanticReview(owner, repo, pr.number, pr.head.sha),
+    ]);
+    this.set({
+      semanticProviders: providers,
+      ...(cached
+        ? { semanticReview: cached, semanticStatus: "done" as const }
+        : {}),
+    });
+  };
+
+  startSemanticAnalysis = async (providerId: string) => {
+    if (this.state.semanticStatus === "running") return;
+    const { owner, repo, pr, files } = this.state;
+    this.set({
+      semanticStatus: "running",
+      semanticProgress: [],
+      semanticError: null,
+    });
+
+    try {
+      const jobId = await apiStartSemanticAnalysis(providerId, {
+        owner,
+        repo,
+        number: pr.number,
+        headSha: pr.head.sha,
+        title: pr.title,
+        body: pr.body ?? "",
+        files: files.map((f) => ({
+          filename: f.filename,
+          status: f.status,
+          additions: f.additions,
+          deletions: f.deletions,
+          patch: f.patch,
+        })),
+      });
+      this.semanticJobId = jobId;
+      this.semanticUnsubscribe = streamSemanticJob(jobId, {
+        onProgress: (message) => {
+          this.set({
+            semanticProgress: [...this.state.semanticProgress, message],
+          });
+        },
+        onDone: ({ review, warnings }) => {
+          this.semanticJobId = null;
+          this.semanticUnsubscribe = null;
+          this.set({
+            semanticStatus: "done",
+            semanticReview: review,
+            semanticWarnings: warnings ?? [],
+          });
+        },
+        onError: (error) => {
+          this.semanticJobId = null;
+          this.semanticUnsubscribe = null;
+          this.set({ semanticStatus: "error", semanticError: error });
+        },
+      });
+    } catch (err) {
+      this.set({
+        semanticStatus: "error",
+        semanticError: (err as Error).message,
+      });
+    }
+  };
+
+  cancelSemanticAnalysis = () => {
+    const jobId = this.semanticJobId;
+    this.semanticUnsubscribe?.();
+    this.semanticUnsubscribe = null;
+    this.semanticJobId = null;
+    if (jobId) void cancelSemanticJob(jobId);
+    // Keep any previous review; just stop the in-flight run.
+    this.set({
+      semanticStatus: this.state.semanticReview ? "done" : "idle",
+      semanticProgress: [],
+    });
+  };
+
+  /** Tear down any live SSE subscription (called when the PR page unmounts). */
+  disposeSemantic = () => {
+    this.semanticUnsubscribe?.();
+    this.semanticUnsubscribe = null;
+    this.semanticJobId = null;
+  };
+
+  // ---------------------------------------------------------------------------
+  // Diff Range ("changes since your last review")
+  // ---------------------------------------------------------------------------
+
+  /** Commit the viewer's latest submitted review was made against, if any. */
+  lastReviewedSha = (): string | null =>
+    findLastReviewedSha(this.state.reviews, this.state.currentUser);
+
+  /**
+   * Narrow the diff to commits after `startSha`. Passing null restores the
+   * full PR. Files outside the range disappear from the tree; the selected
+   * file falls back to the first in-range file when it drops out.
+   */
+  setDiffRange = async (
+    range: DiffRange | null,
+    fetchFiles?: (
+      startSha: string,
+      headSha: string
+    ) => Promise<PullRequestFile[] | null>
+  ): Promise<void> => {
+    const { pr, owner, repo, commits } = this.state;
+    const requestId = ++this.diffRangeRequestId;
+
+    if (!range) {
+      if (
+        !this.state.diffRange &&
+        !this.state.diffRangeError &&
+        !this.state.diffRangeLoading
+      )
+        return;
+      this.applyFiles(this.state.allFiles, null);
+      this.set({ diffRangeError: null, diffRangeLoading: false });
+      return;
+    }
+
+    if (
+      this.state.diffRange?.startSha === range.startSha &&
+      this.state.diffRange?.endSha === range.endSha
+    ) {
+      if (this.state.diffRangeLoading)
+        this.set({ diffRangeLoading: false, diffRangeError: null });
+      return;
+    }
+
+    const endSha = range.endSha ?? pr.head.sha;
+    if (!isRangeAvailable(commits, range.startSha, endSha)) {
+      this.set({
+        diffRangeError:
+          "Those commits are no longer in order on this pull request (the branch may have been force-pushed).",
+        diffRangeLoading: false,
+      });
+      return;
+    }
+
+    this.set({ diffRangeLoading: true, diffRangeError: null });
+    const load =
+      fetchFiles ??
+      ((start: string, head: string) =>
+        this.github.getCompareFiles(owner, repo, start, head));
+
+    let files: PullRequestFile[] | null;
+    try {
+      files = await load(range.startSha, endSha);
+    } catch (error) {
+      console.error("Failed to load changes since commit:", error);
+      files = null;
+    }
+
+    // A newer range request (or a reset) won the race; drop this result.
+    if (requestId !== this.diffRangeRequestId) return;
+
+    if (!files) {
+      this.set({
+        diffRangeLoading: false,
+        diffRangeError: "Couldn't load the changes since that commit.",
+      });
+      return;
+    }
+
+    this.applyFiles(sortFilesLikeTree(files), range);
+    this.set({ diffRangeLoading: false });
+  };
+
+  /** Narrow to everything pushed after the viewer's last submitted review. */
+  showChangesSinceLastReview = (): Promise<void> => {
+    const sha = this.lastReviewedSha();
+    if (!sha) return Promise.resolve();
+    return this.setDiffRange({ startSha: sha, source: "review" });
+  };
+
+  clearDiffRange = () => this.setDiffRange(null);
+
+  /**
+   * Swap the visible file set. Parsed diffs are keyed by filename, so they
+   * must be dropped: the same file has a different patch in a different range.
+   */
+  private applyFiles(files: PullRequestFile[], range: DiffRange | null) {
+    const { selectedFile, showOverview } = this.state;
+    const stillVisible =
+      selectedFile !== null && files.some((f) => f.filename === selectedFile);
+    // The semantic tree references files outside a narrowed range.
+    const viewMode = range ? "files" : this.state.viewMode;
+    this.set({
+      files,
+      diffRange: range,
+      viewMode,
+      loadedDiffs: {},
+      loadingFiles: new Set(),
+      expandedSkipBlocks: {},
+      expandingSkipBlocks: new Set(),
+      fullyExpandedFiles: new Set(),
+      navigableItems: {},
+      commentRangeLookup: {},
+      selectedFiles: new Set(),
+    });
+    if (!showOverview && !stillVisible) {
+      if (files.length > 0) this.selectFile(files[0].filename);
+      else this.selectOverview();
+    }
+  }
+
+  setViewMode = (mode: "files" | "semantic") => {
+    if (this.state.viewMode === mode) return;
+    if (mode === "semantic" && !this.state.semanticReview) return;
+    // The semantic tree spans the whole PR; it can't be narrowed to a range.
+    if (mode === "semantic" && this.state.diffRange) return;
+    this.set({ viewMode: mode });
+    // Entering semantic mode with no selection: open the first layer.
+    if (mode === "semantic" && !this.state.selectedLayerId) {
+      const keys = this.semanticLayerKeys();
+      if (keys.length > 0) this.selectSemanticLayer(keys[0]);
+    }
+  };
+
+  /** Ordered "cohortId/layerId" keys across the whole review. */
+  private semanticLayerKeys(): string[] {
+    const review = this.state.semanticReview;
+    if (!review) return [];
+    return review.cohorts.flatMap((c) =>
+      c.layers.map((l) => `${c.id}/${l.id}`)
+    );
+  }
+
+  getSemanticLayer = (
+    layerKey: string
+  ): { cohort: SemanticCohort; layer: SemanticLayer } | null => {
+    const review = this.state.semanticReview;
+    if (!review) return null;
+    const slash = layerKey.indexOf("/");
+    const cohort = review.cohorts.find(
+      (c) => c.id === layerKey.slice(0, slash)
+    );
+    const layer = cohort?.layers.find(
+      (l) => l.id === layerKey.slice(slash + 1)
+    );
+    return cohort && layer ? { cohort, layer } : null;
+  };
+
+  /**
+   * First layer (in cohort/layer order) whose ranges touch `filename`, or the
+   * currently selected layer when it already covers the file. Returns null
+   * outside semantic mode or when no layer covers the file, meaning "leave the
+   * current layer selection alone".
+   */
+  private semanticLayerKeyForFile = (filename: string): string | null => {
+    if (this.state.viewMode !== "semantic") return null;
+    const review = this.state.semanticReview;
+    if (!review) return null;
+    let first: string | null = null;
+    for (const cohort of review.cohorts) {
+      for (const layer of cohort.layers) {
+        if (!layer.ranges.some((r) => r.file === filename)) continue;
+        const key = `${cohort.id}/${layer.id}`;
+        if (key === this.state.selectedLayerId) return key;
+        first ??= key;
+      }
+    }
+    return first;
+  };
+
+  selectSemanticLayer = (layerKey: string) => {
+    const found = this.getSemanticLayer(layerKey);
+    if (!found) return;
+    this.set({ selectedLayerId: layerKey });
+    const range = found.layer.ranges[0];
+    if (range) this.jumpToSemanticRange(range, layerKey);
+  };
+
+  /**
+   * Open the range's file and focus its first line (diff auto-scrolls). When
+   * `layerKey` is given, that layer becomes the selected one first, so a file
+   * covered by several layers stays attributed to the layer the user clicked
+   * (selectFile keeps the current layer whenever it covers the file).
+   */
+  jumpToSemanticRange = (range: SemanticRange, layerKey?: string) => {
+    if (!this.state.files.some((f) => f.filename === range.file)) return;
+    if (
+      layerKey &&
+      layerKey !== this.state.selectedLayerId &&
+      this.getSemanticLayer(layerKey)
+    ) {
+      this.set({ selectedLayerId: layerKey });
+    }
+    this.selectFile(range.file);
+    this.set({
+      focusedLine: range.startLine,
+      focusedLineSide: range.side === "old" ? "old" : "new",
+    });
+  };
+
+  /**
+   * Prev/next file in semantic mode: step through the current layer's
+   * files in range order, then overflow into the adjacent layer.
+   */
+  navigateSemanticFile = (direction: "next" | "prev") => {
+    const { selectedLayerId, selectedFile, files } = this.state;
+    const found = selectedLayerId
+      ? this.getSemanticLayer(selectedLayerId)
+      : null;
+    if (!found) {
+      this.navigateSemanticLayer(direction);
+      return;
+    }
+
+    const entries = layerFilesInOrder(
+      found.layer,
+      new Set(files.map((f) => f.filename))
+    );
+    const idx = selectedFile
+      ? entries.findIndex((e) => e.file === selectedFile)
+      : -1;
+    const targetIdx =
+      direction === "next" ? (idx === -1 ? 0 : idx + 1) : idx - 1;
+
+    if (idx !== -1 || direction === "next") {
+      const target = entries[targetIdx];
+      if (target) {
+        this.jumpToSemanticRange(target.ranges[0], selectedLayerId!);
+        return;
+      }
+    }
+    // Past either end of the layer's files - move to the adjacent layer
+    this.navigateSemanticLayer(direction);
+  };
+
+  /** j/k in semantic mode: move between layers (wraps around). */
+  navigateSemanticLayer = (direction: "next" | "prev") => {
+    const keys = this.semanticLayerKeys();
+    if (keys.length === 0) return;
+    const idx = this.state.selectedLayerId
+      ? keys.indexOf(this.state.selectedLayerId)
+      : -1;
+    const next =
+      idx === -1
+        ? direction === "next"
+          ? 0
+          : keys.length - 1
+        : (idx + (direction === "next" ? 1 : -1) + keys.length) % keys.length;
+    this.selectSemanticLayer(keys[next]);
+  };
+
+  toggleLayerReviewed = (layerKey: string) => {
+    const next = new Set(this.state.reviewedLayers);
+    if (next.has(layerKey)) {
+      next.delete(layerKey);
+    } else {
+      next.add(layerKey);
+    }
+    try {
+      localStorage.setItem(
+        `${this.storageKey}-semantic-layers`,
+        JSON.stringify([...next])
+      );
+    } catch {}
+    this.set({ reviewedLayers: next });
+    this.syncViewedFromLayers(next);
+  };
+
+  /**
+   * A file whose every range sits inside reviewed layers is marked viewed in
+   * the normal file view. One-way: un-reviewing a layer never un-views a file.
+   */
+  private syncViewedFromLayers(reviewedLayers: Set<string>) {
+    const review = this.state.semanticReview;
+    if (!review) return;
+    const layersByFile = new Map<string, Set<string>>();
+    for (const cohort of review.cohorts) {
+      for (const layer of cohort.layers) {
+        const key = `${cohort.id}/${layer.id}`;
+        for (const range of layer.ranges) {
+          let set = layersByFile.get(range.file);
+          if (!set) {
+            set = new Set();
+            layersByFile.set(range.file, set);
+          }
+          set.add(key);
+        }
+      }
+    }
+    const viewed = new Set(this.state.viewedFiles);
+    let changed = false;
+    for (const [file, keys] of layersByFile) {
+      if (viewed.has(file)) continue;
+      let all = true;
+      for (const key of keys) {
+        if (!reviewedLayers.has(key)) {
+          all = false;
+          break;
+        }
+      }
+      if (all) {
+        viewed.add(file);
+        changed = true;
+      }
+    }
+    if (changed) {
+      this.persistViewedFiles(viewed);
+      this.set({ viewedFiles: viewed });
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Diff Loading Actions
@@ -719,12 +1463,35 @@ export class PRReviewStore {
       }
     }
 
+    // Seed the default context revealed around each gap, and the file's
+    // real length (sizes the end-of-file gap). Never overwrite lines the
+    // user has already expanded further.
+    let expandedSkipBlocks = this.state.expandedSkipBlocks;
+    if (diff.gapContext) {
+      for (const [idx, segments] of Object.entries(diff.gapContext)) {
+        const key = this.getSkipBlockKey(filename, Number(idx));
+        if (!expandedSkipBlocks[key]) {
+          if (expandedSkipBlocks === this.state.expandedSkipBlocks) {
+            expandedSkipBlocks = { ...expandedSkipBlocks };
+          }
+          expandedSkipBlocks[key] = segments;
+        }
+      }
+    }
+    const fileLineCounts =
+      diff.totalNewLines !== undefined &&
+      this.state.fileLineCounts[filename] !== diff.totalNewLines
+        ? { ...this.state.fileLineCounts, [filename]: diff.totalNewLines }
+        : this.state.fileLineCounts;
+
     this.set({
       loadedDiffs: { ...this.state.loadedDiffs, [filename]: diff },
       navigableItems: {
         ...this.state.navigableItems,
         [filename]: navigableItems,
       },
+      expandedSkipBlocks,
+      fileLineCounts,
     });
   };
 
@@ -734,6 +1501,13 @@ export class PRReviewStore {
 
   getSkipBlockKey = (filename: string, skipIndex: number): string => {
     return `${filename}:${skipIndex}`;
+  };
+
+  setFileLineCount = (filename: string, count: number) => {
+    if (this.state.fileLineCounts[filename] === count) return;
+    this.set({
+      fileLineCounts: { ...this.state.fileLineCounts, [filename]: count },
+    });
   };
 
   setSkipBlockExpanding = (key: string, expanding: boolean) => {
@@ -746,9 +1520,19 @@ export class PRReviewStore {
     this.set({ expandingSkipBlocks: next });
   };
 
-  setExpandedSkipBlock = (key: string, lines: DiffLine[]) => {
+  /** Reveal more of a skip block from one edge of the remaining gap. */
+  appendExpandedSkipBlock = (
+    key: string,
+    edge: "top" | "bottom",
+    lines: DiffLine[]
+  ) => {
+    const prev = this.state.expandedSkipBlocks[key] ?? { top: [], bottom: [] };
+    const next: ExpandedSkipBlock =
+      edge === "top"
+        ? { top: [...prev.top, ...lines], bottom: prev.bottom }
+        : { top: prev.top, bottom: [...lines, ...prev.bottom] };
     this.set({
-      expandedSkipBlocks: { ...this.state.expandedSkipBlocks, [key]: lines },
+      expandedSkipBlocks: { ...this.state.expandedSkipBlocks, [key]: next },
     });
   };
 
@@ -762,12 +1546,34 @@ export class PRReviewStore {
     return this.state.expandingSkipBlocks.has(key);
   };
 
-  getExpandedSkipBlockLines = (
-    filename: string,
-    skipIndex: number
-  ): DiffLine[] | null => {
-    const key = this.getSkipBlockKey(filename, skipIndex);
-    return this.state.expandedSkipBlocks[key] ?? null;
+  /** Mark a file as fully expanded (header expand-all button). */
+  setFileFullyExpanded = (filename: string) => {
+    if (this.state.fullyExpandedFiles.has(filename)) return;
+    const next = new Set(this.state.fullyExpandedFiles);
+    next.add(filename);
+    this.set({ fullyExpandedFiles: next });
+  };
+
+  /**
+   * Collapse a file's expanded gaps back to the default state: only the
+   * seeded context around each change remains visible.
+   */
+  collapseFileSkipBlocks = (filename: string) => {
+    const prefix = `${filename}:`;
+    const expandedSkipBlocks: Record<string, ExpandedSkipBlock> = {};
+    for (const [key, value] of Object.entries(this.state.expandedSkipBlocks)) {
+      if (!key.startsWith(prefix)) expandedSkipBlocks[key] = value;
+    }
+    const gapContext = this.state.loadedDiffs[filename]?.gapContext;
+    if (gapContext) {
+      for (const [idx, segments] of Object.entries(gapContext)) {
+        expandedSkipBlocks[this.getSkipBlockKey(filename, Number(idx))] =
+          segments;
+      }
+    }
+    const fullyExpandedFiles = new Set(this.state.fullyExpandedFiles);
+    fullyExpandedFiles.delete(filename);
+    this.set({ expandedSkipBlocks, fullyExpandedFiles });
   };
 
   // ---------------------------------------------------------------------------
@@ -833,9 +1639,9 @@ export class PRReviewStore {
     for (const hunk of diff.hunks) {
       if (hunk.type === "skip") {
         const key = `${selectedFile}:${skipIndex}`;
-        const expandedLines = expandedSkipBlocks[key];
-        if (expandedLines) {
-          allLines.push(...expandedLines);
+        const expanded = expandedSkipBlocks[key];
+        if (expanded) {
+          allLines.push(...expanded.top, ...expanded.bottom);
         }
         skipIndex++;
       } else if (hunk.type === "hunk") {
@@ -915,6 +1721,89 @@ export class PRReviewStore {
     }
   };
 
+  /**
+   * One-shot scroll alignment for the next focus-driven scroll. Change
+   * navigation sets "center" so the jumped-to line lands mid-viewport;
+   * regular line navigation leaves it "auto" (scroll only if needed).
+   */
+  private nextScrollAlign: "auto" | "center" = "auto";
+
+  consumeScrollAlign = (): "auto" | "center" => {
+    const align = this.nextScrollAlign;
+    this.nextScrollAlign = "auto";
+    return align;
+  };
+
+  /**
+   * Jump focus to the first line of the previous/next change block
+   * (contiguous run of added/removed lines) in the current file's diff.
+   */
+  navigateToChange = (direction: "prev" | "next") => {
+    const { selectedFile, loadedDiffs, focusedLine, focusedLineSide } =
+      this.state;
+    if (!selectedFile) return;
+    const diff = loadedDiffs[selectedFile];
+    if (!diff?.hunks) return;
+
+    type BlockStart = { lineNum: number; side: "old" | "new"; ord: number };
+    const blockStarts: BlockStart[] = [];
+    let focusedOrd = -1;
+    let ord = 0;
+    let inChange = false;
+
+    for (const hunk of diff.hunks) {
+      if (hunk.type !== "hunk") {
+        inChange = false;
+        continue;
+      }
+      for (const line of hunk.lines) {
+        const isChange = line.type === "insert" || line.type === "delete";
+        const side: "old" | "new" = line.type === "delete" ? "old" : "new";
+        const lineNum =
+          side === "old" ? line.oldLineNumber : line.newLineNumber;
+        if (isChange && !inChange && lineNum) {
+          blockStarts.push({ lineNum, side, ord });
+        }
+        inChange = isChange;
+        if (
+          focusedLine !== null &&
+          lineNum === focusedLine &&
+          (focusedLineSide ?? "new") === side
+        ) {
+          focusedOrd = ord;
+        }
+        ord++;
+      }
+    }
+    if (blockStarts.length === 0) return;
+
+    let target: BlockStart | undefined;
+    if (direction === "next") {
+      target =
+        focusedOrd === -1
+          ? blockStarts[0]
+          : blockStarts.find((b) => b.ord > focusedOrd);
+    } else {
+      target =
+        focusedOrd === -1
+          ? blockStarts[blockStarts.length - 1]
+          : [...blockStarts].reverse().find((b) => b.ord < focusedOrd);
+    }
+    if (!target) return;
+
+    this.nextScrollAlign = "center";
+    this.set({
+      suppressFocusHighlight: true,
+      focusedLine: target.lineNum,
+      focusedLineSide: target.side,
+      focusedSkipBlockIndex: null,
+      focusedCommentId: null,
+      focusedPendingCommentId: null,
+      selectionAnchor: null,
+      selectionAnchorSide: null,
+    });
+  };
+
   navigateLine = (
     direction: "up" | "down",
     withShift: boolean,
@@ -929,12 +1818,15 @@ export class PRReviewStore {
       loadedDiffs,
       expandedSkipBlocks,
       navigableItems: precomputedItems,
-      comments,
+      comments: allComments,
       pendingComments,
       focusedCommentId,
       focusedPendingCommentId,
       focusedSkipBlockIndex,
+      hideResolvedComments,
     } = this.state;
+    // Hidden (resolved) threads aren't rendered, so don't navigate into them.
+    const comments = visibleComments(allComments, hideResolvedComments);
 
     if (!selectedFile) return;
     const diff = loadedDiffs[selectedFile];
@@ -977,11 +1869,13 @@ export class PRReviewStore {
           const currentSkipIndex = skipIndex++;
           // Check if this skip block is expanded
           const key = `${selectedFile}:${currentSkipIndex}`;
-          const expandedLines = expandedSkipBlocks[key];
+          const expanded = expandedSkipBlocks[key];
+          const top = expanded?.top ?? [];
+          const bottom = expanded?.bottom ?? [];
+          const remaining = hunk.count - top.length - bottom.length;
 
-          if (expandedLines && expandedLines.length > 0) {
-            // Skip block is expanded - add its lines
-            for (const line of expandedLines) {
+          const pushLines = (lines: DiffLine[]) => {
+            for (const line of lines) {
               if (line.type === "delete" && line.oldLineNumber) {
                 navigableItems.push({
                   type: "line",
@@ -996,10 +1890,14 @@ export class PRReviewStore {
                 });
               }
             }
-          } else {
-            // Skip block is collapsed - add it as navigable
+          };
+
+          pushLines(top);
+          if (remaining > 0) {
+            // Part of the gap is still collapsed - keep it navigable
             navigableItems.push({ type: "skip", skipIndex: currentSkipIndex });
           }
+          pushLines(bottom);
         } else if (hunk.type === "hunk") {
           for (const line of hunk.lines) {
             if (line.type === "delete" && line.oldLineNumber) {
@@ -1242,16 +2140,18 @@ export class PRReviewStore {
       for (const hunk of diff.hunks) {
         if (hunk.type === "skip") {
           const key = `${selectedFile}:${skipIdx}`;
-          const expandedLines = expandedSkipBlocks[key];
-          if (expandedLines) {
-            allLines.push(...expandedLines);
-          } else {
-            // Mark where skip block would appear in pairs
+          const expanded = expandedSkipBlocks[key];
+          const top = expanded?.top ?? [];
+          const bottom = expanded?.bottom ?? [];
+          allLines.push(...top);
+          if (top.length + bottom.length < hunk.count) {
+            // Mark where the still-collapsed gap would appear in pairs
             skipBlockIndices.push({
               pairIdx: allLines.length, // Will be adjusted after pair conversion
               skipIndex: skipIdx,
             });
           }
+          allLines.push(...bottom);
           skipIdx++;
         } else if (hunk.type === "hunk") {
           allLines.push(...hunk.lines);
@@ -1534,12 +2434,56 @@ export class PRReviewStore {
     }
   };
 
-  startCommenting = (line: number, startLine?: number) => {
-    this.set({ commentingOnLine: { line, startLine } });
+  /**
+   * Whether GitHub will accept a review comment on this line: it must be
+   * part of a diff hunk on the given side. Lines revealed by expanding a gap
+   * are not commentable. Returns true when the file's diff isn't loaded yet.
+   */
+  isLineInDiff = (
+    filename: string,
+    line: number,
+    side: CommentSide = "RIGHT"
+  ): boolean => {
+    const diff = this.state.loadedDiffs[filename];
+    if (!diff) return true;
+    for (const hunk of diff.hunks) {
+      if (hunk.type !== "hunk") continue;
+      for (const l of hunk.lines) {
+        if (side === "LEFT") {
+          if (l.type !== "insert" && l.oldLineNumber === line) return true;
+        } else if (l.type !== "delete" && l.newLineNumber === line) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  startCommenting = (
+    line: number,
+    startLine?: number,
+    lineSide: "old" | "new" | null = "new"
+  ) => {
+    const side = toCommentSide(lineSide);
+    const { selectedFile } = this.state;
+    // In a narrowed range the old side is an intermediate commit, not the PR
+    // base, so LEFT line numbers would not match what GitHub expects.
+    if (side === "LEFT" && this.state.diffRange) return;
+    // GitHub rejects comments outside diff hunks (e.g. expanded context), so
+    // don't offer a form that can never be submitted.
+    if (
+      selectedFile &&
+      (!this.isLineInDiff(selectedFile, line, side) ||
+        (startLine !== undefined &&
+          !this.isLineInDiff(selectedFile, startLine, side)))
+    ) {
+      return;
+    }
+    this.set({ commentingOnLine: { line, startLine, side } });
   };
 
   startCommentingOnFocusedLine = () => {
-    const { focusedLine, selectionAnchor } = this.state;
+    const { focusedLine, selectionAnchor, focusedLineSide } = this.state;
     if (!focusedLine) return;
 
     const startLine = selectionAnchor
@@ -1549,16 +2493,38 @@ export class PRReviewStore {
       ? Math.max(focusedLine, selectionAnchor)
       : focusedLine;
 
-    this.set({
-      commentingOnLine: {
-        line: endLine,
-        startLine: startLine !== endLine ? startLine : undefined,
-      },
-    });
+    this.startCommenting(
+      endLine,
+      startLine !== endLine ? startLine : undefined,
+      focusedLineSide
+    );
   };
 
   cancelCommenting = () => {
     this.set({ commentingOnLine: null });
+  };
+
+  // ---------------------------------------------------------------------------
+  // Comment Drafts
+  // ---------------------------------------------------------------------------
+
+  // Unsubmitted editor text, keyed per form. Lives outside reactive state so
+  // keystrokes don't notify subscribers, and so text survives the form
+  // unmounting when the diff virtualizer scrolls it out of view.
+  private drafts = new Map<string, string>();
+
+  getDraft = (key: string): string | undefined => this.drafts.get(key);
+
+  setDraft = (key: string, text: string) => {
+    if (text) {
+      this.drafts.set(key, text);
+    } else {
+      this.drafts.delete(key);
+    }
+  };
+
+  clearDraft = (key: string) => {
+    this.drafts.delete(key);
   };
 
   enterGotoMode = () => {
@@ -1728,7 +2694,9 @@ export class PRReviewStore {
   };
 
   setComments = (comments: ReviewComment[]) => {
-    this.set({ comments });
+    this.set({
+      comments: enrichCommentsWithThreads(comments, this.state.reviewThreads),
+    });
     this.recomputeCommentRangeLookup();
   };
 
@@ -1872,8 +2840,21 @@ export class PRReviewStore {
   };
 
   addReply = (reply: ReviewComment) => {
+    // A fresh reply from REST has no thread info; inherit it from the parent
+    // so the thread's resolved state and resolve button stay consistent.
+    const parent = this.state.comments.find(
+      (c) => c.id === reply.in_reply_to_id
+    );
+    const enriched = parent
+      ? {
+          ...reply,
+          pull_request_review_thread_id: parent.pull_request_review_thread_id,
+          is_resolved: parent.is_resolved,
+          resolved_by: parent.resolved_by,
+        }
+      : reply;
     this.set({
-      comments: [...this.state.comments, reply],
+      comments: [...this.state.comments, enriched],
       replyingToCommentId: null,
     });
   };
@@ -1907,6 +2888,10 @@ export class PRReviewStore {
     this.set({ submittingReview: submitting });
   };
 
+  setReviewSubmitError = (error: string | null) => {
+    this.set({ reviewSubmitError: error });
+  };
+
   clearReviewState = () => {
     this.clearPendingState();
     this.set({
@@ -1915,6 +2900,7 @@ export class PRReviewStore {
       reviewBody: "",
       showReviewPanel: false,
       submittingReview: false,
+      reviewSubmitError: null,
     });
   };
 
@@ -2162,6 +3148,10 @@ export class PRReviewStore {
         commits: commitsData,
         timeline: timelineData,
         reviewThreads: reviewThreadsResult.threads,
+        comments: enrichCommentsWithThreads(
+          this.state.comments,
+          reviewThreadsResult.threads
+        ),
         viewerPermission:
           reviewThreadsResult.viewerPermission ?? this.state.viewerPermission,
         viewerCanMergeAsAdmin: reviewThreadsResult.viewerCanMergeAsAdmin,
@@ -2555,7 +3545,10 @@ export class PRReviewStore {
   };
 
   setReviewThreads = (threads: ReviewThread[]) => {
-    this.set({ reviewThreads: threads });
+    this.set({
+      reviewThreads: threads,
+      comments: enrichCommentsWithThreads(this.state.comments, threads),
+    });
   };
 
   updateReviewThread = (
@@ -2740,7 +3733,10 @@ export { useCommentCountsByFile } from "./useCommentCountsByFile";
 export { useCurrentFile } from "./useCurrentFile";
 export { useCurrentDiff } from "./useCurrentDiff";
 export { useIsCurrentFileLoading } from "./useIsCurrentFileLoading";
-export { useCurrentFileComments } from "./useCurrentFileComments";
+export {
+  useCurrentFileComments,
+  useCurrentFileResolvedCount,
+} from "./useCurrentFileComments";
 export { useCurrentFilePendingComments } from "./useCurrentFilePendingComments";
 export { useSelectionRange } from "./useSelectionRange";
 export { useIsLineFocused } from "./useIsLineFocused";
@@ -2760,5 +3756,9 @@ export { usePendingReviewLoader } from "./usePendingReviewLoader";
 export { useThreadActions } from "./useThreadActions";
 export { useCommentActions } from "./useCommentActions";
 export { useReviewActions } from "./useReviewActions";
-export { useSkipBlockExpansion } from "./useSkipBlockExpansion";
+export {
+  useSkipBlockExpansion,
+  SKIP_EXPAND_STEP,
+  type ExpandDirection,
+} from "./useSkipBlockExpansion";
 export { useFileCopyActions } from "./useFileCopyActions";

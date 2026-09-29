@@ -3,17 +3,11 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ChevronRight,
   ChevronDown,
-  File,
-  FileCode,
-  FilePlus,
-  FileMinus,
-  FileEdit,
   Check,
-  MessageSquare,
-  Copy,
   Eye,
   EyeOff,
-  GitBranch,
+  Folder,
+  FolderOpen,
   FolderCheck,
 } from "lucide-react";
 import { cn } from "../cn";
@@ -21,9 +15,9 @@ import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "../ui/context-menu";
+import { DiffStat, FileRow, FILE_TREE_ROW_HEIGHT } from "./file-tree-row";
 import type { PullRequestFile } from "@/api/types";
 
 interface FileTreeProps {
@@ -54,6 +48,9 @@ interface TreeNode {
   type: "file" | "folder";
   children?: TreeNode[];
   file?: PullRequestFile;
+  /** Added/deleted line counts; for folders, summed over all descendants. */
+  additions: number;
+  deletions: number;
 }
 
 // Flattened item for virtualization
@@ -83,8 +80,14 @@ function buildTree(files: PullRequestFile[]): TreeNode[] {
           type: isLast ? "file" : "folder",
           children: isLast ? undefined : {},
           file: isLast ? file : undefined,
+          additions: 0,
+          deletions: 0,
         } as TreeNode & { children: Record<string, TreeNode> };
       }
+
+      // Roll the file's stats up into every ancestor folder (and itself)
+      current[part].additions += file.additions ?? 0;
+      current[part].deletions += file.deletions ?? 0;
 
       if (!isLast) {
         current = (
@@ -109,22 +112,6 @@ function buildTree(files: PullRequestFile[]): TreeNode[] {
   }
 
   return convertToArray(root);
-}
-
-function getFileIcon(file: PullRequestFile) {
-  switch (file.status) {
-    case "added":
-      return <FilePlus className="w-4 h-4 text-green-500" />;
-    case "removed":
-      return <FileMinus className="w-4 h-4 text-red-500" />;
-    case "modified":
-    case "changed":
-      return <FileEdit className="w-4 h-4 text-yellow-500" />;
-    case "renamed":
-      return <FileCode className="w-4 h-4 text-blue-500" />;
-    default:
-      return <File className="w-4 h-4 text-muted-foreground" />;
-  }
 }
 
 // Helper to collect all file paths under a folder
@@ -182,8 +169,6 @@ function flattenTree(
 
   return items;
 }
-
-const ROW_HEIGHT = 28; // Height of each row in pixels
 
 export function FileTree({
   files,
@@ -250,7 +235,7 @@ export function FileTree({
   const virtualizer = useVirtualizer({
     count: flatItems.length,
     getScrollElement: () => parentRef.current,
-    estimateSize: () => ROW_HEIGHT,
+    estimateSize: () => FILE_TREE_ROW_HEIGHT,
     overscan: 20,
   });
 
@@ -343,11 +328,20 @@ export function FileTree({
                       style={{ paddingLeft: `${depth * 12 + 8}px` }}
                     >
                       {isExpanded ? (
-                        <ChevronDown className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <ChevronDown className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                       ) : (
-                        <ChevronRight className="w-4 h-4 text-muted-foreground shrink-0" />
+                        <ChevronRight className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                      )}
+                      {isExpanded ? (
+                        <FolderOpen className="w-4 h-4 shrink-0 text-sky-400 fill-sky-400/25" />
+                      ) : (
+                        <Folder className="w-4 h-4 shrink-0 text-sky-400 fill-sky-400/25" />
                       )}
                       <span className="truncate flex-1">{node.name}</span>
+                      <DiffStat
+                        additions={node.additions}
+                        deletions={node.deletions}
+                      />
                       {allViewed && (
                         <Check className="w-3 h-3 text-green-500 shrink-0" />
                       )}
@@ -386,10 +380,6 @@ export function FileTree({
 
           // File item
           const isSelected = selectedFile === node.path;
-          const isMultiSelected = selectedFiles.has(node.path);
-          const isViewed = viewedFiles.has(node.path);
-          const commentCount = commentCounts[node.path] || 0;
-          const pendingCount = pendingCommentCounts[node.path] || 0;
           const showMultiSelectMenu =
             selectedFiles.size > 1 && selectedFiles.has(node.path);
 
@@ -405,83 +395,31 @@ export function FileTree({
                 transform: `translateY(${virtualRow.start}px)`,
               }}
             >
-              <ContextMenu>
-                <ContextMenuTrigger asChild>
-                  <button
-                    onClick={(e) => handleItemClick(item, e)}
-                    className={cn(
-                      "w-full flex items-center gap-2 px-2 text-sm transition-colors",
-                      "text-left hover:bg-muted/50 h-full",
-                      isSelected && "bg-muted",
-                      isMultiSelected && !isSelected && "bg-blue-500/20",
-                      isViewed && !isMultiSelected && "opacity-60"
-                    )}
-                    style={{ paddingLeft: `${depth * 12 + 8}px` }}
-                  >
-                    {node.file && getFileIcon(node.file)}
-                    <span className="truncate flex-1">{node.name}</span>
-                    <div className="flex items-center gap-1 shrink-0">
-                      {pendingCount > 0 && (
-                        <span className="flex items-center gap-0.5 text-xs text-yellow-500 bg-yellow-500/20 px-1.5 py-0.5 rounded">
-                          {pendingCount}
-                        </span>
-                      )}
-                      {commentCount > 0 && (
-                        <span className="flex items-center gap-0.5 text-xs text-muted-foreground">
-                          <MessageSquare className="w-3 h-3" />
-                          {commentCount}
-                        </span>
-                      )}
-                      {isViewed && <Check className="w-3 h-3 text-green-500" />}
-                    </div>
-                  </button>
-                </ContextMenuTrigger>
-                <ContextMenuContent>
-                  {showMultiSelectMenu ? (
+              <FileRow
+                file={node.file!}
+                name={node.name}
+                depth={depth}
+                isSelected={isSelected}
+                isMultiSelected={selectedFiles.has(node.path)}
+                isViewed={viewedFiles.has(node.path)}
+                commentCount={commentCounts[node.path] || 0}
+                pendingCount={pendingCommentCounts[node.path] || 0}
+                onClick={(e) => handleItemClick(item, e)}
+                onToggleViewed={() => onToggleViewed(node.path)}
+                onCopyDiff={() => onCopyDiff(node.path)}
+                onCopyFile={() => onCopyFile(node.path)}
+                onCopyMainVersion={() => onCopyMainVersion(node.path)}
+                contextMenuOverride={
+                  showMultiSelectMenu ? (
                     <ContextMenuItem
                       onClick={() => onToggleViewedMultiple([...selectedFiles])}
                     >
                       <Eye className="w-4 h-4 mr-2" />
                       Toggle viewed ({selectedFiles.size} files)
                     </ContextMenuItem>
-                  ) : (
-                    <>
-                      <ContextMenuItem
-                        onClick={() => onToggleViewed(node.path)}
-                      >
-                        {isViewed ? (
-                          <>
-                            <EyeOff className="w-4 h-4 mr-2" />
-                            Mark as unviewed
-                          </>
-                        ) : (
-                          <>
-                            <Eye className="w-4 h-4 mr-2" />
-                            Mark as viewed
-                          </>
-                        )}
-                      </ContextMenuItem>
-                      <ContextMenuSeparator />
-                      <ContextMenuItem onClick={() => onCopyDiff(node.path)}>
-                        <Copy className="w-4 h-4 mr-2" />
-                        Copy diff
-                      </ContextMenuItem>
-                      <ContextMenuItem onClick={() => onCopyFile(node.path)}>
-                        <FileCode className="w-4 h-4 mr-2" />
-                        Copy file (PR version)
-                      </ContextMenuItem>
-                      {node.file?.status !== "added" && (
-                        <ContextMenuItem
-                          onClick={() => onCopyMainVersion(node.path)}
-                        >
-                          <GitBranch className="w-4 h-4 mr-2" />
-                          Copy file (base version)
-                        </ContextMenuItem>
-                      )}
-                    </>
-                  )}
-                </ContextMenuContent>
-              </ContextMenu>
+                  ) : undefined
+                }
+              />
             </div>
           );
         })}

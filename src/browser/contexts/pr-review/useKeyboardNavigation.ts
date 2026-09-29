@@ -15,17 +15,13 @@ export function useKeyboardNavigation() {
         return;
       }
 
-      // Handle Ctrl/Cmd+Arrow for jumping by 10 lines
+      // Handle Ctrl/Cmd+Arrow for jumping to the prev/next change
       if (
         (e.ctrlKey || e.metaKey) &&
         (e.key === "ArrowDown" || e.key === "ArrowUp")
       ) {
         e.preventDefault();
-        store.navigateLine(
-          e.key === "ArrowDown" ? "down" : "up",
-          e.shiftKey,
-          10
-        );
+        store.navigateToChange(e.key === "ArrowDown" ? "next" : "prev");
         return;
       }
 
@@ -106,19 +102,29 @@ export function useKeyboardNavigation() {
           e.preventDefault();
           // Use startTransition to allow React to interrupt rendering during rapid navigation
           startTransition(() => {
-            store.navigateToPrevUnviewedFile();
+            if (state.viewMode === "semantic") {
+              store.navigateSemanticFile("prev");
+            } else {
+              store.navigateToPrevUnviewedFile();
+            }
           });
           break;
         case "k":
           e.preventDefault();
           // Use startTransition to allow React to interrupt rendering during rapid navigation
           startTransition(() => {
-            store.navigateToNextUnviewedFile();
+            if (state.viewMode === "semantic") {
+              store.navigateSemanticFile("next");
+            } else {
+              store.navigateToNextUnviewedFile();
+            }
           });
           break;
         case "v":
           e.preventDefault();
-          if (state.selectedFiles.size > 0) {
+          if (state.viewMode === "semantic" && state.selectedLayerId) {
+            store.toggleLayerReviewed(state.selectedLayerId);
+          } else if (state.selectedFiles.size > 0) {
             store.toggleViewedMultiple([...state.selectedFiles]);
           } else if (state.selectedFile) {
             store.toggleViewed(state.selectedFile);

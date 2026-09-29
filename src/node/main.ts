@@ -30,9 +30,11 @@ app.get("*", (c) => {
 serve(
   {
     fetch: app.fetch,
-    port: 3002,
+    port: Number(process.env.PORT) || 3002,
   },
   (address) => {
-    console.log(`🚀 pulldash running at http://localhost:${address.port}`);
+    console.log(
+      `🚀 pulldash running at http://pulldash.localhost:${address.port}`
+    );
   }
 );

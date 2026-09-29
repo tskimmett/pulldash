@@ -1,7 +1,16 @@
 import { useCallback } from "react";
 import { useGitHub } from "@/browser/contexts/github";
 import { diffService } from "@/browser/lib/diff";
-import { usePRReviewStore, usePRReviewSelector, type DiffLine } from ".";
+import {
+  usePRReviewStore,
+  usePRReviewSelector,
+  type ExpandedSkipBlock,
+} from ".";
+
+/** How many lines a single up/down expansion reveals (matches GitHub). */
+export const SKIP_EXPAND_STEP = 20;
+
+export type ExpandDirection = "up" | "down" | "all";
 
 export function useSkipBlockExpansion() {
   const store = usePRReviewStore();
@@ -13,14 +22,23 @@ export function useSkipBlockExpansion() {
   const expandedSkipBlocks = usePRReviewSelector((s) => s.expandedSkipBlocks);
   const expandingSkipBlocks = usePRReviewSelector((s) => s.expandingSkipBlocks);
 
+  /**
+   * Reveal part (or all) of a skip block's remaining gap, GitHub-style.
+   * `startLine`/`count` describe the still-collapsed portion of the gap.
+   * "down" extends the hunk above downward, "up" extends the hunk below
+   * upward, "all" reveals the whole remaining gap.
+   */
   const expandSkipBlock = useCallback(
-    async (skipIndex: number, startLine: number, count: number) => {
-      if (!selectedFile) return;
+    async (
+      skipIndex: number,
+      startLine: number,
+      count: number,
+      direction: ExpandDirection = "all"
+    ) => {
+      if (!selectedFile || count <= 0) return;
 
       const key = store.getSkipBlockKey(selectedFile, skipIndex);
-
-      // Already expanded or expanding
-      if (expandedSkipBlocks[key] || expandingSkipBlocks.has(key)) return;
+      if (expandingSkipBlocks.has(key)) return;
 
       store.setSkipBlockExpanding(key, true);
 
@@ -38,17 +56,40 @@ export function useSkipBlockExpansion() {
           return;
         }
 
+        // Record the file's true length; this also sizes the end-of-file
+        // gap, whose count is passed as Infinity until known.
+        const split = content.split("\n");
+        const totalLines =
+          split[split.length - 1] === "" ? split.length - 1 : split.length;
+        store.setFileLineCount(selectedFile, totalLines);
+
+        // Clamp the gap to the end of the file
+        const remCount = Math.min(count, totalLines - startLine + 1);
+        if (remCount <= 0) return;
+
+        const n =
+          direction === "all" ? remCount : Math.min(SKIP_EXPAND_STEP, remCount);
+        // A partial expansion that would leave a sliver smaller than one
+        // step just reveals everything - same as GitHub.
+        const fetchAll = direction === "all" || n >= remCount;
+        const fetchCount = fetchAll ? remCount : n;
+        const fetchStart =
+          direction === "up" && !fetchAll
+            ? startLine + remCount - n
+            : startLine;
+        const edge = direction === "up" && !fetchAll ? "bottom" : "top";
+
         // Get highlighted lines via WebWorker
         const expandedLines = await diffService.highlightLines(
           content,
           selectedFile,
-          startLine,
-          count
+          fetchStart,
+          fetchCount
         );
 
-        store.setExpandedSkipBlock(key, expandedLines);
+        store.appendExpandedSkipBlock(key, edge, expandedLines);
 
-        // Focus the first expanded line so user can continue with keyboard
+        // Focus the first revealed line so the user can continue with keyboard
         if (expandedLines.length > 0) {
           const firstLine = expandedLines[0];
           const firstLineNum =
@@ -76,7 +117,7 @@ export function useSkipBlockExpansion() {
 
   // Create a getExpandedLines function that uses the subscribed state directly
   const getExpandedLines = useCallback(
-    (skipIndex: number): DiffLine[] | null => {
+    (skipIndex: number): ExpandedSkipBlock | null => {
       if (!selectedFile) return null;
       const key = `${selectedFile}:${skipIndex}`;
       return expandedSkipBlocks[key] ?? null;
