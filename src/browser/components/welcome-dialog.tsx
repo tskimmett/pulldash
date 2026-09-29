@@ -180,7 +180,7 @@ const reviewFiles = [
 
 function PATAuthSection() {
   const { loginWithPAT } = useAuth();
-  const [showPATInput, setShowPATInput] = useState(false);
+  const [showPATInput, setShowPATInput] = useState(true);
   const [patToken, setPatToken] = useState("");
   const [patError, setPatError] = useState<string | null>(null);
   const [isValidatingPAT, setIsValidatingPAT] = useState(false);
@@ -1097,8 +1097,8 @@ export function WelcomeDialog() {
       >
         <DialogTitle className="sr-only">Welcome to Pulldash</DialogTitle>
         <DialogDescription className="sr-only">
-          Sign in with GitHub to access your pull requests, or browse sample PRs
-          anonymously.
+          Sign in with a personal access token to access your pull requests, or
+          browse sample PRs anonymously.
         </DialogDescription>
         <div className="flex">
           {/* Left Side - Sign In */}
@@ -1204,24 +1204,7 @@ export function WelcomeDialog() {
             ) : (
               /* Sign In State */
               <div className="space-y-4">
-                <Button
-                  onClick={startDeviceAuth}
-                  disabled={isPending}
-                  className="w-full h-10 gap-2"
-                >
-                  {isPending ? (
-                    <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Connecting...
-                    </>
-                  ) : (
-                    <>
-                      <Github className="w-4 h-4" />
-                      Sign in with GitHub
-                    </>
-                  )}
-                </Button>
-
+                {/* GitHub OAuth device flow is hidden for now; PAT only. */}
                 <PATAuthSection />
 
                 <p className="text-xs text-center text-muted-foreground">
@@ -1331,7 +1314,7 @@ export function UserMenuButton({ className }: { className?: string }) {
             "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/30",
             className
           )}
-          title="Sign in with GitHub"
+          title="Sign in"
         >
           <Eye className="w-3 h-3" />
           <span>Read-only</span>

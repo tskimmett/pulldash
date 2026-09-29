@@ -964,15 +964,15 @@ export function Home() {
                   Sign in to view your PRs
                 </p>
                 <p className="text-sm text-muted-foreground/70 mt-1 max-w-md">
-                  Authenticate with GitHub to see your review requests, authored
-                  PRs, and more
+                  Sign in with a personal access token to see your review
+                  requests, authored PRs, and more
                 </p>
                 <button
                   onClick={() => setShowWelcomeDialog(true)}
                   className="flex items-center gap-2 px-4 py-2 mt-4 rounded-lg bg-foreground text-background font-medium text-sm hover:bg-foreground/90 transition-colors"
                 >
                   <Github className="w-4 h-4" />
-                  Sign in with GitHub
+                  Sign in
                 </button>
               </div>
             ) : loadingPrs ||

@@ -728,7 +728,7 @@ const FilePanel = memo(function FilePanel({
 
 const ReadOnlyBanner = memo(function ReadOnlyBanner() {
   const canWrite = useCanWrite();
-  const { startDeviceAuth } = useAuth();
+  const { setShowWelcomeDialog } = useAuth();
 
   if (canWrite) return null;
 
@@ -744,10 +744,10 @@ const ReadOnlyBanner = memo(function ReadOnlyBanner() {
         </span>
       </div>
       <button
-        onClick={startDeviceAuth}
+        onClick={() => setShowWelcomeDialog(true)}
         className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md bg-amber-500/20 text-amber-200 hover:bg-amber-500/30 transition-colors"
       >
-        Sign in with GitHub
+        Sign in
       </button>
     </div>
   );
@@ -3127,7 +3127,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
   const store = usePRReviewStore();
   const canWrite = useCanWrite();
   const currentUser = useCurrentUser();
-  const { startDeviceAuth } = useAuth();
+  const { setShowWelcomeDialog } = useAuth();
   const { addPendingComment } = useCommentActions();
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
   const [text, setText, clearText] = useCommentDraft(
@@ -3201,10 +3201,10 @@ const InlineCommentForm = memo(function InlineCommentForm({
             Sign in to leave comments
           </span>
           <button
-            onClick={startDeviceAuth}
+            onClick={() => setShowWelcomeDialog(true)}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors"
           >
-            Sign in with GitHub
+            Sign in
           </button>
         </div>
       </div>
