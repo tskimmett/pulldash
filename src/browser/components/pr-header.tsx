@@ -105,6 +105,9 @@ export const PRHeader = memo(function PRHeader({
         >
           <ExternalLink className="w-4 h-4" />
         </a>
+        <CopyUrlButton
+          url={`https://github.com/${owner}/${repo}/pull/${pr.number}`}
+        />
         {/* Author */}
         <UserHoverCard login={pr.user.login}>
           <div className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors shrink-0">
@@ -142,6 +145,30 @@ export const PRHeader = memo(function PRHeader({
 // ============================================================================
 // Branch Badge with Copy Button
 // ============================================================================
+
+function CopyUrlButton({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(() => {
+    navigator.clipboard.writeText(url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }, [url]);
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="text-muted-foreground hover:text-blue-400 transition-colors shrink-0"
+      title="Copy PR link"
+    >
+      {copied ? (
+        <Check className="w-4 h-4 text-green-500" />
+      ) : (
+        <Copy className="w-4 h-4" />
+      )}
+    </button>
+  );
+}
 
 function BranchBadge({ branch }: { branch: string }) {
   const [copied, setCopied] = useState(false);
