@@ -196,7 +196,7 @@ interface PRReviewState {
   allFiles: PullRequestFile[];
   /**
    * "Changes since" narrowing: when set, `files` and every diff cover only
-   * commits after `diffRange.startSha` up to the PR head.
+   * commits after `diffRange.startSha` through `diffRange.endSha` (or PR head).
    */
   diffRange: DiffRange | null;
   diffRangeLoading: boolean;
@@ -453,6 +453,7 @@ export class PRReviewStore {
   // Semantic analysis job tracking (SSE subscription lifecycle)
   private semanticJobId: string | null = null;
   private semanticUnsubscribe: (() => void) | null = null;
+  private diffRangeRequestId = 0;
 
   constructor(
     github: GitHubStore,
@@ -1114,20 +1115,34 @@ export class PRReviewStore {
     ) => Promise<PullRequestFile[] | null>
   ): Promise<void> => {
     const { pr, owner, repo, commits } = this.state;
+    const requestId = ++this.diffRangeRequestId;
 
     if (!range) {
-      if (!this.state.diffRange && !this.state.diffRangeError) return;
+      if (
+        !this.state.diffRange &&
+        !this.state.diffRangeError &&
+        !this.state.diffRangeLoading
+      )
+        return;
       this.applyFiles(this.state.allFiles, null);
       this.set({ diffRangeError: null, diffRangeLoading: false });
       return;
     }
 
-    if (this.state.diffRange?.startSha === range.startSha) return;
+    if (
+      this.state.diffRange?.startSha === range.startSha &&
+      this.state.diffRange?.endSha === range.endSha
+    ) {
+      if (this.state.diffRangeLoading)
+        this.set({ diffRangeLoading: false, diffRangeError: null });
+      return;
+    }
 
-    if (!isRangeAvailable(commits, range.startSha, pr.head.sha)) {
+    const endSha = range.endSha ?? pr.head.sha;
+    if (!isRangeAvailable(commits, range.startSha, endSha)) {
       this.set({
         diffRangeError:
-          "That commit is no longer part of this pull request (the branch was force-pushed).",
+          "Those commits are no longer in order on this pull request (the branch may have been force-pushed).",
         diffRangeLoading: false,
       });
       return;
@@ -1141,14 +1156,14 @@ export class PRReviewStore {
 
     let files: PullRequestFile[] | null;
     try {
-      files = await load(range.startSha, pr.head.sha);
+      files = await load(range.startSha, endSha);
     } catch (error) {
       console.error("Failed to load changes since commit:", error);
       files = null;
     }
 
     // A newer range request (or a reset) won the race; drop this result.
-    if (!this.state.diffRangeLoading) return;
+    if (requestId !== this.diffRangeRequestId) return;
 
     if (!files) {
       this.set({

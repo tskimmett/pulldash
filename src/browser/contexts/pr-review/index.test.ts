@@ -1166,6 +1166,53 @@ test("setDiffRange rejects a start commit that is gone or already head", async (
 
   await store.setDiffRange({ startSha: "abc123", source: "manual" });
   expect(store.getSnapshot().diffRange).toBeNull();
+
+  await store.setDiffRange({ startSha: "c2", endSha: "c1", source: "manual" });
+  expect(store.getSnapshot().diffRange).toBeNull();
+});
+
+test("setDiffRange compares through a selected end commit and can extend to head", async () => {
+  const store = createRangeStore();
+  await store.loadPRData();
+  const requested: string[] = [];
+  const fetchFiles = async (start: string, end: string) => {
+    requested.push(`${start}...${end}`);
+    return [createMockFile("src/index.ts")];
+  };
+
+  await store.setDiffRange(
+    { startSha: "c1", endSha: "c2", source: "manual" },
+    fetchFiles
+  );
+  expect(store.getSnapshot().diffRange?.endSha).toBe("c2");
+  await store.setDiffRange({ startSha: "c1", source: "manual" }, fetchFiles);
+  expect(requested).toEqual(["c1...c2", "c1...abc123"]);
+});
+
+test("setDiffRange keeps the latest range when compare requests finish out of order", async () => {
+  const store = createRangeStore();
+  await store.loadPRData();
+  let finishFirst: (files: PullRequestFile[]) => void = () => {};
+  const first = store.setDiffRange(
+    { startSha: "c1", endSha: "c2", source: "manual" },
+    () =>
+      new Promise<PullRequestFile[]>((resolve) => {
+        finishFirst = resolve;
+      })
+  );
+  await store.setDiffRange({ startSha: "c1", source: "manual" }, async () => [
+    createMockFile("src/utils.ts"),
+  ]);
+  finishFirst([createMockFile("README.md")]);
+  await first;
+
+  expect(store.getSnapshot().diffRange).toEqual({
+    startSha: "c1",
+    source: "manual",
+  });
+  expect(store.getSnapshot().files.map((file) => file.filename)).toEqual([
+    "src/utils.ts",
+  ]);
 });
 
 test("setDiffRange surfaces a failed compare fetch and blocks LEFT comments while active", async () => {

@@ -163,6 +163,7 @@ export function useDiffLoader() {
   const diffRange = usePRReviewSelector((s) => s.diffRange);
   // In a narrowed range the "old" side is the start commit, not the PR base.
   const baseRef = diffRange?.startSha ?? pr.base.sha;
+  const headRef = diffRange?.endSha ?? pr.head.sha;
 
   useEffect(() => {
     if (!selectedFile) return;
@@ -203,7 +204,7 @@ export function useDiffLoader() {
       github.getFileContent(owner, repo, path, ref);
 
     // Fetch immediately with full file content for better highlighting
-    fetchParsedDiff(file, undefined, getFileContent, baseRef, pr.head.sha)
+    fetchParsedDiff(file, undefined, getFileContent, baseRef, headRef)
       .then((diff) => {
         if (store.getSnapshot().selectedFile === currentFile) {
           store.setLoadedDiff(currentFile, diff);
@@ -232,7 +233,7 @@ export function useDiffLoader() {
                 undefined,
                 getFileContent,
                 baseRef,
-                pr.head.sha
+                headRef
               )
                 .then((pdiff) => store.setLoadedDiff(pfile.filename, pdiff))
                 .catch(() => {})
@@ -264,6 +265,6 @@ export function useDiffLoader() {
     owner,
     repo,
     baseRef,
-    pr.head.sha,
+    headRef,
   ]);
 }

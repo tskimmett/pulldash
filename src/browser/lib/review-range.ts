@@ -17,6 +17,8 @@ interface CommitLike {
 /** A start commit for a narrowed diff, plus how it was chosen. */
 export interface DiffRange {
   startSha: string;
+  /** Last commit included in the diff. Omitted for ranges through the PR head. */
+  endSha?: string;
   /** "review" = the viewer's last submitted review; "manual" = commit picker */
   source: "review" | "manual";
 }
@@ -59,21 +61,30 @@ export function commitsAfter<T extends CommitLike>(
   return commits.slice(idx + 1);
 }
 
+/** Commits after the start, through the end (inclusive), in PR order. */
+export function commitsInRange<T extends CommitLike>(
+  commits: T[],
+  startSha: string,
+  endSha: string
+): T[] | null {
+  const start = commits.findIndex((c) => c.sha === startSha);
+  const end = commits.findIndex((c) => c.sha === endSha);
+  if (start === -1 || end <= start) return null;
+  return commits.slice(start + 1, end + 1);
+}
+
 /**
- * Whether a range starting at `startSha` can still be shown: the start
- * commit must exist in the PR and must not already be the head.
+ * Whether both commits still belong to the PR in chronological order.
  */
 export function isRangeAvailable(
   commits: CommitLike[],
   startSha: string,
-  headSha: string
+  endSha: string
 ): boolean {
-  if (startSha === headSha) return false;
-  const after = commitsAfter(commits, startSha);
-  return after !== null && after.length > 0;
+  return commitsInRange(commits, startSha, endSha) !== null;
 }
 
 /** Cache key prefix for diffs parsed against a narrowed range. */
 export function rangeCacheKey(range: DiffRange | null, sha: string): string {
-  return range ? `${range.startSha}:${sha}` : sha;
+  return range ? `${range.startSha}:${range.endSha ?? "head"}:${sha}` : sha;
 }
