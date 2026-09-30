@@ -2,6 +2,7 @@ import React, {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -1898,6 +1899,12 @@ const DiffViewer = memo(function DiffViewer({
     // Add padding at the end so we can scroll the last line to center
     paddingEnd: 300,
   });
+
+  // DiffViewer stays mounted across files, so reset scroll before paint.
+  // A focused line in the new file still scrolls into view afterwards (RAF).
+  useLayoutEffect(() => {
+    parentRef.current?.scrollTo({ top: 0, left: 0 });
+  }, [selectedFile]);
 
   useEffect(() => {
     if (findOpen && activeFindRow !== undefined) {
