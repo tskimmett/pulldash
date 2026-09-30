@@ -1058,7 +1058,7 @@ export function WelcomeDialog() {
     (pr: (typeof FEATURED_PRS)[0]) => {
       enableAnonymousMode();
       setShowWelcomeDialog(false);
-      openPRReviewTab(pr.owner, pr.repo, pr.number);
+      openPRReviewTab(pr.owner, pr.repo, pr.number, pr.title);
     },
     [enableAnonymousMode, setShowWelcomeDialog, openPRReviewTab]
   );

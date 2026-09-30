@@ -459,8 +459,8 @@ export function Home() {
   }, []);
 
   const handleOpenPR = useCallback(
-    (owner: string, repo: string, number: number) => {
-      openPRReviewTab(owner, repo, number);
+    (owner: string, repo: string, number: number, title: string) => {
+      openPRReviewTab(owner, repo, number, title);
     },
     [openPRReviewTab]
   );
@@ -1101,7 +1101,12 @@ export function Home() {
 
 interface PRListItemProps {
   pr: PRSearchResult;
-  onSelect: (owner: string, repo: string, number: number) => void;
+  onSelect: (
+    owner: string,
+    repo: string,
+    number: number,
+    title: string
+  ) => void;
 }
 
 function PRListItem({ pr, onSelect }: PRListItemProps) {
@@ -1111,7 +1116,7 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
 
   const handleClick = () => {
     if (repoInfo) {
-      onSelect(repoInfo.owner, repoInfo.repo, pr.number);
+      onSelect(repoInfo.owner, repoInfo.repo, pr.number, pr.title);
     }
   };
 
