@@ -388,7 +388,7 @@ function AllFileLine({ line, html }: { line: PatchLine; html?: string }) {
   return (
     <div
       className={cn(
-        "flex h-5 min-h-5 whitespace-pre-wrap box-border contain-layout diff-line-row"
+        "flex min-h-5 whitespace-pre-wrap box-border contain-layout diff-line-row"
       )}
       style={
         line.type === "normal"
@@ -413,7 +413,7 @@ function AllFileLine({ line, html }: { line: PatchLine; html?: string }) {
       <span className="w-10 shrink-0 tabular-nums text-right opacity-50 pr-2 text-xs select-none pt-0.5 border-r border-border/30">
         {line.newLine}
       </span>
-      <span className="flex-1 whitespace-pre-wrap break-words pr-6 overflow-hidden pl-2">
+      <span className="flex-1 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-5 pr-6 pl-2">
         {html === undefined ? (
           line.content || " "
         ) : (

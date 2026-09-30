@@ -2668,7 +2668,7 @@ const DiffLineRow = memo(function DiffLineRow({
 
   return (
     <div
-      className="flex h-5 min-h-5 whitespace-pre-wrap box-border group contain-layout diff-line-row"
+      className="flex min-h-5 whitespace-pre-wrap box-border group contain-layout diff-line-row"
       style={styles}
       data-line-num={lineNum}
       data-line-side={lineSide}
@@ -2711,7 +2711,7 @@ const DiffLineRow = memo(function DiffLineRow({
       </div>
       {/* Code content - click to focus line (unless selecting text) */}
       <div
-        className="flex-1 whitespace-pre-wrap break-words pr-6 overflow-hidden pl-2 cursor-text"
+        className="flex-1 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-5 pr-6 pl-2 cursor-text"
         onMouseDown={handleContentMouseDown}
         onClick={handleContentClick}
       >
@@ -2893,7 +2893,7 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
         </div>
         {/* Code content */}
         <div
-          className="flex-1 whitespace-pre-wrap break-words pr-2 overflow-hidden pl-2 cursor-text"
+          className="flex-1 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-5 pr-2 pl-2 cursor-text"
           onMouseDown={handleContentMouseDown}
           onClick={handleContentClick}
         >
@@ -2931,7 +2931,7 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
 
   return (
     <div
-      className="flex h-5 min-h-5 whitespace-pre-wrap box-border group contain-layout split-diff-line-row font-mono text-[0.75rem]"
+      className="flex min-h-5 whitespace-pre-wrap box-border group contain-layout split-diff-line-row font-mono text-[0.75rem]"
       data-line-num={lineNum}
     >
       {/* Left side (old/delete) */}
