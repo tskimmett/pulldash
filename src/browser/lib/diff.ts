@@ -81,6 +81,23 @@ class DiffWorkerPool {
     return `${Date.now()}-${this.nextId++}`;
   }
 
+  async generatePatch(
+    oldContent: string,
+    newContent: string
+  ): Promise<string | undefined> {
+    const id = this.generateId();
+    const worker = this.getNextWorker();
+    return new Promise((resolve, reject) => {
+      this.pendingRequests.set(id, { resolve, reject });
+      worker.postMessage({
+        type: "generate-patch",
+        id,
+        oldContent,
+        newContent,
+      } as WorkerRequest);
+    });
+  }
+
   async parseDiff(
     patch: string,
     filename: string,

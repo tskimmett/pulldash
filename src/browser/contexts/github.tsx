@@ -10,6 +10,8 @@ import {
 import { Octokit } from "@octokit/core";
 import type { components } from "@octokit/openapi-types";
 import { useAuth } from "./auth";
+import { recoverPatches } from "../lib/recover-patches";
+import { diffService } from "../lib/diff";
 import { fetchAllPages } from "../lib/fetch-all-pages";
 
 // Re-export types
@@ -1129,8 +1131,36 @@ function createGitHubStore() {
         page++;
       }
 
-      cache.set(cacheKey, files);
-      return files;
+      let recovered = files;
+      if (files.some((file) => !file.patch && file.changes > 0)) {
+        try {
+          const pr = await getPR(owner, repo, number);
+          const { data } = await octokit!.request(
+            "GET /repos/{owner}/{repo}/compare/{basehead}",
+            {
+              owner,
+              repo,
+              basehead: `${pr.base.sha}...${pr.head.sha}`,
+              per_page: 1,
+            }
+          );
+          recovered = await recoverPatches(
+            files,
+            data.merge_base_commit.sha,
+            pr.head.sha,
+            (path, ref) => getFileContent(owner, repo, path, ref, false),
+            (oldContent, newContent) =>
+              diffService.generatePatch(oldContent, newContent)
+          );
+        } catch (error) {
+          console.error(
+            "Could not recover omitted pull request patches",
+            error
+          );
+        }
+      }
+      cache.set(cacheKey, recovered);
+      return recovered;
     })();
 
     cache.setPending(cacheKey, promise);
@@ -1191,8 +1221,16 @@ function createGitHubStore() {
         throw error;
       }
 
-      cache.set(cacheKey, files);
-      return files;
+      const recovered = await recoverPatches(
+        files,
+        startSha,
+        headSha,
+        (path, ref) => getFileContent(owner, repo, path, ref, false),
+        (oldContent, newContent) =>
+          diffService.generatePatch(oldContent, newContent)
+      );
+      cache.set(cacheKey, recovered);
+      return recovered;
     })();
 
     cache.setPending(cacheKey, promise);
@@ -2238,11 +2276,12 @@ function createGitHubStore() {
     owner: string,
     repo: string,
     path: string,
-    ref: string
+    ref: string,
+    allowMissing = true
   ): Promise<string> {
     if (!octokit) throw new Error("Not initialized");
 
-    const cacheKey = `file:${owner}/${repo}/${ref}/${path}`;
+    const cacheKey = `file:${owner}/${repo}/${ref}/${path}:${allowMissing ? "optional" : "required"}`;
 
     const cached = cache.get<string>(cacheKey, 300_000);
     if (cached) return cached;
@@ -2270,7 +2309,8 @@ function createGitHubStore() {
           error &&
           typeof error === "object" &&
           "status" in error &&
-          error.status === 404
+          error.status === 404 &&
+          allowMissing
         ) {
           cache.set(cacheKey, "");
           return "";

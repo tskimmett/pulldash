@@ -11,6 +11,7 @@ import gitDiffParser, {
   InsertChange,
 } from "gitdiff-parser";
 import { DefaultLinesDiffComputer } from "vscode-diff";
+import { generatePatch } from "./recover-patches";
 import { refractor } from "refractor/all";
 
 // ============================================================================
@@ -84,6 +85,12 @@ interface SkipBlock {
 
 export type WorkerRequest =
   | {
+      type: "generate-patch";
+      id: string;
+      oldContent: string;
+      newContent: string;
+    }
+  | {
       type: "parse-diff";
       id: string;
       patch: string;
@@ -104,6 +111,7 @@ export type WorkerRequest =
     };
 
 export type WorkerResponse =
+  | { type: "generate-patch-result"; id: string; result: string | undefined }
   | {
       type: "parse-diff-result";
       id: string;
@@ -808,6 +816,14 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
 
   try {
     switch (request.type) {
+      case "generate-patch": {
+        self.postMessage({
+          type: "generate-patch-result",
+          id: request.id,
+          result: generatePatch(request.oldContent, request.newContent),
+        } as WorkerResponse);
+        break;
+      }
       case "parse-diff": {
         const result = parseDiffWithHighlighting(
           request.patch,
