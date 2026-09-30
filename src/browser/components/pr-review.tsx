@@ -137,6 +137,7 @@ function useSyncTabStatus(
   repo: string,
   number: number,
   prData: {
+    title: string;
     merged: boolean;
     draft?: boolean;
     state: string;
@@ -146,13 +147,19 @@ function useSyncTabStatus(
   const { status: checkStatus } = usePRChecks(owner, repo, number);
 
   // Get tab context for status updates
+  let updateTabTitle: ((tabId: string, title: string) => void) | undefined;
   let updateTabStatus: ((tabId: string, status: TabStatus) => void) | undefined;
   try {
     const tabContext = useTabContext();
     updateTabStatus = tabContext.updateTabStatus;
+    updateTabTitle = tabContext.updateTabTitle;
   } catch {
     // Not in tab context, ignore
   }
+
+  useEffect(() => {
+    if (tabId && prData) updateTabTitle?.(tabId, prData.title);
+  }, [tabId, updateTabTitle, prData?.title]);
 
   // Sync to tab whenever status changes
   useEffect(() => {

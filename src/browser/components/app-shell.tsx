@@ -266,6 +266,11 @@ function TabItem({ tab, isActive, onSelect, onClose }: TabItemProps) {
     <div
       role="button"
       tabIndex={0}
+      title={
+        isHome
+          ? "Home"
+          : `${tab.owner}/${tab.repo} ${tab.label}${tab.title ? ` — ${tab.title}` : ""}`
+      }
       onClick={onSelect}
       onMouseDown={handleMiddleClick}
       onKeyDown={(e) => {
@@ -275,7 +280,7 @@ function TabItem({ tab, isActive, onSelect, onClose }: TabItemProps) {
         }
       }}
       className={cn(
-        "group flex items-center gap-1.5 h-full px-2.5 text-xs font-medium border-b-2 transition-colors shrink-0 max-w-[180px] cursor-pointer",
+        "group flex items-center gap-1.5 h-full px-2.5 text-xs font-medium border-b-2 transition-colors shrink-0 max-w-[320px] cursor-pointer",
         isActive
           ? "border-orange-500 bg-background text-foreground"
           : "border-transparent text-muted-foreground hover:text-foreground hover:bg-foreground/5"
@@ -289,11 +294,16 @@ function TabItem({ tab, isActive, onSelect, onClose }: TabItemProps) {
         <TabStatusIndicator status={tab.status} />
       )}
 
-      <span className="truncate">{isHome ? "Home" : tab.label}</span>
+      <span className="shrink-0">{isHome ? "Home" : tab.label}</span>
+      {!isHome && tab.title && (
+        <span className="min-w-0 truncate text-[11px] font-normal">
+          {tab.title}
+        </span>
+      )}
 
       {/* Repo name for PR tabs */}
       {tab.type === "pr-review" && tab.repo && (
-        <span className="text-[10px] text-muted-foreground truncate hidden sm:inline">
+        <span className="text-[10px] text-muted-foreground truncate max-w-[80px] shrink-0 hidden sm:inline">
           {tab.repo}
         </span>
       )}

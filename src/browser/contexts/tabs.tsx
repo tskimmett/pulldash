@@ -8,35 +8,19 @@ import {
 } from "react";
 import { useNavigate } from "react-router-dom";
 
+import {
+  loadTabState,
+  saveTabState,
+  withTabTitle,
+  type Tab,
+  type TabStatus,
+  type TabState,
+} from "../lib/tab-state";
+export type { Tab, TabStatus } from "../lib/tab-state";
+
 // ============================================================================
 // Types
 // ============================================================================
-
-export type TabStatus = {
-  // CI status
-  checks: "pending" | "success" | "failure" | "none" | "action_required";
-  // PR state
-  state: "open" | "closed" | "merged" | "draft";
-  // Mergeable
-  mergeable: boolean | null;
-};
-
-export interface Tab {
-  id: string;
-  type: "home" | "pr-review";
-  label: string;
-  // For PR review tabs
-  owner?: string;
-  repo?: string;
-  number?: number;
-  // Status reported by the tab content
-  status?: TabStatus;
-}
-
-interface TabState {
-  tabs: Tab[];
-  activeTabId: string;
-}
 
 interface TabContextValue {
   tabs: Tab[];
@@ -45,56 +29,13 @@ interface TabContextValue {
   openTab: (tab: Omit<Tab, "id"> & { id?: string }) => string;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
+  updateTabTitle: (tabId: string, title: string) => void;
   updateTabStatus: (tabId: string, status: TabStatus) => void;
   getExistingPRTab: (
     owner: string,
     repo: string,
     number: number
   ) => Tab | undefined;
-}
-
-// ============================================================================
-// Storage
-// ============================================================================
-
-const STORAGE_KEY = "pulldash_tabs";
-
-const HOME_TAB: Tab = {
-  id: "home",
-  type: "home",
-  label: "Home",
-};
-
-const DEFAULT_STATE: TabState = {
-  tabs: [HOME_TAB],
-  activeTabId: "home",
-};
-
-function loadTabState(): TabState {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored) as TabState;
-      // Ensure home tab always exists
-      const hasHome = parsed.tabs.some((t) => t.id === "home");
-      if (!hasHome) {
-        parsed.tabs.unshift(HOME_TAB);
-      }
-      // Ensure active tab exists
-      const activeExists = parsed.tabs.some((t) => t.id === parsed.activeTabId);
-      if (!activeExists) {
-        parsed.activeTabId = "home";
-      }
-      return parsed;
-    }
-  } catch {
-    // ignore
-  }
-  return DEFAULT_STATE;
-}
-
-function saveTabState(state: TabState): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
 // ============================================================================
@@ -179,6 +120,10 @@ export function TabProvider({ children }: TabProviderProps) {
     });
   }, []);
 
+  const updateTabTitle = useCallback((tabId: string, title: string) => {
+    setState((prev) => withTabTitle(prev, tabId, title));
+  }, []);
+
   const updateTabStatus = useCallback((tabId: string, status: TabStatus) => {
     setState((prev) => {
       const tabIndex = prev.tabs.findIndex((t) => t.id === tabId);
@@ -212,6 +157,7 @@ export function TabProvider({ children }: TabProviderProps) {
     openTab,
     closeTab,
     setActiveTab,
+    updateTabTitle,
     updateTabStatus,
     getExistingPRTab,
   };
@@ -224,14 +170,16 @@ export function TabProvider({ children }: TabProviderProps) {
 // ============================================================================
 
 export function useOpenPRReviewTab() {
-  const { openTab, getExistingPRTab, setActiveTab } = useTabContext();
+  const { openTab, getExistingPRTab, setActiveTab, updateTabTitle } =
+    useTabContext();
   const navigate = useNavigate();
 
   return useCallback(
-    (owner: string, repo: string, number: number) => {
+    (owner: string, repo: string, number: number, title?: string) => {
       // Check if tab already exists
       const existing = getExistingPRTab(owner, repo, number);
       if (existing) {
+        if (title) updateTabTitle(existing.id, title);
         setActiveTab(existing.id);
         // Navigate to the PR URL
         navigate(`/${owner}/${repo}/pull/${number}`);
@@ -244,6 +192,7 @@ export function useOpenPRReviewTab() {
         id,
         type: "pr-review",
         label: `#${number}`,
+        title,
         owner,
         repo,
         number,
@@ -254,6 +203,6 @@ export function useOpenPRReviewTab() {
 
       return tabId;
     },
-    [openTab, getExistingPRTab, setActiveTab, navigate]
+    [openTab, getExistingPRTab, setActiveTab, updateTabTitle, navigate]
   );
 }
