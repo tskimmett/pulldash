@@ -21,7 +21,9 @@ Use a **personal access token**: GitHub → Settings → Developer settings. It 
 
 For Cognito repositories, the PAT must also have SSO configured and authorized for the Cognito organization.
 
-## Semantic review (optional)
+## Semantic review (optional, experimental)
+
+This feature is experimental and the results are hit-or-miss. Treat the walkthrough as a rough starting point, not a reliable summary of the PR.
 
 The AI walkthrough appears only if an agent is available on the machine running the server: Claude Code logged in (or `ANTHROPIC_API_KEY`), or Codex logged in (or `OPENAI_API_KEY`). Diffs are sent to the provider you pick.
 
