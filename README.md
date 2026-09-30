@@ -1,6 +1,6 @@
 # Pulldash (team fork)
 
-A fast, keyboard-driven PR review UI. Fork of [coder/pulldash](https://github.com/coder/pulldash).
+A fast, keyboard-driven PR review UI.
 
 ## Setup
 

@@ -105,7 +105,7 @@
 
   "publish": {
     "provider": "github",
-    "owner": "coder",
+    "owner": "tskimmett",
     "repo": "pulldash",
     "releaseType": "release"
   }
