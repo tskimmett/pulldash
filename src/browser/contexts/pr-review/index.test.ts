@@ -289,14 +289,23 @@ test("toggleViewed unmarks viewed file", () => {
   expect(store.getSnapshot().viewedFiles.has("src/index.ts")).toBe(false);
 });
 
-test("toggleViewed navigates to next file when marking current file as viewed", () => {
-  const store = createStore();
-  store.selectFile("src/index.ts");
+test("toggleViewed skips viewed and hidden test files when marking current file as viewed", () => {
+  const store = createStore({
+    files: [
+      createMockFile("a.ts"),
+      createMockFile("b.ts"),
+      createMockFile("c.test.ts"),
+      createMockFile("d.ts"),
+    ],
+  });
+  store.toggleHideTestFiles();
+  store.toggleViewed("b.ts");
+  store.selectFile("a.ts");
 
-  store.toggleViewed("src/index.ts");
+  store.toggleViewed("a.ts");
 
-  expect(store.getSnapshot().viewedFiles.has("src/index.ts")).toBe(true);
-  expect(store.getSnapshot().selectedFile).toBe("src/utils.ts");
+  expect(store.getSnapshot().viewedFiles.has("a.ts")).toBe(true);
+  expect(store.getSnapshot().selectedFile).toBe("d.ts");
 });
 
 test("toggleViewed keeps scroll position in all files mode", () => {

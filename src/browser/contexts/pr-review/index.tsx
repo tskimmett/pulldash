@@ -858,13 +858,13 @@ export class PRReviewStore {
     this.persistViewedFiles(next);
     this.set({ viewedFiles: next });
 
-    // When marking a file as viewed, navigate to the next file
+    // When marking a file as viewed, skip ahead to the next unviewed file
     if (
       !wasViewed &&
       filename === this.state.selectedFile &&
       this.state.fileLayoutMode === "single"
     ) {
-      this.navigateToFile("next");
+      this.navigateToNextUnviewedFile();
     }
   };
 
