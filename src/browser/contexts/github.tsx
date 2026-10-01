@@ -10,9 +10,22 @@ import {
 import { Octokit } from "@octokit/core";
 import type { components } from "@octokit/openapi-types";
 import { useAuth } from "./auth";
-import { recoverPatches } from "../lib/recover-patches";
+import {
+  carryOverRecoveredPatches,
+  recoverPatches,
+} from "../lib/recover-patches";
 import { diffService } from "../lib/diff";
 import { fetchAllPages } from "../lib/fetch-all-pages";
+import { openPersistentStore } from "../lib/persistent-cache";
+import { RequestCache } from "../lib/request-cache";
+import {
+  PR_FINGERPRINT_QUERY,
+  fingerprintMatchesPR,
+  parsePRFingerprint,
+  type PRFingerprint,
+  type PRFingerprintResponse,
+} from "../lib/pr-fingerprint";
+import { addConditionalRequests, hasStatus } from "../lib/conditional-requests";
 
 // Re-export types
 // Extended PullRequest with body_html from GitHub's HTML media type
@@ -179,216 +192,75 @@ export interface PendingReview {
 }
 
 // ============================================================================
-// Persistent Cache with Stale-While-Revalidate
+// GraphQL Client
 // ============================================================================
 
-interface CacheEntry<T> {
-  data: T;
-  timestamp: number;
-}
-
-interface PendingRequest<T> {
-  promise: Promise<T>;
-  timestamp: number;
-}
-
-const DEFAULT_CACHE_TTL = 30_000; // 30 seconds
-const STORAGE_PREFIX = "gh_cache:";
-
-class RequestCache {
-  private cache = new Map<string, CacheEntry<unknown>>();
-  private pending = new Map<string, PendingRequest<unknown>>();
-  private persistKeys = new Set<string>(); // Keys that should be persisted
-
-  constructor() {
-    // Load persisted cache on startup
-    this.loadFromStorage();
-  }
-
-  private loadFromStorage() {
-    try {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key?.startsWith(STORAGE_PREFIX)) {
-          const cacheKey = key.slice(STORAGE_PREFIX.length);
-          const stored = localStorage.getItem(key);
-          if (stored) {
-            const entry = JSON.parse(stored) as CacheEntry<unknown>;
-            this.cache.set(cacheKey, entry);
-            this.persistKeys.add(cacheKey);
-          }
-        }
-      }
-    } catch {
-      // Ignore storage errors
-    }
-  }
-
-  private saveToStorage(key: string, entry: CacheEntry<unknown>) {
-    try {
-      localStorage.setItem(STORAGE_PREFIX + key, JSON.stringify(entry));
-      this.persistKeys.add(key);
-    } catch {
-      // Ignore storage errors (quota exceeded, etc.)
-    }
-  }
-
-  private removeFromStorage(key: string) {
-    try {
-      localStorage.removeItem(STORAGE_PREFIX + key);
-      this.persistKeys.delete(key);
-    } catch {
-      // Ignore
-    }
-  }
-
-  /**
-   * Get cached data. Returns null if no cache or cache is stale.
-   */
-  get<T>(key: string, ttl = DEFAULT_CACHE_TTL): T | null {
-    const entry = this.cache.get(key);
-    if (!entry) return null;
-    if (Date.now() - entry.timestamp > ttl) {
-      this.cache.delete(key);
-      this.removeFromStorage(key);
-      return null;
-    }
-    return entry.data as T;
-  }
-
-  /**
-   * Get cached data even if stale (for SWR pattern).
-   * Returns { data, isStale } or null if no cache exists.
-   */
-  getStale<T>(
-    key: string,
-    freshTtl = DEFAULT_CACHE_TTL
-  ): { data: T; isStale: boolean } | null {
-    const entry = this.cache.get(key);
-    if (!entry) return null;
-    const isStale = Date.now() - entry.timestamp > freshTtl;
-    return { data: entry.data as T, isStale };
-  }
-
-  set<T>(key: string, data: T, persist = false): void {
-    const entry = { data, timestamp: Date.now() };
-    this.cache.set(key, entry);
-    if (persist || this.persistKeys.has(key)) {
-      this.saveToStorage(key, entry);
-    }
-  }
-
-  getPending<T>(key: string): Promise<T> | null {
-    const pending = this.pending.get(key);
-    if (!pending) return null;
-    return pending.promise as Promise<T>;
-  }
-
-  setPending<T>(key: string, promise: Promise<T>): void {
-    this.pending.set(key, { promise, timestamp: Date.now() });
-    promise.finally(() => this.pending.delete(key));
-  }
-
-  clearPending(key: string): void {
-    this.pending.delete(key);
-  }
-
-  invalidate(pattern?: string): void {
-    if (!pattern) {
-      // Clear all memory cache
-      this.cache.clear();
-      // Clear all pending requests
-      this.pending.clear();
-      // Clear persisted cache
-      for (const key of this.persistKeys) {
-        this.removeFromStorage(key);
-      }
-      return;
-    }
-    for (const key of this.cache.keys()) {
-      if (key.includes(pattern)) {
-        this.cache.delete(key);
-        this.removeFromStorage(key);
-      }
-    }
-    // Also clear pending requests matching the pattern
-    for (const key of this.pending.keys()) {
-      if (key.includes(pattern)) {
-        this.pending.delete(key);
-      }
-    }
-  }
-
-  /**
-   * Check if we have any cached data (fresh or stale) for a key.
-   */
-  has(key: string): boolean {
-    return this.cache.has(key);
-  }
-}
-
-// ============================================================================
-// GraphQL Batcher - Combines multiple queries within a time window
-// ============================================================================
-
-interface BatchedQuery {
-  query: string;
-  variables: Record<string, unknown>;
-  resolve: (data: unknown) => void;
-  reject: (error: Error) => void;
-}
-
-class GraphQLBatcher {
-  private queue: BatchedQuery[] = [];
-  private timeout: ReturnType<typeof setTimeout> | null = null;
-  private octokit: Octokit;
-  private batchWindowMs: number;
-
-  constructor(octokit: Octokit, batchWindowMs = 5) {
-    this.octokit = octokit;
-    this.batchWindowMs = batchWindowMs; // 5ms batch window for near-instant batching
-  }
-
-  updateOctokit(octokit: Octokit) {
-    this.octokit = octokit;
-  }
+// GitHub has no endpoint for batching separate GraphQL documents, so queries
+// go out immediately; combine work by aliasing fields (see getPREnrichment).
+class GraphQLClient {
+  constructor(
+    private octokit: Octokit,
+    private onMutation: () => void
+  ) {}
 
   async query<T>(
     query: string,
     variables: Record<string, unknown> = {}
   ): Promise<T> {
-    return new Promise((resolve, reject) => {
-      this.queue.push({
-        query,
-        variables,
-        resolve: resolve as (data: unknown) => void,
-        reject,
-      });
-      this.scheduleBatch();
-    });
+    try {
+      return await this.octokit.graphql<T>(query, variables);
+    } finally {
+      if (query.trimStart().startsWith("mutation")) this.onMutation();
+    }
   }
+}
 
-  private scheduleBatch() {
-    if (this.timeout) return;
-    this.timeout = setTimeout(() => this.flush(), this.batchWindowMs);
-  }
+// ============================================================================
+// Cache Keys
+// ============================================================================
 
-  private async flush() {
-    this.timeout = null;
-    const batch = this.queue.splice(0);
-    if (batch.length === 0) return;
+type PRKey = (owner: string, repo: string, number: number) => string;
+const prKey: PRKey = (owner, repo, number) => `pr:${owner}/${repo}/${number}`;
+const prSubKey =
+  (suffix: string): PRKey =>
+  (owner, repo, number) =>
+    `${prKey(owner, repo, number)}:${suffix}`;
 
-    // Execute all queries in parallel (GitHub doesn't support query batching in a single request)
-    await Promise.all(
-      batch.map(async ({ query, variables, resolve, reject }) => {
-        try {
-          const result = await this.octokit.graphql(query, variables);
-          resolve(result);
-        } catch (error) {
-          reject(error instanceof Error ? error : new Error(String(error)));
-        }
-      })
-    );
+/** Keys for durably cached data, for callers that render it via peekCache. */
+export const cacheKeys = {
+  pr: prKey,
+  prFiles: prSubKey("files"),
+  prComments: prSubKey("comments"),
+  prReviews: prSubKey("reviews"),
+  prConversation: prSubKey("conversation"),
+  prTimeline: prSubKey("timeline"),
+  prCommits: prSubKey("commits"),
+  prThreads: prSubKey("threads"),
+  prFingerprint: prSubKey("fingerprint"),
+  checks: (owner: string, repo: string, sha: string) =>
+    `checks:${owner}/${repo}/${sha}`,
+  workflowRuns: (owner: string, repo: string, sha: string) =>
+    `workflow-runs:${owner}/${repo}/${sha}`,
+};
+
+const isReviewThreadsKey = (key: string) => key.endsWith(":threads");
+
+// Commit SHAs never change content, so files read at one are cached forever.
+const isCommitSha = (ref: string) => /^[0-9a-f]{40}$/i.test(ref);
+// Skip durably storing huge blobs; they'd crowd out everything else.
+const MAX_PERSISTED_FILE_CHARS = 512 * 1024;
+
+/** The cache used to live in localStorage; drop what's left of it. */
+function removeLegacyLocalStorageCache() {
+  try {
+    const legacy: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key?.startsWith("gh_cache:")) legacy.push(key);
+    }
+    for (const key of legacy) localStorage.removeItem(key);
+  } catch {
+    // Ignore storage errors
   }
 }
 
@@ -400,6 +272,8 @@ interface PRListState {
   items: PRSearchResult[];
   totalCount: number;
   loading: boolean;
+  // Showing cached items while a fresh copy loads
+  refreshing: boolean;
   error: string | null;
   lastFetchedAt: number | null;
 }
@@ -447,6 +321,7 @@ function createGitHubStore() {
       items: [],
       totalCount: 0,
       loading: false,
+      refreshing: false,
       error: null,
       lastFetchedAt: null,
     },
@@ -456,9 +331,13 @@ function createGitHubStore() {
   };
 
   const listeners = new Set<Listener>();
-  const cache = new RequestCache();
+  const persistent = openPersistentStore();
+  const cache = new RequestCache(persistent);
+  removeLegacyLocalStorageCache();
+  // Review threads change through GraphQL mutations that don't name the PR.
+  const invalidateReviewThreads = () => cache.invalidate(isReviewThreadsKey);
   let octokit: Octokit | null = null;
-  let batcher: GraphQLBatcher | null = null;
+  let gql: GraphQLClient | null = null;
   let onUnauthorized: (() => void) | null = null;
   let prListAbortController: AbortController | null = null;
   let onRateLimited: (() => void) | null = null;
@@ -504,6 +383,7 @@ function createGitHubStore() {
         throw error;
       }
     });
+    addConditionalRequests(octokitInstance, persistent);
   }
 
   function getState() {
@@ -544,16 +424,9 @@ function createGitHubStore() {
   }
 
   function initialize(token: string) {
-    // Load cached user immediately for instant UI
-    const cachedUser =
-      cache.getStale<components["schemas"]["private-user"]>("user:current");
-    if (cachedUser) {
-      setState({ currentUser: extractUserData(cachedUser.data) });
-    }
-
     octokit = new Octokit({ auth: token });
     wrapOctokitWithHooks(octokit);
-    batcher = new GraphQLBatcher(octokit);
+    gql = new GraphQLClient(octokit, invalidateReviewThreads);
 
     setState({ ready: true, error: null });
 
@@ -566,14 +439,14 @@ function createGitHubStore() {
     // GitHub allows 60 requests/hour for unauthenticated requests
     octokit = new Octokit();
     wrapOctokitWithHooks(octokit);
-    batcher = new GraphQLBatcher(octokit);
+    gql = new GraphQLClient(octokit, invalidateReviewThreads);
 
     setState({ ready: true, error: null, currentUser: null });
   }
 
   function reset() {
     octokit = null;
-    batcher = null;
+    gql = null;
     cache.invalidate();
     setState({
       ready: false,
@@ -583,6 +456,7 @@ function createGitHubStore() {
         items: [],
         totalCount: 0,
         loading: false,
+        refreshing: false,
         error: null,
         lastFetchedAt: null,
       },
@@ -602,15 +476,12 @@ function createGitHubStore() {
     const cacheKey = "user:current";
     const FRESH_TTL = 300_000; // 5 minutes
 
-    // Check for stale data - return immediately if we have any
-    const stale = cache.getStale<components["schemas"]["private-user"]>(
-      cacheKey,
-      FRESH_TTL
-    );
+    // Show the last known user immediately, revalidating if it's old
+    const stale =
+      await cache.peek<components["schemas"]["private-user"]>(cacheKey);
     if (stale) {
       setState({ currentUser: extractUserData(stale.data) });
-      // If fresh, don't revalidate
-      if (!stale.isStale) return;
+      if (Date.now() - stale.timestamp <= FRESH_TTL) return;
     }
 
     // Check for pending request
@@ -624,7 +495,7 @@ function createGitHubStore() {
 
     // Fetch fresh data (in background if we had stale data)
     const promise = octokit.request("GET /user").then((r) => {
-      cache.set(cacheKey, r.data, true); // persist to localStorage
+      cache.set(cacheKey, r.data, true);
       return r.data;
     });
     cache.setPending(cacheKey, promise);
@@ -651,7 +522,7 @@ function createGitHubStore() {
     perPage = 30,
     options?: { backgroundRefresh?: boolean }
   ) {
-    if (!octokit || !batcher) return;
+    if (!octokit || !gql) return;
 
     const { backgroundRefresh = false } = options ?? {};
 
@@ -659,6 +530,7 @@ function createGitHubStore() {
     prListAbortController?.abort();
     const abortController = new AbortController();
     prListAbortController = abortController;
+    const { signal } = abortController;
 
     if (queries.length === 0) {
       setState({
@@ -666,6 +538,7 @@ function createGitHubStore() {
           items: [],
           totalCount: 0,
           loading: false,
+          refreshing: false,
           error: null,
           lastFetchedAt: Date.now(),
         },
@@ -675,57 +548,86 @@ function createGitHubStore() {
       return;
     }
 
-    const cacheKey = `prlist:${queries.sort().join("|")}:${page}:${perPage}`;
+    const sortedQueries = [...queries].sort();
+    const cacheKey = `prlist:${sortedQueries.join("|")}:${page}:${perPage}`;
     const FRESH_TTL = 30_000; // 30 seconds
 
-    // Check for stale data - show immediately if we have any
-    const stale = cache.getStale<{
+    // A different list must not keep showing the previous list's rows.
+    const sameList =
+      state.prListPage === page &&
+      [...state.prListQueries].sort().join("|") === sortedQueries.join("|");
+    if (!sameList) {
+      setState({
+        prList: {
+          items: [],
+          totalCount: 0,
+          loading: true,
+          refreshing: false,
+          error: null,
+          lastFetchedAt: null,
+        },
+        prListQueries: queries,
+        prListPage: page,
+      });
+    }
+
+    // Show the last copy of this list immediately, from memory or disk
+    const stale = await cache.peek<{
       items: PRSearchResult[];
       totalCount: number;
-    }>(cacheKey, FRESH_TTL);
+    }>(cacheKey);
+    if (signal.aborted) return;
+    const isStale = !stale || Date.now() - stale.timestamp > FRESH_TTL;
     if (stale) {
       setState({
         prList: {
           ...stale.data,
-          // Don't show loading state for background refreshes
-          loading: backgroundRefresh ? false : stale.isStale,
+          loading: false,
+          refreshing: isStale,
           error: null,
           lastFetchedAt: Date.now(),
         },
         prListQueries: queries,
         prListPage: page,
       });
-      // If fresh, don't revalidate
-      if (!stale.isStale) return;
-    } else if (!backgroundRefresh) {
-      // Only show loading state if this is not a background refresh
+      if (!isStale) return;
+    } else if (sameList) {
       setState((s) => ({
-        prList: { ...s.prList, loading: true, error: null },
-        prListQueries: queries,
-        prListPage: page,
+        prList: {
+          ...s.prList,
+          // Background refreshes keep the current rows without a spinner
+          loading: backgroundRefresh ? false : s.prList.items.length === 0,
+          refreshing: s.prList.items.length > 0,
+          error: null,
+        },
       }));
     }
 
     try {
       // Fetch PRs with caching, passing the abort signal
       const results = await Promise.all(
-        queries.map((q) => searchPRs(q, page, perPage, abortController.signal))
+        queries.map((q) => searchPRs(q, page, perPage, signal))
       );
 
       // Check if aborted before processing results
-      if (abortController.signal.aborted) return;
+      if (signal.aborted) return;
 
-      // Combine and dedupe by PR id
+      // Combine and dedupe by PR id. Rows keep their previous enrichment
+      // (CI, reviews) until the fresh GraphQL data lands.
+      const previous = new Map(
+        [...(stale?.data.items ?? []), ...state.prList.items].map((item) => [
+          item.id,
+          item,
+        ])
+      );
       const seen = new Set<number>();
-      const combined: PRSearchResult[] = [];
-      let total = 0;
+      let combined: PRSearchResult[] = [];
 
       for (const data of results) {
-        total += data.total_count || 0;
         for (const pr of data.items || []) {
           if (!seen.has(pr.id)) {
             seen.add(pr.id);
-            combined.push(pr as PRSearchResult);
+            combined.push({ ...previous.get(pr.id), ...pr } as PRSearchResult);
           }
         }
       }
@@ -735,6 +637,18 @@ function createGitHubStore() {
         (a, b) =>
           new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
       );
+
+      // Render search results now; enrichment is a second round trip
+      setState({
+        prList: {
+          items: combined,
+          totalCount: combined.length,
+          loading: false,
+          refreshing: true,
+          error: null,
+          lastFetchedAt: Date.now(),
+        },
+      });
 
       // Enrich with GraphQL data
       const prIdentifiers = combined
@@ -755,25 +669,23 @@ function createGitHubStore() {
           const enrichmentMap = await getPREnrichment(prIdentifiers);
 
           // Check if aborted after enrichment
-          if (abortController.signal.aborted) return;
+          if (signal.aborted) return;
 
-          for (const item of combined) {
+          combined = combined.map((item) => {
             const match = item.repository_url?.match(/repos\/([^/]+)\/([^/]+)/);
-            if (match && item.number) {
-              const key = `${match[1]}/${match[2]}/${item.number}`;
-              const enrichment = enrichmentMap.get(key);
-              if (enrichment) {
-                Object.assign(item, enrichment);
-              }
-            }
-          }
+            if (!match || !item.number) return item;
+            const enrichment = enrichmentMap.get(
+              `${match[1]}/${match[2]}/${item.number}`
+            );
+            return enrichment ? { ...item, ...enrichment } : item;
+          });
         } catch (enrichmentError) {
           console.error("PR enrichment failed:", enrichmentError);
         }
       }
 
       // Final check before updating state
-      if (abortController.signal.aborted) return;
+      if (signal.aborted) return;
 
       // Cache the result (persist for instant load next time)
       // Use combined.length instead of total to reflect deduplicated count
@@ -788,6 +700,7 @@ function createGitHubStore() {
           items: combined,
           totalCount: combined.length,
           loading: false,
+          refreshing: false,
           error: null,
           lastFetchedAt: Date.now(),
         },
@@ -797,12 +710,13 @@ function createGitHubStore() {
       if (e instanceof Error && e.name === "AbortError") return;
 
       // Only update error state if not aborted
-      if (abortController.signal.aborted) return;
+      if (signal.aborted) return;
 
       setState((s) => ({
         prList: {
           ...s.prList,
           loading: false,
+          refreshing: false,
           error: e instanceof Error ? e.message : "Failed to fetch PRs",
         },
       }));
@@ -1069,7 +983,7 @@ function createGitHubStore() {
   ): Promise<PullRequest> {
     if (!octokit) throw new Error("Not initialized");
 
-    const cacheKey = `pr:${owner}/${repo}/${number}`;
+    const cacheKey = cacheKeys.pr(owner, repo, number);
 
     const cached = cache.get<PullRequest>(cacheKey);
     if (cached) return cached;
@@ -1088,7 +1002,7 @@ function createGitHubStore() {
         },
       })
       .then((res) => {
-        cache.set(cacheKey, res.data as PullRequest);
+        cache.set(cacheKey, res.data as PullRequest, true);
         return res.data as PullRequest;
       });
 
@@ -1103,7 +1017,7 @@ function createGitHubStore() {
   ): Promise<PullRequestFile[]> {
     if (!octokit) throw new Error("Not initialized");
 
-    const cacheKey = `pr:${owner}/${repo}/${number}:files`;
+    const cacheKey = cacheKeys.prFiles(owner, repo, number);
 
     const cached = cache.get<PullRequestFile[]>(cacheKey);
     if (cached) return cached;
@@ -1112,10 +1026,8 @@ function createGitHubStore() {
     if (pending) return pending;
 
     const promise = (async () => {
-      const files: PullRequestFile[] = [];
-      let page = 1;
-
-      while (true) {
+      const previous = cache.peek<PullRequestFile[]>(cacheKey);
+      const files = await fetchAllPages(async (page) => {
         const { data } = await octokit!.request(
           "GET /repos/{owner}/{repo}/pulls/{pull_number}/files",
           {
@@ -1126,45 +1038,63 @@ function createGitHubStore() {
             page,
           }
         );
-        files.push(...data);
-        if (data.length < 100) break;
-        page++;
-      }
-
-      let recovered = files;
-      if (files.some((file) => !file.patch && file.changes > 0)) {
-        try {
-          const pr = await getPR(owner, repo, number);
-          const { data } = await octokit!.request(
-            "GET /repos/{owner}/{repo}/compare/{basehead}",
-            {
-              owner,
-              repo,
-              basehead: `${pr.base.sha}...${pr.head.sha}`,
-              per_page: 1,
-            }
-          );
-          recovered = await recoverPatches(
-            files,
-            data.merge_base_commit.sha,
-            pr.head.sha,
-            (path, ref) => getFileContent(owner, repo, path, ref, false),
-            (oldContent, newContent) =>
-              diffService.generatePatch(oldContent, newContent)
-          );
-        } catch (error) {
-          console.error(
-            "Could not recover omitted pull request patches",
-            error
-          );
-        }
-      }
-      cache.set(cacheKey, recovered);
-      return recovered;
+        return data;
+      });
+      // GitHub omits patches for large files; reuse ones we rebuilt before
+      const result = carryOverRecoveredPatches(
+        files,
+        (await previous)?.data ?? []
+      );
+      cache.set(cacheKey, result, true);
+      return result;
     })();
 
     cache.setPending(cacheKey, promise);
     return promise;
+  }
+
+  /**
+   * Rebuild patches GitHub omitted (large diffs) from file contents at the
+   * merge base and head. Runs after the PR renders; returns `files` itself
+   * when nothing needed recovery.
+   */
+  async function recoverPRFilePatches(
+    owner: string,
+    repo: string,
+    pr: PullRequest,
+    files: PullRequestFile[]
+  ): Promise<PullRequestFile[]> {
+    if (!octokit) throw new Error("Not initialized");
+    if (!files.some((file) => !file.patch && file.changes > 0)) return files;
+
+    try {
+      const { data } = await octokit.request(
+        "GET /repos/{owner}/{repo}/compare/{basehead}",
+        {
+          owner,
+          repo,
+          basehead: `${pr.base.sha}...${pr.head.sha}`,
+          per_page: 1,
+        }
+      );
+      const recovered = await recoverPatches(
+        files,
+        data.merge_base_commit.sha,
+        pr.head.sha,
+        (path, ref) => getFileContent(owner, repo, path, ref, false),
+        (oldContent, newContent) =>
+          diffService.generatePatch(oldContent, newContent)
+      );
+      // Only store against the file list it was built from
+      const cacheKey = cacheKeys.prFiles(owner, repo, pr.number);
+      if (cache.getStale<PullRequestFile[]>(cacheKey)?.data === files) {
+        cache.set(cacheKey, recovered, true);
+      }
+      return recovered;
+    } catch (error) {
+      console.error("Could not recover omitted pull request patches", error);
+      return files;
+    }
   }
 
   /**
@@ -1244,7 +1174,7 @@ function createGitHubStore() {
   ): Promise<ReviewComment[]> {
     if (!octokit) throw new Error("Not initialized");
 
-    const cacheKey = `pr:${owner}/${repo}/${number}:comments`;
+    const cacheKey = cacheKeys.prComments(owner, repo, number);
 
     const cached = cache.get<ReviewComment[]>(cacheKey);
     if (cached) return cached;
@@ -1276,7 +1206,7 @@ function createGitHubStore() {
         page++;
       }
 
-      cache.set(cacheKey, comments);
+      cache.set(cacheKey, comments, true);
       return comments;
     })();
 
@@ -1330,7 +1260,8 @@ function createGitHubStore() {
       result = data;
     }
 
-    cache.invalidate(`pr:${owner}/${repo}/${number}:comments`);
+    cache.invalidate(cacheKeys.prComments(owner, repo, number));
+    cache.invalidate(cacheKeys.prThreads(owner, repo, number));
     return result;
   }
 
@@ -1341,7 +1272,7 @@ function createGitHubStore() {
   ): Promise<Review[]> {
     if (!octokit) throw new Error("Not initialized");
 
-    const cacheKey = `pr:${owner}/${repo}/${number}:reviews`;
+    const cacheKey = cacheKeys.prReviews(owner, repo, number);
 
     const cached = cache.get<Review[]>(cacheKey);
     if (cached) return cached;
@@ -1366,7 +1297,7 @@ function createGitHubStore() {
       );
       return data as Review[];
     }).then((reviews) => {
-      cache.set(cacheKey, reviews);
+      cache.set(cacheKey, reviews, true);
       return reviews;
     });
 
@@ -1459,7 +1390,7 @@ function createGitHubStore() {
   async function getPRChecksForSha(owner: string, repo: string, sha: string) {
     if (!octokit) throw new Error("Not initialized");
 
-    const cacheKey = `checks:${owner}/${repo}/${sha}`;
+    const cacheKey = cacheKeys.checks(owner, repo, sha);
 
     type ChecksResult = { checkRuns: CheckRun[]; status: CombinedStatus };
 
@@ -1485,7 +1416,7 @@ function createGitHubStore() {
         checkRuns: checkRunsRes.data.check_runs,
         status: statusRes.data,
       };
-      cache.set(cacheKey, result);
+      cache.set(cacheKey, result, true);
       return result;
     });
 
@@ -1500,7 +1431,7 @@ function createGitHubStore() {
   ) {
     if (!octokit) throw new Error("Not initialized");
 
-    const cacheKey = `workflow-runs:${owner}/${repo}/${sha}`;
+    const cacheKey = cacheKeys.workflowRuns(owner, repo, sha);
 
     type WorkflowRunsResult = {
       workflow_runs: Array<{
@@ -1530,7 +1461,7 @@ function createGitHubStore() {
         const result = {
           workflow_runs: res.data.workflow_runs,
         };
-        cache.set(cacheKey, result);
+        cache.set(cacheKey, result, true);
         return result;
       });
 
@@ -1589,7 +1520,7 @@ function createGitHubStore() {
   async function getPRCommits(owner: string, repo: string, number: number) {
     if (!octokit) throw new Error("Not initialized");
 
-    const cacheKey = `pr:${owner}/${repo}/${number}:commits`;
+    const cacheKey = cacheKeys.prCommits(owner, repo, number);
 
     const cached = cache.get<components["schemas"]["commit"][]>(cacheKey);
     if (cached) return cached;
@@ -1611,7 +1542,7 @@ function createGitHubStore() {
       );
       return data;
     }).then((commits) => {
-      cache.set(cacheKey, commits);
+      cache.set(cacheKey, commits, true);
       return commits;
     });
 
@@ -1832,16 +1763,16 @@ function createGitHubStore() {
   }
 
   async function convertToDraft(owner: string, repo: string, number: number) {
-    if (!batcher) throw new Error("Not initialized");
+    if (!gql) throw new Error("Not initialized");
 
-    const prData = await batcher.query<{
+    const prData = await gql.query<{
       repository: { pullRequest: { id: string } };
     }>(
       `query ($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id } } }`,
       { owner, repo, number }
     );
 
-    await batcher.query(
+    await gql.query(
       `mutation ($input: ConvertPullRequestToDraftInput!) { convertPullRequestToDraft(input: $input) { pullRequest { id } } }`,
       { input: { pullRequestId: prData.repository.pullRequest.id } }
     );
@@ -1854,16 +1785,16 @@ function createGitHubStore() {
     repo: string,
     number: number
   ) {
-    if (!batcher) throw new Error("Not initialized");
+    if (!gql) throw new Error("Not initialized");
 
-    const prData = await batcher.query<{
+    const prData = await gql.query<{
       repository: { pullRequest: { id: string } };
     }>(
       `query ($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id } } }`,
       { owner, repo, number }
     );
 
-    await batcher.query(
+    await gql.query(
       `mutation ($input: MarkPullRequestReadyForReviewInput!) { markPullRequestReadyForReview(input: $input) { pullRequest { id } } }`,
       { input: { pullRequestId: prData.repository.pullRequest.id } }
     );
@@ -2182,7 +2113,7 @@ function createGitHubStore() {
   ): Promise<IssueComment[]> {
     if (!octokit) throw new Error("Not initialized");
 
-    const cacheKey = `pr:${owner}/${repo}/${number}:conversation`;
+    const cacheKey = cacheKeys.prConversation(owner, repo, number);
 
     const cached = cache.get<IssueComment[]>(cacheKey);
     if (cached) return cached;
@@ -2207,7 +2138,7 @@ function createGitHubStore() {
       );
       return data as IssueComment[];
     }).then((comments) => {
-      cache.set(cacheKey, comments);
+      cache.set(cacheKey, comments, true);
       return comments;
     });
 
@@ -2243,7 +2174,7 @@ function createGitHubStore() {
   ): Promise<TimelineEvent[]> {
     if (!octokit) throw new Error("Not initialized");
 
-    const cacheKey = `pr:${owner}/${repo}/${number}:timeline`;
+    const cacheKey = cacheKeys.prTimeline(owner, repo, number);
 
     const cached = cache.get<TimelineEvent[]>(cacheKey);
     if (cached) return cached;
@@ -2264,7 +2195,7 @@ function createGitHubStore() {
       );
       return data as TimelineEvent[];
     }).then((timeline) => {
-      cache.set(cacheKey, timeline);
+      cache.set(cacheKey, timeline, true);
       return timeline;
     });
 
@@ -2279,44 +2210,53 @@ function createGitHubStore() {
     ref: string,
     allowMissing = true
   ): Promise<string> {
+    try {
+      return await loadFileContent(owner, repo, path, ref);
+    } catch (error: unknown) {
+      if (allowMissing && hasStatus(error, 404)) return "";
+      throw error;
+    }
+  }
+
+  async function loadFileContent(
+    owner: string,
+    repo: string,
+    path: string,
+    ref: string
+  ): Promise<string> {
     if (!octokit) throw new Error("Not initialized");
 
-    const cacheKey = `file:${owner}/${repo}/${ref}/${path}:${allowMissing ? "optional" : "required"}`;
+    const cacheKey = `file:${owner}/${repo}/${ref}/${path}`;
+    const immutable = isCommitSha(ref);
 
-    const cached = cache.get<string>(cacheKey, 300_000);
-    if (cached) return cached;
+    const cached = cache.get<string>(cacheKey, immutable ? Infinity : 300_000);
+    if (cached !== null) return cached;
 
     const pending = cache.getPending<string>(cacheKey);
     if (pending) return pending;
 
     const promise = (async () => {
-      try {
-        const response = await octokit!.request(
-          "GET /repos/{owner}/{repo}/contents/{path}",
-          {
-            owner,
-            repo,
-            path,
-            ref,
-            headers: { Accept: "application/vnd.github.raw+json" },
-          }
-        );
-        const content = response.data as unknown as string;
-        cache.set(cacheKey, content);
-        return content;
-      } catch (error: unknown) {
-        if (
-          error &&
-          typeof error === "object" &&
-          "status" in error &&
-          error.status === 404 &&
-          allowMissing
-        ) {
-          cache.set(cacheKey, "");
-          return "";
-        }
-        throw error;
+      if (immutable) {
+        const stored = await cache.peek<string>(cacheKey);
+        if (stored) return stored.data;
       }
+      const response = await octokit!.request(
+        "GET /repos/{owner}/{repo}/contents/{path}",
+        {
+          owner,
+          repo,
+          path,
+          ref,
+          headers: { Accept: "application/vnd.github.raw+json" },
+        }
+      );
+      const content = response.data as unknown as string;
+      cache.set(
+        cacheKey,
+        content,
+        immutable && content.length <= MAX_PERSISTED_FILE_CHARS
+      );
+      return content;
     })();
 
     cache.setPending(cacheKey, promise);
@@ -2331,14 +2271,14 @@ function createGitHubStore() {
     query: string,
     variables?: Record<string, unknown>
   ): Promise<T> {
-    if (!batcher) throw new Error("Not initialized");
-    return batcher.query<T>(query, variables);
+    if (!gql) throw new Error("Not initialized");
+    return gql.query<T>(query, variables);
   }
 
   async function getPREnrichment(
     prs: Array<{ owner: string; repo: string; number: number }>
   ): Promise<Map<string, PREnrichment>> {
-    if (!batcher || prs.length === 0) return new Map();
+    if (!gql || prs.length === 0) return new Map();
 
     const prQueries = prs
       .map(
@@ -2405,7 +2345,7 @@ function createGitHubStore() {
           state: string;
         };
 
-    const data = await batcher.query<
+    const data = await gql.query<
       Record<
         string,
         {
@@ -2554,16 +2494,42 @@ function createGitHubStore() {
     return enrichmentMap;
   }
 
+  interface ReviewThreadsResult {
+    threads: ReviewThread[];
+    viewerPermission: string | null;
+    viewerCanMergeAsAdmin: boolean;
+  }
+
   async function getReviewThreads(
     owner: string,
     repo: string,
     number: number
-  ): Promise<{
-    threads: ReviewThread[];
-    viewerPermission: string | null;
-    viewerCanMergeAsAdmin: boolean;
-  }> {
-    if (!batcher) throw new Error("Not initialized");
+  ): Promise<ReviewThreadsResult> {
+    if (!gql) throw new Error("Not initialized");
+
+    const cacheKey = cacheKeys.prThreads(owner, repo, number);
+
+    const cached = cache.get<ReviewThreadsResult>(cacheKey);
+    if (cached) return cached;
+
+    const pending = cache.getPending<ReviewThreadsResult>(cacheKey);
+    if (pending) return pending;
+
+    const promise = fetchReviewThreads(owner, repo, number).then((result) => {
+      cache.set(cacheKey, result, true);
+      return result;
+    });
+
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
+
+  async function fetchReviewThreads(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<ReviewThreadsResult> {
+    if (!gql) throw new Error("Not initialized");
 
     // Raw GraphQL response type (comments include pullRequestReview)
     interface RawReviewThread {
@@ -2650,7 +2616,7 @@ function createGitHubStore() {
             };
           };
         };
-      } = await batcher.query(query, { owner, repo, number, cursor });
+      } = await gql.query(query, { owner, repo, number, cursor });
 
       viewerPermission = data.repository.viewerPermission;
       viewerCanMergeAsAdmin = data.repository.pullRequest.viewerCanMergeAsAdmin;
@@ -2677,16 +2643,16 @@ function createGitHubStore() {
   }
 
   async function resolveThread(threadId: string): Promise<void> {
-    if (!batcher) throw new Error("Not initialized");
-    await batcher.query(
+    if (!gql) throw new Error("Not initialized");
+    await gql.query(
       `mutation ($input: ResolveReviewThreadInput!) { resolveReviewThread(input: $input) { thread { id } } }`,
       { input: { threadId } }
     );
   }
 
   async function unresolveThread(threadId: string): Promise<void> {
-    if (!batcher) throw new Error("Not initialized");
-    await batcher.query(
+    if (!gql) throw new Error("Not initialized");
+    await gql.query(
       `mutation ($input: UnresolveReviewThreadInput!) { unresolveReviewThread(input: $input) { thread { id } } }`,
       { input: { threadId } }
     );
@@ -2697,9 +2663,9 @@ function createGitHubStore() {
     repo: string,
     number: number
   ): Promise<PendingReview | null> {
-    if (!batcher) throw new Error("Not initialized");
+    if (!gql) throw new Error("Not initialized");
 
-    const data = await batcher.query<{
+    const data = await gql.query<{
       repository: {
         pullRequest: {
           reviews: { nodes: PendingReview[] };
@@ -2750,9 +2716,9 @@ function createGitHubStore() {
     commentId: string;
     commentDatabaseId: number;
   }> {
-    if (!batcher) throw new Error("Not initialized");
+    if (!gql) throw new Error("Not initialized");
 
-    const prData = await batcher.query<{
+    const prData = await gql.query<{
       repository: { pullRequest: { id: string } };
     }>(
       `query ($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $number) { id } } }`,
@@ -2775,7 +2741,7 @@ function createGitHubStore() {
       if (options.side) input.startSide = options.side;
     }
 
-    const data = await batcher.query<{
+    const data = await gql.query<{
       addPullRequestReviewComment: {
         comment: {
           id: string;
@@ -2796,8 +2762,8 @@ function createGitHubStore() {
   }
 
   async function deletePendingComment(commentId: string): Promise<void> {
-    if (!batcher) throw new Error("Not initialized");
-    await batcher.query(
+    if (!gql) throw new Error("Not initialized");
+    await gql.query(
       `mutation ($input: DeletePullRequestReviewCommentInput!) { deletePullRequestReviewComment(input: $input) { pullRequestReview { id } } }`,
       { input: { id: commentId } }
     );
@@ -2807,8 +2773,8 @@ function createGitHubStore() {
     commentId: string,
     body: string
   ): Promise<void> {
-    if (!batcher) throw new Error("Not initialized");
-    await batcher.query(
+    if (!gql) throw new Error("Not initialized");
+    await gql.query(
       `mutation ($input: UpdatePullRequestReviewCommentInput!) { updatePullRequestReviewComment(input: $input) { pullRequestReviewComment { id } } }`,
       { input: { pullRequestReviewCommentId: commentId, body } }
     );
@@ -2818,12 +2784,17 @@ function createGitHubStore() {
     reviewId: string,
     event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT",
     body?: string
-  ): Promise<void> {
-    if (!batcher) throw new Error("Not initialized");
-    await batcher.query(
-      `mutation ($input: SubmitPullRequestReviewInput!) { submitPullRequestReview(input: $input) { pullRequestReview { id } } }`,
+  ): Promise<number | null> {
+    if (!gql) throw new Error("Not initialized");
+    const data = await gql.query<{
+      submitPullRequestReview: {
+        pullRequestReview: { databaseId: number | null } | null;
+      };
+    }>(
+      `mutation ($input: SubmitPullRequestReviewInput!) { submitPullRequestReview(input: $input) { pullRequestReview { id databaseId } } }`,
       { input: { pullRequestReviewId: reviewId, event, body: body ?? "" } }
     );
+    return data.submitPullRequestReview.pullRequestReview?.databaseId ?? null;
   }
 
   async function updateComment(
@@ -2882,8 +2853,73 @@ function createGitHubStore() {
     return promise;
   }
 
-  function invalidateCache(pattern?: string) {
+  function invalidateCache(pattern?: string | ((key: string) => boolean)) {
     cache.invalidate(pattern);
+  }
+
+  /** Last known value for a key from `cacheKeys`, however old. */
+  async function peekCache<T>(key: string): Promise<T | null> {
+    return (await cache.peek<T>(key))?.data ?? null;
+  }
+
+  /** Live summary of a PR from one small GraphQL query, briefly cached. */
+  async function getPRFingerprint(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<PRFingerprint | null> {
+    if (!gql) throw new Error("Not initialized");
+
+    const cacheKey = cacheKeys.prFingerprint(owner, repo, number);
+
+    const cached = cache.get<PRFingerprint>(cacheKey, 5_000);
+    if (cached) return cached;
+
+    const pending = cache.getPending<PRFingerprint | null>(cacheKey);
+    if (pending) return pending;
+
+    const promise = gql
+      .query<PRFingerprintResponse>(PR_FINGERPRINT_QUERY, {
+        owner,
+        repo,
+        number,
+      })
+      .then((data) => {
+        const fingerprint = parsePRFingerprint(data);
+        if (fingerprint) cache.set(cacheKey, fingerprint);
+        return fingerprint;
+      });
+
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
+
+  /**
+   * Whether the durably cached copy of a PR (and so its file list) still
+   * matches GitHub and can be shown before fresh data arrives.
+   */
+  async function isCachedPRCurrent(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<boolean> {
+    const key = cacheKeys.pr(owner, repo, number);
+    // Fetched moments ago (e.g. prefetched on hover)
+    if (cache.get<PullRequest>(key)) return true;
+    const [cached, live] = await Promise.all([
+      cache.peek<PullRequest>(key),
+      getPRFingerprint(owner, repo, number).catch(() => null),
+    ]);
+    return !!cached && !!live && fingerprintMatchesPR(live, cached.data);
+  }
+
+  /** Warm the requests a PR page blocks on, e.g. when hovering a list row. */
+  function prefetchPR(owner: string, repo: string, number: number) {
+    if (!octokit) return;
+    const ignore = () => {};
+    getPR(owner, repo, number).catch(ignore);
+    getPRFiles(owner, repo, number).catch(ignore);
+    getPRComments(owner, repo, number).catch(ignore);
   }
 
   return {
@@ -2907,6 +2943,8 @@ function createGitHubStore() {
     searchUsers,
     getPR,
     getPRFiles,
+    recoverPRFilePatches,
+    prefetchPR,
     getCompareFiles,
     getPRComments,
     createPRComment,
@@ -2964,6 +3002,9 @@ function createGitHubStore() {
     deleteComment,
     getUserProfile,
     invalidateCache,
+    peekCache,
+    getPRFingerprint,
+    isCachedPRCurrent,
   };
 }
 

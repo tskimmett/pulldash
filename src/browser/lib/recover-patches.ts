@@ -58,3 +58,33 @@ export async function recoverPatches(
   );
   return result;
 }
+
+const recoveryKey = (file: PullRequestFile) =>
+  [
+    file.filename,
+    file.previous_filename,
+    file.sha,
+    file.additions,
+    file.deletions,
+  ].join("\0");
+
+/**
+ * GitHub keeps omitting the same large patches on every fetch. Reuse patches
+ * rebuilt for an earlier copy of the list when the file change is identical.
+ */
+export function carryOverRecoveredPatches(
+  files: PullRequestFile[],
+  previous: PullRequestFile[]
+): PullRequestFile[] {
+  if (!files.some((file) => !file.patch && file.changes > 0)) return files;
+  const patches = new Map(
+    previous.flatMap((file) =>
+      file.patch ? [[recoveryKey(file), file.patch] as const] : []
+    )
+  );
+  return files.map((file) => {
+    if (file.patch || file.changes === 0) return file;
+    const patch = patches.get(recoveryKey(file));
+    return patch ? { ...file, patch } : file;
+  });
+}

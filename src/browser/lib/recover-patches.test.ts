@@ -1,6 +1,10 @@
 import { expect, test } from "bun:test";
 import type { PullRequestFile } from "@/api/types";
-import { generatePatch, recoverPatches } from "./recover-patches";
+import {
+  carryOverRecoveredPatches,
+  generatePatch,
+  recoverPatches,
+} from "./recover-patches";
 import { parsePatchLines } from "./patch-lines";
 
 function file(overrides: Partial<PullRequestFile> = {}): PullRequestFile {
@@ -70,4 +74,24 @@ test("recovers missing patches at exact refs, including renames, additions and d
   expect(result[4]).toBe(files[4]);
   expect(result[5]).toBe(files[5]);
   expect(files[1].patch).toBeUndefined();
+});
+
+test("carryOverRecoveredPatches reuses patches only for identical changes", () => {
+  const previous = [
+    file({ filename: "a.cs", patch: "@@ -1 +1 @@\n-a\n+b" }),
+    file({ filename: "b.cs", patch: "@@ -1 +1 @@\n-c\n+d" }),
+  ];
+  const result = carryOverRecoveredPatches(
+    [
+      file({ filename: "a.cs" }),
+      file({ filename: "b.cs", sha: "new-blob" }),
+      file({ filename: "c.cs", patch: "@@ -1 +1 @@\n-e\n+f" }),
+    ],
+    previous
+  );
+  expect(result.map((f) => f.patch)).toEqual([
+    "@@ -1 +1 @@\n-a\n+b",
+    undefined,
+    "@@ -1 +1 @@\n-e\n+f",
+  ]);
 });

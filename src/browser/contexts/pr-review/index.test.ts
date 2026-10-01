@@ -43,6 +43,7 @@ function createMockGitHubStore(): GitHubStore {
       viewerCanMergeAsAdmin: false,
     }),
     invalidateCache: () => {},
+    peekCache: async () => null,
     getPR: async () => createMockPR(),
     mergePR: async () => ({ merged: true }),
     closePR: async () => {},
@@ -411,7 +412,6 @@ test("startCommenting records LEFT side for old-side lines", () => {
   });
 });
 
-test("startCommentingOnFocusedLine derives side from focused line", () => {
 test("startCommenting targets an explicit file without selecting it", () => {
   const store = createStore();
   store.selectFile("src/index.ts");
@@ -423,6 +423,7 @@ test("startCommenting targets an explicit file without selecting it", () => {
   expect(state.selectedFile).toBe("src/index.ts");
 });
 
+test("startCommentingOnFocusedLine derives side from focused line", () => {
   const store = createStore();
   store.selectFile("src/index.ts");
   store.setFocusedLine(7, "old");
@@ -1275,4 +1276,26 @@ test("setDiffRange surfaces a failed compare fetch and blocks LEFT comments whil
   expect(store.getSnapshot().commentingOnLine).toBeNull();
   store.startCommenting(1, undefined, "new");
   expect(store.getSnapshot().commentingOnLine?.side).toBe("RIGHT");
+});
+
+test("replaceFiles keeps parsed diffs only for unchanged files", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+  store.setLoadedDiff("src/index.ts", diffWithOneHunk());
+  store.setLoadedDiff("src/utils.ts", diffWithOneHunk());
+  store.setFileFullyExpanded("src/utils.ts");
+
+  store.replaceFiles([
+    createMockFile("src/index.ts"),
+    { ...createMockFile("src/utils.ts"), sha: "changed" },
+  ]);
+
+  const state = store.getSnapshot();
+  expect(state.files.map((f) => f.filename)).toEqual([
+    "src/index.ts",
+    "src/utils.ts",
+  ]);
+  expect(Object.keys(state.loadedDiffs)).toEqual(["src/index.ts"]);
+  expect(state.fullyExpandedFiles.has("src/utils.ts")).toBe(false);
+  expect(state.selectedFile).toBe("src/index.ts");
 });

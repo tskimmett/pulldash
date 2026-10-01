@@ -40,6 +40,11 @@ import type {
 } from "@/semantic/schema";
 import { layerFilesInOrder } from "@/semantic/layer-files";
 import {
+  checksRollupState,
+  fingerprintMatchesPR,
+} from "@/browser/lib/pr-fingerprint";
+import {
+  cacheKeys,
   type GitHubStore,
   type Review,
   type IssueComment,
@@ -139,9 +144,9 @@ export interface ParsedDiff {
 export type CommentSide = "LEFT" | "RIGHT";
 
 export interface CommentingOnLine {
-  line: number;
   /** File being commented on; defaults to the selected file. */
   path?: string;
+  line: number;
   startLine?: number;
   /** GitHub diff side: LEFT for deleted lines, RIGHT for added/context. */
   side: CommentSide;
@@ -443,6 +448,16 @@ export function isThreadCollapsed(
   const override = state.collapsedThreadOverrides.get(key);
   if (override !== undefined) return override;
   return state.allCommentsCollapsed || isResolved;
+}
+
+/** Whether the head branch has been deleted more times than restored. */
+function isBranchDeleted(timeline: TimelineEvent[]): boolean {
+  let deleted = 0;
+  for (const event of timeline as Array<{ event?: string }>) {
+    if (event.event === "head_ref_deleted") deleted++;
+    else if (event.event === "head_ref_restored") deleted--;
+  }
+  return deleted > 0;
 }
 
 export class PRReviewStore {
@@ -1216,6 +1231,61 @@ export class PRReviewStore {
       else this.selectOverview();
     }
   }
+
+  /**
+   * Take a newer copy of the PR's files (revalidated from GitHub, or with
+   * omitted patches rebuilt). Unlike applyFiles, only files whose change
+   * differs lose their parsed diff and expansion state.
+   */
+  replaceFiles = (files: PullRequestFile[]) => {
+    const sorted = sortFilesLikeTree(files);
+    const before = new Map(this.state.allFiles.map((f) => [f.filename, f]));
+    const after = new Set(sorted.map((f) => f.filename));
+    const changed = new Set<string>();
+    for (const file of sorted) {
+      const prev = before.get(file.filename);
+      if (!prev || prev.sha !== file.sha || prev.patch !== file.patch) {
+        changed.add(file.filename);
+      }
+    }
+    for (const filename of before.keys()) {
+      if (!after.has(filename)) changed.add(filename);
+    }
+    if (changed.size === 0) return;
+
+    // A narrowed range shows its own file set; keep it until it's cleared.
+    if (this.state.diffRange) {
+      this.set({ allFiles: sorted });
+      return;
+    }
+
+    const keep = <T,>(record: Record<string, T>) =>
+      Object.fromEntries(
+        Object.entries(record).filter(([filename]) => !changed.has(filename))
+      );
+    const expandedSkipBlocks = Object.fromEntries(
+      Object.entries(this.state.expandedSkipBlocks).filter(
+        ([key]) => !changed.has(key.slice(0, key.lastIndexOf(":")))
+      )
+    );
+    this.set({
+      files: sorted,
+      allFiles: sorted,
+      loadedDiffs: keep(this.state.loadedDiffs),
+      navigableItems: keep(this.state.navigableItems),
+      fileLineCounts: keep(this.state.fileLineCounts),
+      expandedSkipBlocks,
+      fullyExpandedFiles: new Set(
+        [...this.state.fullyExpandedFiles].filter((f) => !changed.has(f))
+      ),
+    });
+
+    const { selectedFile, showOverview } = this.state;
+    if (!showOverview && selectedFile !== null && !after.has(selectedFile)) {
+      if (sorted.length > 0) this.selectFile(sorted[0].filename);
+      else this.selectOverview();
+    }
+  };
 
   setViewMode = (mode: "files" | "semantic") => {
     if (this.state.viewMode === mode) return;
@@ -3083,6 +3153,22 @@ export class PRReviewStore {
   loadPRData = async (): Promise<void> => {
     const { owner, repo, pr } = this.state;
 
+    // Paint the last known overview while fresh copies load
+    let freshLoaded = false;
+    this.cachedPRData()
+      .then((cached) => {
+        if (cached && !freshLoaded) {
+          this.set({
+            ...cached,
+            comments: enrichCommentsWithThreads(
+              this.state.comments,
+              cached.reviewThreads ?? this.state.reviewThreads
+            ),
+          });
+        }
+      })
+      .catch(() => {});
+
     try {
       const [
         reviewsData,
@@ -3134,14 +3220,7 @@ export class PRReviewStore {
           html_url: run.html_url,
         }));
 
-      // Check if branch was already deleted from timeline
-      const deleteCount = timelineData.filter(
-        (event) => (event as { event?: string }).event === "head_ref_deleted"
-      ).length;
-      const restoreCount = timelineData.filter(
-        (event) => (event as { event?: string }).event === "head_ref_restored"
-      ).length;
-
+      freshLoaded = true;
       this.set({
         reviews: reviewsData,
         checks: checksData,
@@ -3158,14 +3237,72 @@ export class PRReviewStore {
         viewerPermission:
           reviewThreadsResult.viewerPermission ?? this.state.viewerPermission,
         viewerCanMergeAsAdmin: reviewThreadsResult.viewerCanMergeAsAdmin,
-        branchDeleted: deleteCount > restoreCount,
+        branchDeleted: isBranchDeleted(timelineData),
         loading: false,
       });
     } catch (error) {
+      freshLoaded = true;
       console.error("Failed to load PR data:", error);
       this.set({ loading: false });
     }
   };
+
+  /**
+   * Overview data from the durable cache, or null when any piece is missing
+   * or the PR's live fingerprint says the cached copy is out of date.
+   */
+  private async cachedPRData(): Promise<Partial<PRReviewState> | null> {
+    const { owner, repo, pr } = this.state;
+    const peek = this.github.peekCache;
+    const [reviews, conversation, timeline, commits, threads, checks] =
+      await Promise.all([
+        peek<Review[]>(cacheKeys.prReviews(owner, repo, pr.number)),
+        peek<IssueComment[]>(cacheKeys.prConversation(owner, repo, pr.number)),
+        peek<TimelineEvent[]>(cacheKeys.prTimeline(owner, repo, pr.number)),
+        peek<PRCommit[]>(cacheKeys.prCommits(owner, repo, pr.number)),
+        peek<{
+          threads: ReviewThread[];
+          viewerPermission: string | null;
+          viewerCanMergeAsAdmin: boolean;
+        }>(cacheKeys.prThreads(owner, repo, pr.number)),
+        peek<ChecksData>(cacheKeys.checks(owner, repo, pr.head.sha)),
+      ]);
+    if (
+      !reviews ||
+      !conversation ||
+      !timeline ||
+      !commits ||
+      !threads ||
+      !checks
+    ) {
+      return null;
+    }
+
+    // CI never bumps the PR's updatedAt, so compare its rollup separately
+    const live = await this.github
+      .getPRFingerprint(owner, repo, pr.number)
+      .catch(() => null);
+    if (
+      !live ||
+      !fingerprintMatchesPR(live, pr) ||
+      checksRollupState(checks) !== live.ciState
+    ) {
+      return null;
+    }
+
+    return {
+      reviews,
+      conversation,
+      timeline,
+      commits,
+      reviewThreads: threads.threads,
+      viewerPermission: threads.viewerPermission,
+      viewerCanMergeAsAdmin: threads.viewerCanMergeAsAdmin,
+      checks,
+      branchDeleted: isBranchDeleted(timeline),
+      loading: false,
+    };
+  }
 
   /**
    * Refresh just the checks data
@@ -3583,7 +3720,6 @@ interface PRReviewProviderProps {
   comments: ReviewComment[];
   owner: string;
   repo: string;
-  viewerPermission: string | null;
   children: ReactNode;
 }
 
@@ -3594,7 +3730,6 @@ export function PRReviewProvider({
   comments,
   owner,
   repo,
-  viewerPermission,
   children,
 }: PRReviewProviderProps) {
   // Create store once and keep it stable
@@ -3606,7 +3741,8 @@ export function PRReviewProvider({
       comments,
       owner,
       repo,
-      viewerPermission,
+      // Comes from the review threads query in loadPRData
+      viewerPermission: null,
     });
   }
 
@@ -3615,15 +3751,28 @@ export function PRReviewProvider({
     storeRef.current?.loadPRData();
   }, []);
 
+  // Sync PR and files from props: the page may first render a cached copy
+  // and swap in fresh data (or rebuilt patches) once it arrives.
+  const loadedHeadSha = useRef(pr.head.sha);
+  useEffect(() => {
+    const store = storeRef.current;
+    if (!store || store.getSnapshot().pr === pr) return;
+    store.setPr(pr);
+    // Commits and checks belong to the head commit; reload them if it moved
+    if (loadedHeadSha.current !== pr.head.sha) {
+      loadedHeadSha.current = pr.head.sha;
+      store.loadPRData();
+    }
+  }, [pr]);
+
+  useEffect(() => {
+    storeRef.current?.replaceFiles(files);
+  }, [files]);
+
   // Sync comments from props (for when they're refreshed from server)
   useEffect(() => {
     storeRef.current?.setComments(comments);
   }, [comments]);
-
-  // Sync viewerPermission from props
-  useEffect(() => {
-    storeRef.current?.setViewerPermission(viewerPermission);
-  }, [viewerPermission]);
 
   // Extract relevant users for @mention suggestions
   // Priority: PR participants (author, reviewers, assignees, commenters)

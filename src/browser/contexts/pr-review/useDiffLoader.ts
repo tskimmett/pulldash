@@ -9,7 +9,10 @@ const pendingFetches = new Map<
   string,
   { promise: Promise<ParsedDiff>; controller: AbortController }
 >();
-const MAX_CACHE_SIZE = 100;
+// Holds patch-only and full-content parses side by side.
+const MAX_CACHE_SIZE = 200;
+// Shared so identity checks against the store's loaded diff stay stable.
+const EMPTY_DIFF: ParsedDiff = { hunks: [] };
 
 // Check if a diff is already cached with full syntax highlighting (sync check).
 // Keyed by base ref as well as blob sha: the same head blob has a different
@@ -18,20 +21,23 @@ function getFullDiffFromCache(
   file: PullRequestFile,
   baseRef: string
 ): ParsedDiff | null {
-  if (!file.patch || !file.sha) {
-    return { hunks: [] };
-  }
+  if (!file.patch || !file.sha) return EMPTY_DIFF;
   // Only return if we have the full content version with proper syntax highlighting
   return diffCache.get(`${baseRef}:${file.sha}:full`) ?? null;
 }
 
-// Abort all pending fetches (used when navigating rapidly)
-function abortAllPendingFetches() {
+// Abort all pending fetches (used when navigating rapidly), except the one
+// for the file still being shown.
+function abortAllPendingFetches(exceptKey?: string) {
   for (const [key, { controller }] of pendingFetches) {
+    if (key === exceptKey) continue;
     controller.abort();
     pendingFetches.delete(key);
   }
 }
+
+// Diffs parsed from the patch alone, shown while full file contents load.
+const patchOnlyDiffs = new WeakSet<ParsedDiff>();
 
 /** Content getter function type for fetching file content */
 type FileContentGetter = (path: string, ref: string) => Promise<string>;
@@ -43,9 +49,7 @@ async function fetchParsedDiff(
   baseRef?: string,
   headRef?: string
 ): Promise<ParsedDiff> {
-  if (!file.patch || !file.sha) {
-    return { hunks: [] };
-  }
+  if (!file.patch || !file.sha) return EMPTY_DIFF;
 
   // Cache key includes whether we have file content (for better highlighting)
   const hasContent = !!(getFileContent && baseRef && headRef);
@@ -176,17 +180,37 @@ export function useDiffLoader() {
     // Check cache synchronously - only use if we have full content version
     const cached = getFullDiffFromCache(file, baseRef);
     if (cached) {
-      if (!loadedDiffs[currentFile]) {
+      if (loadedDiffs[currentFile] !== cached) {
         store.setLoadedDiff(currentFile, cached);
       }
       return;
     }
 
-    // Already loaded in store
-    if (loadedDiffs[currentFile]) return;
+    // Already loaded in store (a patch-only diff still needs its upgrade)
+    const loaded = loadedDiffs[currentFile];
+    if (loaded && !patchOnlyDiffs.has(loaded)) return;
 
     // Abort ALL pending fetches - only care about current file
-    abortAllPendingFetches();
+    abortAllPendingFetches(`${baseRef}:${file.sha}:full`);
+
+    // Show the diff from the patch right away. Full file contents only
+    // refine highlighting and enable context expansion.
+    if (!loaded) {
+      fetchParsedDiff(file, undefined, undefined, baseRef)
+        .then((diff) => {
+          const state = store.getSnapshot();
+          if (
+            state.selectedFile === currentFile &&
+            !state.loadedDiffs[currentFile] &&
+            !getFullDiffFromCache(file, baseRef)
+          ) {
+            patchOnlyDiffs.add(diff);
+            store.setLoadedDiff(currentFile, diff);
+            store.setDiffLoading(currentFile, false);
+          }
+        })
+        .catch(() => {});
+    }
 
     // Start fetch immediately (no debounce - we have deduplication)
     // Show loading only if fetch takes > 50ms
@@ -207,7 +231,9 @@ export function useDiffLoader() {
     fetchParsedDiff(file, undefined, getFileContent, baseRef, headRef)
       .then((diff) => {
         if (store.getSnapshot().selectedFile === currentFile) {
-          store.setLoadedDiff(currentFile, diff);
+          if (store.getSnapshot().loadedDiffs[currentFile] !== diff) {
+            store.setLoadedDiff(currentFile, diff);
+          }
           store.setDiffLoading(currentFile, false);
 
           // Prefetch next files aggressively (5 ahead, 2 behind)

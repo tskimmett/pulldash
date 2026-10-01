@@ -1,5 +1,5 @@
 import type { ReviewComment } from "@/api/types";
-import { useGitHub, type Review } from "@/browser/contexts/github";
+import { cacheKeys, useGitHub, type Review } from "@/browser/contexts/github";
 import { useTelemetry } from "@/browser/contexts/telemetry";
 import { usePRReviewStore, usePRReviewSelector } from ".";
 
@@ -18,14 +18,18 @@ export function useReviewActions() {
     store.setSubmittingReview(true);
 
     let newReview: Review | null = null;
+    let submittedReviewId: number | null = null;
 
     try {
       // Get the pending review node ID (from GraphQL)
       const reviewNodeId = store.getPendingReviewNodeId();
 
       if (reviewNodeId) {
-        // Submit via GraphQL - we'll find the review ID after refreshing
-        await github.submitPendingReview(reviewNodeId, event, state.reviewBody);
+        submittedReviewId = await github.submitPendingReview(
+          reviewNodeId,
+          event,
+          state.reviewBody
+        );
       } else if (state.pendingComments.length > 0) {
         // Fallback: create a new review with all comments via REST
         newReview = await github.createPRReview(owner, repo, pr.number, {
@@ -62,28 +66,21 @@ export function useReviewActions() {
         files_reviewed: state.viewedFiles.size,
       });
 
-      // Invalidate timeline cache so we get fresh data
-      github.invalidateCache(`pr:${owner}/${repo}/${pr.number}:timeline`);
-
-      // Refresh comments, reviews, and timeline
-      const [newComments, reviews, timeline, threadsResult] = await Promise.all(
-        [
-          github.getPRComments(owner, repo, pr.number),
-          github.getPRReviews(owner, repo, pr.number),
-          github.getPRTimeline(owner, repo, pr.number),
-          github.getReviewThreads(owner, repo, pr.number).catch(() => null),
-        ]
-      );
+      submittedReviewId ??= newReview?.id ?? null;
+      const { updatedPR, newComments, reviews, timeline, threadsResult } =
+        await refreshUntilReviewVisible(submittedReviewId);
+      // Reviewing removes you from requested reviewers
+      if (updatedPR) store.setPr(updatedPR);
       // Threads first so setComments can stamp resolved state onto comments
       if (threadsResult) store.setReviewThreads(threadsResult.threads);
       store.setComments(newComments as ReviewComment[]);
       store.setReviews(reviews);
       store.setTimeline(timeline);
 
-      // If we got the review ID from REST, use it; otherwise find the latest review
+      // Scroll to the submitted review, or the latest one if its ID is unknown
       let scrollTarget: string | undefined;
-      if (newReview?.id) {
-        scrollTarget = `pullrequestreview-${newReview.id}`;
+      if (submittedReviewId) {
+        scrollTarget = `pullrequestreview-${submittedReviewId}`;
       } else if (reviews.length > 0) {
         // Find the most recent review (likely the one we just submitted)
         const sortedReviews = [...reviews].sort(
@@ -102,6 +99,43 @@ export function useReviewActions() {
       store.selectOverview(scrollTarget);
     } finally {
       store.setSubmittingReview(false);
+    }
+  };
+
+  /**
+   * Refetch the conversation after submitting. GitHub's lists can lag a
+   * moment behind a write, so retry until the submitted review shows up.
+   */
+  const refreshUntilReviewVisible = async (reviewId: number | null) => {
+    const prKey = cacheKeys.pr(owner, repo, pr.number);
+    for (let attempt = 0; ; attempt++) {
+      // Just the PR itself, not its files and other nested data
+      github.invalidateCache((key) => key === prKey);
+      github.invalidateCache(cacheKeys.prTimeline(owner, repo, pr.number));
+      github.invalidateCache(cacheKeys.prComments(owner, repo, pr.number));
+      github.invalidateCache(cacheKeys.prReviews(owner, repo, pr.number));
+      github.invalidateCache(cacheKeys.prThreads(owner, repo, pr.number));
+
+      const [updatedPR, newComments, reviews, timeline, threadsResult] =
+        await Promise.all([
+          github.getPR(owner, repo, pr.number).catch(() => null),
+          github.getPRComments(owner, repo, pr.number),
+          github.getPRReviews(owner, repo, pr.number),
+          github.getPRTimeline(owner, repo, pr.number),
+          github.getReviewThreads(owner, repo, pr.number).catch(() => null),
+        ]);
+      const visible =
+        reviewId === null ||
+        (reviews.some((r) => r.id === reviewId) &&
+          timeline.some(
+            (e) =>
+              (e as { event?: string; id?: number }).event === "reviewed" &&
+              (e as { id?: number }).id === reviewId
+          ));
+      if (visible || attempt >= 3) {
+        return { updatedPR, newComments, reviews, timeline, threadsResult };
+      }
+      await new Promise((resolve) => setTimeout(resolve, 500 * 2 ** attempt));
     }
   };
 

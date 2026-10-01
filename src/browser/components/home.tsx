@@ -383,6 +383,7 @@ export function Home() {
   // Convenience accessors
   const prs = prList.items;
   const loadingPrs = prList.loading;
+  const refreshingPrs = loadingPrs || prList.refreshing;
   const totalCount = prList.totalCount;
 
   // Search repositories with debounce
@@ -935,20 +936,20 @@ export function Home() {
               )}
             </span>
             <div className="flex items-center gap-2">
-              {prList.lastFetchedAt && !loadingPrs && (
+              {prList.lastFetchedAt && !refreshingPrs && (
                 <RefreshCountdown lastFetchedAt={prList.lastFetchedAt} />
               )}
               <button
                 onClick={refreshPRList}
-                disabled={loadingPrs}
+                disabled={refreshingPrs}
                 className={cn(
                   "p-1 rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground",
-                  loadingPrs && "opacity-50"
+                  refreshingPrs && "opacity-50"
                 )}
                 title="Refresh"
               >
                 <RefreshCw
-                  className={cn("w-3.5 h-3.5", loadingPrs && "animate-spin")}
+                  className={cn("w-3.5 h-3.5", refreshingPrs && "animate-spin")}
                 />
               </button>
             </div>
@@ -1114,10 +1115,17 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
   const isMerged = pr.pull_request?.merged_at != null;
   const isClosed = pr.state === "closed" && !isMerged;
 
+  const github = useGitHubStore();
+
   const handleClick = () => {
     if (repoInfo) {
       onSelect(repoInfo.owner, repoInfo.repo, pr.number, pr.title);
     }
+  };
+
+  // Start loading the PR as soon as it's likely to be opened
+  const handlePrefetch = () => {
+    if (repoInfo) github.prefetchPR(repoInfo.owner, repoInfo.repo, pr.number);
   };
 
   // CI status indicator with details
@@ -1437,6 +1445,8 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
   return (
     <button
       onClick={handleClick}
+      onMouseEnter={handlePrefetch}
+      onFocus={handlePrefetch}
       className="w-full flex items-start gap-2 sm:gap-3 px-2 sm:px-4 py-3 hover:bg-muted/50 transition-colors text-left"
     >
       {/* PR Icon */}

@@ -62,11 +62,11 @@ import {
   useSidebarWidth,
 } from "@/browser/lib/sidebar-width";
 import { isTestFile } from "@/browser/lib/test-file";
-import { enrichCommentsWithThreads } from "@/browser/lib/review-threads";
 import { FileHeader } from "./file-header";
 import { AllFilesDiff } from "./all-files-diff";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import {
+  cacheKeys,
   useGitHub,
   useGitHubStore,
   useGitHubReady,
@@ -229,8 +229,6 @@ export function PRReviewContent({
   const [pr, setPr] = useState<PullRequest | null>(null);
   const [files, setFiles] = useState<PullRequestFile[]>([]);
   const [comments, setComments] = useState<ReviewComment[]>([]);
-  const [viewerPermission, setViewerPermission] = useState<string | null>(null);
-  const [viewerCanMergeAsAdmin, setViewerCanMergeAsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -240,35 +238,56 @@ export function PRReviewContent({
   useEffect(() => {
     if (!githubReady) return;
 
-    const fetchData = async () => {
-      setLoading(true);
-      setError(null);
+    let cancelled = false;
+    let freshLoaded = false;
+    let showingCached = false;
+    setLoading(true);
+    setError(null);
 
-      try {
-        const [prData, filesData, commentsData, reviewThreadsResult] =
-          await Promise.all([
-            github.getPR(owner, repo, number),
-            github.getPRFiles(owner, repo, number),
-            github.getPRComments(owner, repo, number),
-            github.getReviewThreads(owner, repo, number).catch(() => ({
-              threads: [],
-              viewerPermission: null,
-              viewerCanMergeAsAdmin: false,
-            })),
-          ]);
+    // Render the cached copy as soon as a quick fingerprint check confirms
+    // it's still current; otherwise wait for fresh data.
+    const started = performance.now();
+    Promise.all([
+      github.peekCache<PullRequest>(cacheKeys.pr(owner, repo, number)),
+      github.peekCache<PullRequestFile[]>(
+        cacheKeys.prFiles(owner, repo, number)
+      ),
+      github.peekCache<ReviewComment[]>(
+        cacheKeys.prComments(owner, repo, number)
+      ),
+      github.isCachedPRCurrent(owner, repo, number),
+    ])
+      .then(([cachedPr, cachedFiles, cachedComments, current]) => {
+        if (cachedPr) {
+          console.debug(
+            `[pulldash] cached PR ${current ? "verified" : "outdated"} in ${Math.round(performance.now() - started)}ms${freshLoaded ? " (fresh data already shown)" : ""}`
+          );
+        }
+        if (cancelled || freshLoaded || !current) return;
+        if (!cachedPr || !cachedFiles) return;
+        setPr(cachedPr);
+        setFiles(cachedFiles);
+        if (cachedComments) setComments(cachedComments);
+        showingCached = true;
+        setLoading(false);
+      })
+      .catch(() => {});
 
+    // Only the PR and its file list block rendering. Comments and review
+    // threads (loaded by the review store) fill in afterwards.
+    Promise.all([
+      github.getPR(owner, repo, number),
+      github.getPRFiles(owner, repo, number),
+    ])
+      .then(([prData, filesData]) => {
+        if (cancelled) return;
+        console.debug(
+          `[pulldash] fresh PR loaded in ${Math.round(performance.now() - started)}ms`
+        );
+        freshLoaded = true;
         setPr(prData);
         setFiles(filesData);
-        // REST comments carry no thread/resolution info; stamp it on from
-        // the GraphQL threads so resolved threads render as such.
-        setComments(
-          enrichCommentsWithThreads(
-            commentsData as ReviewComment[],
-            reviewThreadsResult.threads
-          )
-        );
-        setViewerPermission(reviewThreadsResult.viewerPermission);
-        setViewerCanMergeAsAdmin(reviewThreadsResult.viewerCanMergeAsAdmin);
+        setLoading(false);
 
         // Track PR viewed
         track("pr_viewed", {
@@ -279,14 +298,32 @@ export function PRReviewContent({
           additions: prData.additions,
           deletions: prData.deletions,
         });
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Unknown error");
-      } finally {
-        setLoading(false);
-      }
-    };
 
-    fetchData();
+        github
+          .recoverPRFilePatches(owner, repo, prData, filesData)
+          .then((recovered) => {
+            if (!cancelled && recovered !== filesData) setFiles(recovered);
+          });
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        freshLoaded = true;
+        // Keep showing a cached copy if we have one
+        if (showingCached) console.error("Failed to refresh PR:", e);
+        else setError(e instanceof Error ? e.message : "Unknown error");
+        setLoading(false);
+      });
+
+    github
+      .getPRComments(owner, repo, number)
+      .then((commentsData) => {
+        if (!cancelled) setComments(commentsData);
+      })
+      .catch((e) => console.error("Failed to load review comments:", e));
+
+    return () => {
+      cancelled = true;
+    };
   }, [github, owner, repo, number, track, githubReady]);
 
   // Show loading while GitHub client initializes
@@ -329,7 +366,6 @@ export function PRReviewContent({
       comments={comments}
       owner={owner}
       repo={repo}
-      viewerPermission={viewerPermission}
     >
       <PRReviewLayout />
     </PRReviewProvider>
@@ -3128,6 +3164,8 @@ function useCommentDraft(key: string | null, initial = "") {
 // ============================================================================
 
 interface InlineCommentFormProps {
+  /** File to comment on; defaults to the selected file. */
+  path?: string;
   line: number;
   startLine?: number;
   side: CommentSide;
@@ -3153,8 +3191,6 @@ export const InlineCommentForm = memo(function InlineCommentForm({
 
   const handleSubmit = useCallback(async () => {
     if (!text.trim()) return;
-  /** File to comment on; defaults to the selected file. */
-  path?: string;
 
     setSubmitting(true);
     setError(null);
