@@ -5,6 +5,8 @@ import {
   findLastReviewedSha,
   isRangeAvailable,
   rangeCacheKey,
+  rangeToSelection,
+  selectionToRange,
 } from "./review-range";
 
 const commits = [{ sha: "a" }, { sha: "b" }, { sha: "c" }, { sha: "d" }];
@@ -55,6 +57,34 @@ test("isRangeAvailable requires a known start with newer commits", () => {
   expect(isRangeAvailable(commits, "zzz", "d")).toBe(false);
   expect(isRangeAvailable(commits, "b", "zzz")).toBe(false);
   expect(commitsInRange(commits, "b", "c")?.map((c) => c.sha)).toEqual(["c"]);
+});
+
+test("selectionToRange and rangeToSelection round-trip commit selections", () => {
+  const withParent = [
+    { sha: "a", parents: [{ sha: "base" }] },
+    ...commits.slice(1),
+  ];
+  expect(selectionToRange(withParent, 0, 3)).toBeNull();
+  expect(selectionToRange(withParent, 0, 0)).toEqual({
+    startSha: "base",
+    endSha: "a",
+  });
+  expect(selectionToRange(withParent, 2, 3)).toEqual({ startSha: "b" });
+  expect(selectionToRange(withParent, 1, 2)).toEqual({
+    startSha: "a",
+    endSha: "c",
+  });
+  expect(selectionToRange(commits, 0, 1)).toBeUndefined();
+
+  expect(
+    rangeToSelection(withParent, { startSha: "base", endSha: "a" })
+  ).toEqual([0, 0]);
+  expect(rangeToSelection(withParent, { startSha: "b" })).toEqual([2, 3]);
+  expect(rangeToSelection(withParent, { startSha: "zzz" })).toBeNull();
+  expect(commitsInRange(withParent, "base", "b")?.map((c) => c.sha)).toEqual([
+    "a",
+    "b",
+  ]);
 });
 
 test("rangeCacheKey separates full and ranged diffs of the same blob", () => {
