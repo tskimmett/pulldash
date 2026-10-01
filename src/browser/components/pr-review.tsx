@@ -3133,7 +3133,8 @@ interface InlineCommentFormProps {
   side: CommentSide;
 }
 
-const InlineCommentForm = memo(function InlineCommentForm({
+export const InlineCommentForm = memo(function InlineCommentForm({
+  path,
   line,
   startLine,
   side,
@@ -3145,18 +3146,20 @@ const InlineCommentForm = memo(function InlineCommentForm({
   const { addPendingComment } = useCommentActions();
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
   const [text, setText, clearText] = useCommentDraft(
-    `new:${selectedFile}:${side}:${startLine ?? line}-${line}`
+    `new:${path ?? selectedFile}:${side}:${startLine ?? line}-${line}`
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = useCallback(async () => {
     if (!text.trim()) return;
+  /** File to comment on; defaults to the selected file. */
+  path?: string;
 
     setSubmitting(true);
     setError(null);
     try {
-      await addPendingComment(line, text.trim(), startLine, side);
+      await addPendingComment(line, text.trim(), startLine, side, path);
       clearText();
     } catch (e) {
       // Keep the text so the user can retry
@@ -3171,7 +3174,7 @@ const InlineCommentForm = memo(function InlineCommentForm({
     } finally {
       setSubmitting(false);
     }
-  }, [text, line, startLine, side, addPendingComment, clearText]);
+  }, [text, line, startLine, side, path, addPendingComment, clearText]);
 
   const handleCancel = useCallback(() => {
     clearText();
@@ -3330,7 +3333,7 @@ interface CommentThreadProps {
   replyingToCommentId: number | null;
 }
 
-const CommentThread = memo(function CommentThread({
+export const CommentThread = memo(function CommentThread({
   comments,
   focusedCommentId,
   editingCommentId,
@@ -4079,7 +4082,7 @@ interface PendingCommentItemProps {
   isEditing?: boolean;
 }
 
-const PendingCommentItem = memo(function PendingCommentItem({
+export const PendingCommentItem = memo(function PendingCommentItem({
   comment,
   isFocused,
   isEditing,

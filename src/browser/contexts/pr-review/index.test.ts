@@ -412,6 +412,17 @@ test("startCommenting records LEFT side for old-side lines", () => {
 });
 
 test("startCommentingOnFocusedLine derives side from focused line", () => {
+test("startCommenting targets an explicit file without selecting it", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+
+  store.startCommenting(3, undefined, "new", "src/other.ts");
+
+  const state = store.getSnapshot();
+  expect(state.commentingOnLine?.path).toBe("src/other.ts");
+  expect(state.selectedFile).toBe("src/index.ts");
+});
+
   const store = createStore();
   store.selectFile("src/index.ts");
   store.setFocusedLine(7, "old");

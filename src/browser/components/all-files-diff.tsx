@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Check,
@@ -9,11 +9,21 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "../cn";
-import { usePRReviewSelector, usePRReviewStore } from "../contexts/pr-review";
+import {
+  usePRReviewSelector,
+  usePRReviewStore,
+  visibleComments,
+  type LocalPendingComment,
+} from "../contexts/pr-review";
 import { diffService } from "../lib/diff";
 import { parsePatchLines, type PatchLine } from "../lib/patch-lines";
 import { isTestFile } from "../lib/test-file";
-import type { PullRequestFile } from "@/api/types";
+import type { PullRequestFile, ReviewComment } from "@/api/types";
+import {
+  CommentThread,
+  InlineCommentForm,
+  PendingCommentItem,
+} from "./pr-review";
 
 const highlightedPatchCache = new WeakMap<PullRequestFile, string[]>();
 
@@ -266,6 +276,53 @@ const AllFileSection = memo(function AllFileSection({
     () => (isViewed ? [] : parsePatchLines(file.patch ?? "")),
     [file.patch, isViewed]
   );
+  const allComments = usePRReviewSelector((s) => s.comments);
+  const allPending = usePRReviewSelector((s) => s.pendingComments);
+  const hideResolved = usePRReviewSelector((s) => s.hideResolvedComments);
+  const commenting = usePRReviewSelector((s) =>
+    s.commentingOnLine?.path === file.filename ? s.commentingOnLine : null
+  );
+  const focusedCommentId = usePRReviewSelector((s) => s.focusedCommentId);
+  const focusedPendingCommentId = usePRReviewSelector(
+    (s) => s.focusedPendingCommentId
+  );
+  const editingCommentId = usePRReviewSelector((s) => s.editingCommentId);
+  const editingPendingCommentId = usePRReviewSelector(
+    (s) => s.editingPendingCommentId
+  );
+  const replyingToCommentId = usePRReviewSelector((s) => s.replyingToCommentId);
+
+  // Keyed by `${side}:${line}` so old-side and new-side comments stay apart.
+  const threadsByKey = useMemo(() => {
+    const roots = new Map<number, ReviewComment[]>();
+    const result = new Map<string, ReviewComment[][]>();
+    const fileComments = visibleComments(
+      allComments.filter((c) => c.path === file.filename),
+      hideResolved
+    );
+    for (const c of fileComments) {
+      if (c.in_reply_to_id) continue;
+      const line = c.line ?? c.original_line;
+      if (!line) continue;
+      const thread = [c];
+      roots.set(c.id, thread);
+      const key = `${c.side === "LEFT" ? "LEFT" : "RIGHT"}:${line}`;
+      result.set(key, [...(result.get(key) ?? []), thread]);
+    }
+    for (const c of fileComments) {
+      if (c.in_reply_to_id) roots.get(c.in_reply_to_id)?.push(c);
+    }
+    return result;
+  }, [allComments, file.filename, hideResolved]);
+  const pendingByKey = useMemo(() => {
+    const result = new Map<string, LocalPendingComment[]>();
+    for (const c of allPending) {
+      if (c.path !== file.filename) continue;
+      const key = `${c.side ?? "RIGHT"}:${c.line}`;
+      result.set(key, [...(result.get(key) ?? []), c]);
+    }
+    return result;
+  }, [allPending, file.filename]);
   const [highlighted, setHighlighted] = useState<{
     file: PullRequestFile;
     lines: string[];
@@ -345,27 +402,77 @@ const AllFileSection = memo(function AllFileSection({
       </div>
       {isViewed ? null : lines.length ? (
         <div className="font-mono text-xs overflow-x-auto [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)] diff-line-container">
-          {lines.map((line, index) => (
-            <div
-              key={index}
-              data-find-line={index}
-              className={cn(
-                matchingLines.has(`${fileIndex}:${index}`) &&
-                  "outline outline-1 outline-yellow-400",
-                activeLine === index &&
-                  "relative z-10 outline-2 outline-yellow-500"
-              )}
-            >
-              <AllFileLine
-                line={line}
-                html={
-                  line.type === "hunk"
-                    ? undefined
-                    : highlightedLines?.[codeLineIndex++]
-                }
-              />
-            </div>
-          ))}
+          {lines.map((line, index) => {
+            const side = line.type === "delete" ? "LEFT" : "RIGHT";
+            const lineNum = side === "LEFT" ? line.oldLine : line.newLine;
+            const key = `${side}:${lineNum}`;
+            return (
+              <Fragment key={index}>
+                <div
+                  data-find-line={index}
+                  className={cn(
+                    matchingLines.has(`${fileIndex}:${index}`) &&
+                      "outline outline-1 outline-yellow-400",
+                    activeLine === index &&
+                      "relative z-10 outline-2 outline-yellow-500"
+                  )}
+                >
+                  <AllFileLine
+                    line={line}
+                    html={
+                      line.type === "hunk"
+                        ? undefined
+                        : highlightedLines?.[codeLineIndex++]
+                    }
+                    onComment={
+                      lineNum
+                        ? () =>
+                            store.startCommenting(
+                              lineNum,
+                              undefined,
+                              side === "LEFT" ? "old" : "new",
+                              file.filename
+                            )
+                        : undefined
+                    }
+                  />
+                </div>
+                {lineNum &&
+                  pendingByKey
+                    .get(key)
+                    ?.map((comment) => (
+                      <PendingCommentItem
+                        key={comment.id}
+                        comment={comment}
+                        isFocused={focusedPendingCommentId === comment.id}
+                        isEditing={editingPendingCommentId === comment.id}
+                      />
+                    ))}
+                {lineNum &&
+                  threadsByKey
+                    .get(key)
+                    ?.map((thread) => (
+                      <CommentThread
+                        key={thread[0].id}
+                        comments={thread}
+                        focusedCommentId={focusedCommentId}
+                        editingCommentId={editingCommentId}
+                        replyingToCommentId={replyingToCommentId}
+                      />
+                    ))}
+                {lineNum &&
+                  commenting?.line === lineNum &&
+                  commenting.side === side && (
+                    <InlineCommentForm
+                      path={file.filename}
+                      line={commenting.line}
+                      startLine={commenting.startLine}
+                      side={commenting.side}
+                    />
+                  )}
+              </Fragment>
+            );
+          })}
         </div>
       ) : (
         <div className="p-4 text-sm text-muted-foreground">
@@ -376,7 +483,15 @@ const AllFileSection = memo(function AllFileSection({
   );
 });
 
-function AllFileLine({ line, html }: { line: PatchLine; html?: string }) {
+function AllFileLine({
+  line,
+  html,
+  onComment,
+}: {
+  line: PatchLine;
+  html?: string;
+  onComment?: () => void;
+}) {
   if (line.type === "hunk") {
     return (
       <div className="h-5 px-2 whitespace-pre bg-blue-500/10 text-blue-400">
@@ -387,8 +502,12 @@ function AllFileLine({ line, html }: { line: PatchLine; html?: string }) {
 
   return (
     <div
+      onClick={() => {
+        if (!window.getSelection()?.toString()) onComment?.();
+      }}
       className={cn(
-        "flex min-h-5 whitespace-pre-wrap box-border contain-layout diff-line-row"
+        "flex min-h-5 whitespace-pre-wrap box-border contain-layout diff-line-row",
+        onComment && "cursor-pointer"
       )}
       style={
         line.type === "normal"

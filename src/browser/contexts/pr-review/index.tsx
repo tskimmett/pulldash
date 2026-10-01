@@ -140,6 +140,8 @@ export type CommentSide = "LEFT" | "RIGHT";
 
 export interface CommentingOnLine {
   line: number;
+  /** File being commented on; defaults to the selected file. */
+  path?: string;
   startLine?: number;
   /** GitHub diff side: LEFT for deleted lines, RIGHT for added/context. */
   side: CommentSide;
@@ -2462,10 +2464,11 @@ export class PRReviewStore {
   startCommenting = (
     line: number,
     startLine?: number,
-    lineSide: "old" | "new" | null = "new"
+    lineSide: "old" | "new" | null = "new",
+    path?: string
   ) => {
     const side = toCommentSide(lineSide);
-    const { selectedFile } = this.state;
+    const selectedFile = path ?? this.state.selectedFile;
     // In a narrowed range the old side is an intermediate commit, not the PR
     // base, so LEFT line numbers would not match what GitHub expects.
     if (side === "LEFT" && this.state.diffRange) return;
@@ -2479,7 +2482,7 @@ export class PRReviewStore {
     ) {
       return;
     }
-    this.set({ commentingOnLine: { line, startLine, side } });
+    this.set({ commentingOnLine: { path, line, startLine, side } });
   };
 
   startCommentingOnFocusedLine = () => {

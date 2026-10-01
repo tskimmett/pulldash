@@ -20,16 +20,18 @@ export function useCommentActions() {
     line: number,
     body: string,
     startLine?: number,
-    side: CommentSide = "RIGHT"
+    side: CommentSide = "RIGHT",
+    file?: string
   ) => {
     const state = store.getSnapshot();
-    if (!state.selectedFile) return;
+    const path = file ?? state.selectedFile;
+    if (!path) return;
 
     // Create a local comment first for immediate UI feedback
     const localId = `pending-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
     const newComment: LocalPendingComment = {
       id: localId,
-      path: state.selectedFile,
+      path,
       line,
       start_line: startLine,
       body,
@@ -50,7 +52,7 @@ export function useCommentActions() {
     // Sync to GitHub via GraphQL - this creates/adds to the pending review
     try {
       const result = await github.addPendingComment(owner, repo, pr.number, {
-        path: state.selectedFile,
+        path,
         line,
         body,
         startLine,
