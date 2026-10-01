@@ -125,7 +125,7 @@ export const DiffRangeButton = memo(function DiffRangeButton() {
   const content = (
     <PopoverContent
       align="end"
-      className="w-[420px] max-w-[calc(100vw-1rem)] p-0 overflow-hidden"
+      className="w-[560px] max-w-[calc(100vw-1rem)] p-0 overflow-hidden"
       // Keep the app's global shortcuts (j/k, etc.) from firing underneath.
       onKeyDown={(event) => {
         if (event.key !== "Escape" && event.key !== "Tab") {
