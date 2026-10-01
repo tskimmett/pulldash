@@ -417,7 +417,7 @@ export const PROverview = memo(function PROverview() {
   }, [github, owner, repo, pr.number, store]);
 
   const handleRequestReviewer = useCallback(
-    async (login: string) => {
+    async (login: string, knownAvatarUrl?: string) => {
       // Find the collaborator to get avatar_url
       const collaborator = collaborators.find((c) => c.login === login);
       try {
@@ -427,7 +427,7 @@ export const PROverview = memo(function PROverview() {
         // 2. Update our state with the known change
         const newReviewer = {
           login,
-          avatar_url: collaborator?.avatar_url ?? "",
+          avatar_url: knownAvatarUrl ?? collaborator?.avatar_url ?? "",
           id: 0,
           node_id: "",
           gravatar_id: "",
@@ -1509,7 +1509,33 @@ export const PROverview = memo(function PROverview() {
                             </span>
                           </UserHoverCard>
                         )}
-                        <span className="ml-auto">
+                        <span className="ml-auto flex items-center gap-2">
+                          {review.user &&
+                            canMergeRepo &&
+                            pr.state === "open" &&
+                            !pr.merged &&
+                            review.user.type !== "Bot" &&
+                            review.user.login !== pr.user.login && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    onClick={() =>
+                                      handleRequestReviewer(
+                                        review.user!.login,
+                                        review.user!.avatar_url
+                                      )
+                                    }
+                                    className="p-0.5 text-blue-400 hover:text-blue-300 transition-colors"
+                                    aria-label="Re-request review"
+                                  >
+                                    <RefreshCw className="w-3.5 h-3.5" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  Re-request review
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
                           <ReviewStateIcon state={review.state} showTooltip />
                         </span>
                         {/* Matches the remove-button slot on pending rows */}
