@@ -124,16 +124,11 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
     overscan: 2,
   });
 
-  useLayoutEffect(() => {
-    // measure() drops every cached size, and mounted rows only re-report theirs
-    // when they resize, so re-measure them or they fall back to the estimates
-    // and overlap their neighbours.
-    virtualizer.measure();
-    scrollRef.current
-      ?.querySelectorAll<HTMLElement>("[data-index]")
-      .forEach((el) => virtualizer.measureElement(el));
-  }, [estimatedHeights, virtualizer]);
-
+  // No virtualizer.measure() on estimate changes: it drops every measured row
+  // height, and mounted rows only re-report when they resize, so unchanged
+  // rows would fall back to estimates and overlap. Rows that change size
+  // (e.g. toggled viewed) report via ResizeObserver, which also refreshes
+  // estimates for rows not measured yet.
   useEffect(() => {
     const index = files.findIndex((file) => file.filename === selectedFile);
     if (index >= 0) virtualizer.scrollToIndex(index, { align: "start" });
