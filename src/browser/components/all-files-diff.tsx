@@ -1,5 +1,13 @@
 import { useFindHighlights } from "../lib/find-highlight";
-import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Fragment,
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Check,
@@ -116,8 +124,14 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
     overscan: 2,
   });
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    // measure() drops every cached size, and mounted rows only re-report theirs
+    // when they resize, so re-measure them or they fall back to the estimates
+    // and overlap their neighbours.
     virtualizer.measure();
+    scrollRef.current
+      ?.querySelectorAll<HTMLElement>("[data-index]")
+      .forEach((el) => virtualizer.measureElement(el));
   }, [estimatedHeights, virtualizer]);
 
   useEffect(() => {
