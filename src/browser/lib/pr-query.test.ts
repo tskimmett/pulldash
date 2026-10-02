@@ -32,6 +32,10 @@ test("pr-query: text is appended to every feed query, never searched alone", () 
     "is:pr repo:a/b in:title,body fix",
     "is:pr review-requested:@me in:title,body fix",
   ]);
+  expect(buildTextSearchQueries(["is:pr repo:a/b"], "feat/login-fix")).toEqual([
+    "is:pr repo:a/b in:title,body feat/login-fix",
+    "is:pr repo:a/b head:feat/login-fix",
+  ]);
   expect(buildTextSearchQueries(feed, "  ")).toEqual([]);
   expect(buildTextSearchQueries([], "fix")).toEqual([]);
 });

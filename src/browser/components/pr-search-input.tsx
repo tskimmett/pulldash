@@ -30,8 +30,8 @@ const MIN_CHARS = 2;
 const MAX_RESULTS = 8;
 const DEBOUNCE_MS = 250;
 
-// Header input: paste a PR URL to open it, or type text to search the PRs
-// covered by the feed's filters.
+// Header input: paste a PR URL to open it, or type text or a branch name to
+// search the PRs covered by the feed's filters.
 export function PRSearchInput() {
   const openPRReviewTab = useOpenPRReviewTab();
   const store = useGitHubStore();
@@ -175,7 +175,7 @@ export function PRSearchInput() {
             }}
             onFocus={() => setOpen(true)}
             onKeyDown={handleKeyDown}
-            placeholder="Search PRs or paste URL..."
+            placeholder="Search PRs, paste URL or branch..."
             className="w-full h-6 pl-6 pr-2 rounded-md border border-border/50 bg-foreground/5 text-[11px] placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring focus:border-transparent font-mono"
           />
           {loading ? (

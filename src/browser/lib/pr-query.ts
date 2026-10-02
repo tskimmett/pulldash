@@ -32,15 +32,24 @@ export function extractRepoFromUrl(
   return null;
 }
 
+// A single token with a separator (feature/foo, fix-login) may be a pasted
+// branch name; plain words are almost always text.
+const BRANCH_RE = /^[^\s]*[/_.-][^\s]*$/;
+
 // Scope free text to the feed: append it to every feed query so results can
-// only come from repos/modes the feed already covers.
+// only come from repos/modes the feed already covers. Branch-like text also
+// gets an exact head-branch query per feed query.
 export function buildTextSearchQueries(
   feedQueries: string[],
   text: string
 ): string[] {
   const trimmed = text.trim();
   if (!trimmed) return [];
-  return feedQueries.map((q) => `${q} in:title,body ${trimmed}`);
+  const branch = BRANCH_RE.test(trimmed);
+  return feedQueries.flatMap((q) => [
+    `${q} in:title,body ${trimmed}`,
+    ...(branch ? [`${q} head:${trimmed}`] : []),
+  ]);
 }
 
 // Merge results from several queries, dedupe, newest first
