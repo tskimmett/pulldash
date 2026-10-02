@@ -1,3 +1,4 @@
+import { useFindHighlights } from "../lib/find-highlight";
 import { Fragment, memo, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import {
@@ -89,13 +90,7 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
   }, [searchableLines, findQuery]);
   const activeIndex = Math.min(findIndex, matches.length - 1);
   const activeMatch = matches[activeIndex];
-  const matchingLines = useMemo(() => {
-    const result = new Set<string>();
-    matches.forEach(({ fileIndex, lineIndex }) =>
-      result.add(`${fileIndex}:${lineIndex}`)
-    );
-    return result;
-  }, [matches]);
+  useFindHighlights(scrollRef, findQuery, findOpen);
 
   const stepFind = (direction: number) => {
     if (!matches.length) return;
@@ -242,7 +237,6 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
                   file={file}
                   isViewed={viewedFiles.has(file.filename)}
                   fileIndex={item.index}
-                  matchingLines={matchingLines}
                   activeLine={
                     activeMatch?.fileIndex === item.index
                       ? activeMatch.lineIndex
@@ -262,13 +256,11 @@ const AllFileSection = memo(function AllFileSection({
   file,
   isViewed,
   fileIndex,
-  matchingLines,
   activeLine,
 }: {
   file: PullRequestFile;
   isViewed: boolean;
   fileIndex: number;
-  matchingLines: Set<string>;
   activeLine: number | null;
 }) {
   const store = usePRReviewStore();
@@ -410,12 +402,7 @@ const AllFileSection = memo(function AllFileSection({
               <Fragment key={index}>
                 <div
                   data-find-line={index}
-                  className={cn(
-                    matchingLines.has(`${fileIndex}:${index}`) &&
-                      "outline outline-1 outline-yellow-400",
-                    activeLine === index &&
-                      "relative z-10 outline-2 outline-yellow-500"
-                  )}
+                  data-find-active={activeLine === index ? "" : undefined}
                 >
                   <AllFileLine
                     line={line}
@@ -532,7 +519,10 @@ function AllFileLine({
       <span className="w-10 shrink-0 tabular-nums text-right opacity-50 pr-2 text-xs select-none pt-0.5 border-r border-border/30">
         {line.newLine}
       </span>
-      <span className="flex-1 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-5 pr-6 pl-2">
+      <span
+        data-find-code
+        className="flex-1 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-5 pr-6 pl-2"
+      >
         {html === undefined ? (
           line.content || " "
         ) : (

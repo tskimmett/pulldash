@@ -1,3 +1,4 @@
+import { useFindHighlights } from "../lib/find-highlight";
 import React, {
   memo,
   useCallback,
@@ -1846,7 +1847,6 @@ const DiffViewer = memo(function DiffViewer({
 
   const activeFindIndex = Math.min(findIndex, findMatches.length - 1);
   const activeFindRow = findMatches[activeFindIndex];
-  const matchingRows = useMemo(() => new Set(findMatches), [findMatches]);
 
   // Create O(1) lookup map for line numbers -> row indices
   // For split view, we need to map both old and new line numbers
@@ -2264,6 +2264,7 @@ const DiffViewer = memo(function DiffViewer({
 
   // Combined scroll + selection effect using RAF to prevent jitter
   const containerRef = useRef<HTMLDivElement>(null);
+  useFindHighlights(containerRef, findQuery, findOpen);
   const rafIdRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -2452,13 +2453,10 @@ const DiffViewer = memo(function DiffViewer({
                   return (
                     <div
                       key={virtualRow.key}
-                      className={cn(
-                        "absolute top-0 left-0 w-full",
-                        matchingRows.has(virtualRow.index) &&
-                          "outline outline-1 outline-yellow-400",
-                        activeFindRow === virtualRow.index &&
-                          "z-10 outline-2 outline-yellow-500"
-                      )}
+                      className={cn("absolute top-0 left-0 w-full")}
+                      data-find-active={
+                        activeFindRow === virtualRow.index ? "" : undefined
+                      }
                       style={{
                         transform: `translateY(${virtualRow.start}px)`,
                       }}
@@ -2761,6 +2759,7 @@ const DiffLineRow = memo(function DiffLineRow({
       </div>
       {/* Code content - click to focus line (unless selecting text) */}
       <div
+        data-find-code
         className="flex-1 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-5 pr-6 pl-2 cursor-text"
         onMouseDown={handleContentMouseDown}
         onClick={handleContentClick}
@@ -2943,6 +2942,7 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
         </div>
         {/* Code content */}
         <div
+          data-find-code
           className="flex-1 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-5 pr-2 pl-2 cursor-text"
           onMouseDown={handleContentMouseDown}
           onClick={handleContentClick}
