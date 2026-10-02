@@ -9,15 +9,19 @@ import {
   Folder,
   FolderOpen,
   FolderCheck,
+  UnfoldVertical,
+  FoldVertical,
 } from "lucide-react";
 import { cn } from "../cn";
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
+  ContextMenuSeparator,
   ContextMenuTrigger,
 } from "../ui/context-menu";
 import { DiffStat, FileRow, FILE_TREE_ROW_HEIGHT } from "./file-tree-row";
+import { folderPathsUnder } from "../lib/folder-paths";
 import type { PullRequestFile } from "@/api/types";
 
 interface FileTreeProps {
@@ -218,6 +222,24 @@ export function FileTree({
     });
   }, []);
 
+  const setFolderTreeExpanded = useCallback(
+    (folderPath: string, expanded: boolean) => {
+      const paths = folderPathsUnder(
+        folderPath,
+        files.map((f) => f.filename)
+      );
+      setExpandedFolders((prev) => {
+        const next = new Set(prev);
+        for (const path of paths) {
+          if (expanded) next.add(path);
+          else next.delete(path);
+        }
+        return next;
+      });
+    },
+    [files]
+  );
+
   // Flatten tree for virtualization
   const flatItems = useMemo(
     () => flattenTree(filteredTree, expandedFolders),
@@ -371,6 +393,19 @@ export function FileTree({
                           files)
                         </>
                       )}
+                    </ContextMenuItem>
+                    <ContextMenuSeparator />
+                    <ContextMenuItem
+                      onClick={() => setFolderTreeExpanded(node.path, true)}
+                    >
+                      <UnfoldVertical className="w-4 h-4 mr-2" />
+                      Expand all
+                    </ContextMenuItem>
+                    <ContextMenuItem
+                      onClick={() => setFolderTreeExpanded(node.path, false)}
+                    >
+                      <FoldVertical className="w-4 h-4 mr-2" />
+                      Collapse all
                     </ContextMenuItem>
                   </ContextMenuContent>
                 </ContextMenu>
