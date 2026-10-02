@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import type { PullRequestFile } from "@/api/types";
+import type { RangeFile } from "@/browser/lib/rebase-range";
 import { diffService } from "@/browser/lib/diff";
 import { useGitHub } from "@/browser/contexts/github";
 import { usePRReviewStore, usePRReviewSelector, type ParsedDiff } from ".";
@@ -18,12 +18,17 @@ const EMPTY_DIFF: ParsedDiff = { hunks: [] };
 // Keyed by base ref as well as blob sha: the same head blob has a different
 // patch when the diff is narrowed to "changes since" an intermediate commit.
 function getFullDiffFromCache(
-  file: PullRequestFile,
+  file: RangeFile,
   baseRef: string
 ): ParsedDiff | null {
   if (!file.patch || !file.sha) return EMPTY_DIFF;
   // Only return if we have the full content version with proper syntax highlighting
-  return diffCache.get(`${baseRef}:${file.sha}:full`) ?? null;
+  return diffCache.get(`${baseKey(file, baseRef)}:${file.sha}:full`) ?? null;
+}
+
+// A rebased range file's old side is synthesized content, not `baseRef`.
+function baseKey(file: RangeFile, baseRef: string | undefined) {
+  return file.rebased_base?.key ?? baseRef ?? "";
 }
 
 // Abort all pending fetches (used when navigating rapidly), except the one
@@ -43,7 +48,7 @@ const patchOnlyDiffs = new WeakSet<ParsedDiff>();
 type FileContentGetter = (path: string, ref: string) => Promise<string>;
 
 async function fetchParsedDiff(
-  file: PullRequestFile,
+  file: RangeFile,
   signal?: AbortSignal,
   getFileContent?: FileContentGetter,
   baseRef?: string,
@@ -54,8 +59,8 @@ async function fetchParsedDiff(
   // Cache key includes whether we have file content (for better highlighting)
   const hasContent = !!(getFileContent && baseRef && headRef);
   const cacheKey = hasContent
-    ? `${baseRef}:${file.sha}:full`
-    : `${baseRef ?? ""}:${file.sha}`;
+    ? `${baseKey(file, baseRef)}:${file.sha}:full`
+    : `${baseKey(file, baseRef)}:${file.sha}`;
 
   // Check cache first
   if (diffCache.has(cacheKey)) {
@@ -101,12 +106,14 @@ async function fetchParsedDiff(
       try {
         const [oldResult, newResult] = await Promise.all([
           // For deleted files or renames, use previous_filename for base
-          file.status === "added"
-            ? Promise.resolve("")
-            : getFileContent(
-                file.previous_filename || file.filename,
-                baseRef
-              ).catch(() => ""),
+          file.rebased_base
+            ? Promise.resolve(file.rebased_base.content)
+            : file.status === "added"
+              ? Promise.resolve("")
+              : getFileContent(
+                  file.previous_filename || file.filename,
+                  baseRef
+                ).catch(() => ""),
           // For deleted files, new content is empty
           file.status === "removed"
             ? Promise.resolve("")
@@ -191,7 +198,7 @@ export function useDiffLoader() {
     if (loaded && !patchOnlyDiffs.has(loaded)) return;
 
     // Abort ALL pending fetches - only care about current file
-    abortAllPendingFetches(`${baseRef}:${file.sha}:full`);
+    abortAllPendingFetches(`${baseKey(file, baseRef)}:${file.sha}:full`);
 
     // Show the diff from the patch right away. Full file contents only
     // refine highlighting and enable context expansion.

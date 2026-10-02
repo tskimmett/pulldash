@@ -12,6 +12,7 @@ import gitDiffParser, {
 } from "gitdiff-parser";
 import { DefaultLinesDiffComputer } from "vscode-diff";
 import { generatePatch } from "./recover-patches";
+import { rebasedPatch, type RebaseResult } from "./rebase-range";
 import { refractor } from "refractor/all";
 
 // ============================================================================
@@ -91,6 +92,14 @@ export type WorkerRequest =
       newContent: string;
     }
   | {
+      type: "rebase-patch";
+      id: string;
+      baseOld: string;
+      ours: string;
+      baseNew: string;
+      head: string;
+    }
+  | {
       type: "parse-diff";
       id: string;
       patch: string;
@@ -112,6 +121,7 @@ export type WorkerRequest =
 
 export type WorkerResponse =
   | { type: "generate-patch-result"; id: string; result: string | undefined }
+  | { type: "rebase-patch-result"; id: string; result: RebaseResult }
   | {
       type: "parse-diff-result";
       id: string;
@@ -821,6 +831,19 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
           type: "generate-patch-result",
           id: request.id,
           result: generatePatch(request.oldContent, request.newContent),
+        } as WorkerResponse);
+        break;
+      }
+      case "rebase-patch": {
+        self.postMessage({
+          type: "rebase-patch-result",
+          id: request.id,
+          result: rebasedPatch(
+            request.baseOld,
+            request.ours,
+            request.baseNew,
+            request.head
+          ),
         } as WorkerResponse);
         break;
       }

@@ -12,6 +12,7 @@ import type {
   ParsedDiff,
   DiffLine,
 } from "./diff-worker";
+import type { RebaseResult } from "./rebase-range";
 
 // Re-export types for consumers
 export type {
@@ -94,6 +95,28 @@ class DiffWorkerPool {
         id,
         oldContent,
         newContent,
+      } as WorkerRequest);
+    });
+  }
+
+  /** Diff a start file, rebased onto the new merge base, against head. */
+  async rebasePatch(
+    baseOld: string,
+    ours: string,
+    baseNew: string,
+    head: string
+  ): Promise<RebaseResult> {
+    const id = this.generateId();
+    const worker = this.getNextWorker();
+    return new Promise((resolve, reject) => {
+      this.pendingRequests.set(id, { resolve, reject });
+      worker.postMessage({
+        type: "rebase-patch",
+        id,
+        baseOld,
+        ours,
+        baseNew,
+        head,
       } as WorkerRequest);
     });
   }

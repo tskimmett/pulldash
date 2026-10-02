@@ -505,9 +505,13 @@ export const DiffRangeBanner = memo(function DiffRangeBanner() {
                   : `Changes since ${range.startSha.slice(0, 7)}`}
           </span>
           <span className="text-blue-700/70 dark:text-blue-200/70 ml-1.5">
-            – {n} {n === 1 ? "commit" : "commits"}, {fileCount} of {totalFiles}{" "}
-            {totalFiles === 1 ? "file" : "files"}. Comments on the old side are
-            disabled in this view.
+            – {n} {n === 1 ? "commit" : "commits"}, {fileCount}
+            {/* A range can touch files the PR's net diff doesn't */}
+            {fileCount <= totalFiles ? ` of ${totalFiles}` : ""}{" "}
+            {(fileCount <= totalFiles ? totalFiles : fileCount) === 1
+              ? "file"
+              : "files"}
+            . Comments on the old side are disabled in this view.
           </span>
         </span>
       </div>

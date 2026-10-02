@@ -1169,7 +1169,7 @@ export class PRReviewStore {
     const load =
       fetchFiles ??
       ((start: string, head: string) =>
-        this.github.getCompareFiles(owner, repo, start, head));
+        this.github.getCompareFiles(owner, repo, start, head, pr.base.sha));
 
     let files: PullRequestFile[] | null;
     try {

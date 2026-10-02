@@ -15,6 +15,15 @@ import {
   recoverPatches,
 } from "../lib/recover-patches";
 import { diffService } from "../lib/diff";
+import {
+  COMPARE_FILE_LIMIT,
+  rangeFromTrees,
+  rebaseRangeFiles,
+  treeChanges,
+  type BlobRequest,
+  type RangeFile,
+  type Tree,
+} from "../lib/rebase-range";
 import { fetchAllPages } from "../lib/fetch-all-pages";
 import { openPersistentStore } from "../lib/persistent-cache";
 import { RequestCache } from "../lib/request-cache";
@@ -1101,54 +1110,121 @@ function createGitHubStore() {
    * Files changed between two commits of a PR (GitHub's compare endpoint).
    * Used for "changes since your last review". Returns null when the start
    * commit no longer exists (force-pushed away).
+   *
+   * With `baseSha` (the PR base), changes brought in by merging the base
+   * branch between the two commits are left out (see rebase-range.ts).
    */
   async function getCompareFiles(
     owner: string,
     repo: string,
     startSha: string,
-    headSha: string
-  ): Promise<PullRequestFile[] | null> {
+    headSha: string,
+    baseSha?: string
+  ): Promise<RangeFile[] | null> {
     if (!octokit) throw new Error("Not initialized");
 
-    const cacheKey = `compare:${owner}/${repo}/${startSha}...${headSha}`;
+    const cacheKey = `compare:${owner}/${repo}/${startSha}...${headSha}${
+      baseSha ? `:rebased:${baseSha}` : ""
+    }`;
 
-    const cached = cache.get<PullRequestFile[]>(cacheKey);
+    const cached = cache.get<RangeFile[]>(cacheKey);
     if (cached) return cached;
 
-    const pending = cache.getPending<PullRequestFile[] | null>(cacheKey);
+    const pending = cache.getPending<RangeFile[] | null>(cacheKey);
     if (pending) return pending;
 
-    const promise = (async () => {
-      const files: PullRequestFile[] = [];
-      let page = 1;
+    // Files are listed in full (up to 300) on the first page only.
+    const compare = async (basehead: string) => {
+      const { data } = await octokit!.request(
+        "GET /repos/{owner}/{repo}/compare/{basehead}",
+        { owner, repo, basehead, per_page: 1 }
+      );
+      return { files: data.files ?? [], mergeBase: data.merge_base_commit.sha };
+    };
 
+    // Null when a tree listing is itself truncated (over 100k entries).
+    const rangeFromTreeListings = async (
+      rangeFiles: PullRequestFile[],
+      oldMergeBase: string,
+      newMergeBase: string
+    ): Promise<RangeFile[] | null> => {
+      const trees = await Promise.all(
+        [oldMergeBase, startSha, newMergeBase, headSha].map((sha) =>
+          getTree(owner, repo, sha)
+        )
+      );
+      if (trees.some((tree) => !tree)) return null;
+      const [oldBase, start, newBase, end] = trees as Tree[];
+      return rangeFromTrees({
+        changes: treeChanges(oldBase, start, newBase, end),
+        rangeFiles,
+        startSha,
+        endSha: headSha,
+        oldMergeBase,
+        newMergeBase,
+        getBlobs: (requests) => getBlobs(owner, repo, requests),
+        rebase: (baseOld, ours, baseNew, head) =>
+          diffService.rebasePatch(baseOld, ours, baseNew, head),
+      });
+    };
+
+    const promise = (async () => {
+      // Where start and head branched from the base, fetched alongside the
+      // range so a base merge costs no extra round trip to detect.
+      const mergeBases = baseSha
+        ? Promise.all([
+            compare(`${baseSha}...${startSha}`),
+            compare(`${baseSha}...${headSha}`),
+          ])
+        : null;
+      mergeBases?.catch(() => {});
+
+      let rangeFiles: PullRequestFile[];
       try {
-        while (true) {
-          const { data } = await octokit!.request(
-            "GET /repos/{owner}/{repo}/compare/{basehead}",
-            {
-              owner,
-              repo,
-              basehead: `${startSha}...${headSha}`,
-              per_page: 100,
-              page,
-            }
-          );
-          const pageFiles = data.files ?? [];
-          files.push(...pageFiles);
-          if (pageFiles.length < 100) break;
-          page++;
-        }
+        rangeFiles = (await compare(`${startSha}...${headSha}`)).files;
       } catch (error: unknown) {
-        if (
-          error &&
-          typeof error === "object" &&
-          "status" in error &&
-          error.status === 404
-        ) {
-          return null;
-        }
+        if (hasStatus(error, 404)) return null;
         throw error;
+      }
+
+      let files: RangeFile[] = rangeFiles;
+      try {
+        const [atStart, atEnd] = (await mergeBases) ?? [];
+        const moved =
+          !!atStart && !!atEnd && atStart.mergeBase !== atEnd.mergeBase;
+        const oldMergeBase = moved ? atStart.mergeBase : startSha;
+        const newMergeBase = moved ? atEnd.mergeBase : startSha;
+        const base = moved
+          ? await compare(`${oldMergeBase}...${newMergeBase}`)
+          : null;
+        // GitHub stops listing compare files at 300; past that, diff trees.
+        const truncated = [rangeFiles, atStart?.files, atEnd?.files]
+          .concat(moved ? [base?.files] : [])
+          .some((list) => list && list.length >= COMPARE_FILE_LIMIT);
+        if (truncated && (moved || rangeFiles.length >= COMPARE_FILE_LIMIT)) {
+          const fromTrees = await rangeFromTreeListings(
+            rangeFiles,
+            oldMergeBase,
+            newMergeBase
+          );
+          if (fromTrees) files = fromTrees;
+        } else if (moved) {
+          files = await rebaseRangeFiles({
+            rangeFiles,
+            prStartFiles: atStart.files,
+            prEndFiles: atEnd.files,
+            baseFiles: base!.files,
+            startSha,
+            endSha: headSha,
+            oldMergeBase,
+            newMergeBase,
+            getContent: (path, ref) => getFileContent(owner, repo, path, ref),
+            rebase: (baseOld, ours, baseNew, head) =>
+              diffService.rebasePatch(baseOld, ours, baseNew, head),
+          });
+        }
+      } catch (error) {
+        console.error("Could not separate base branch changes", error);
       }
 
       const recovered = await recoverPatches(
@@ -1165,6 +1241,115 @@ function createGitHubStore() {
 
     cache.setPending(cacheKey, promise);
     return promise;
+  }
+
+  /** Blob oids by path for a commit, or null when GitHub truncates it. */
+  async function getTree(
+    owner: string,
+    repo: string,
+    sha: string
+  ): Promise<Tree | null> {
+    if (!octokit) throw new Error("Not initialized");
+    const cacheKey = `tree:${owner}/${repo}/${sha}`;
+    const cached = cache.get<Tree>(cacheKey, Infinity);
+    if (cached) return cached;
+    const pending = cache.getPending<Tree | null>(cacheKey);
+    if (pending) return pending;
+
+    const promise = (async () => {
+      const { data } = await octokit!.request(
+        "GET /repos/{owner}/{repo}/git/trees/{tree_sha}",
+        { owner, repo, tree_sha: sha, recursive: "1" }
+      );
+      if (data.truncated) return null;
+      const tree: Tree = new Map();
+      for (const entry of data.tree) {
+        if (entry.type === "blob" && entry.path && entry.sha) {
+          tree.set(entry.path, entry.sha);
+        }
+      }
+      cache.set(cacheKey, tree);
+      return tree;
+    })();
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
+
+  /**
+   * Blob text by oid, batched through GraphQL; null for binary blobs. Blobs
+   * GraphQL truncates are fetched in full by path.
+   */
+  async function getBlobs(
+    owner: string,
+    repo: string,
+    requests: BlobRequest[]
+  ): Promise<Map<string, string | null>> {
+    if (!gql) throw new Error("Not initialized");
+    const result = new Map<string, string | null>();
+    const byOid = new Map<string, BlobRequest>();
+    for (const request of requests) {
+      if (!/^[0-9a-f]{40,64}$/.test(request.oid)) continue;
+      const cached = cache.get<{ text: string | null }>(
+        `blob:${owner}/${repo}/${request.oid}`,
+        Infinity
+      );
+      if (cached) result.set(request.oid, cached.text);
+      else byOid.set(request.oid, request);
+    }
+    const pending = [...byOid.values()];
+    const chunks: BlobRequest[][] = [];
+    for (let i = 0; i < pending.length; i += 50) {
+      chunks.push(pending.slice(i, i + 50));
+    }
+
+    type Blob = {
+      text: string | null;
+      isBinary: boolean;
+      isTruncated: boolean;
+    };
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(4, chunks.length) }, async () => {
+        while (next < chunks.length) {
+          const chunk = chunks[next++];
+          const fields = chunk
+            .map(
+              (r, i) =>
+                `b${i}: object(oid: "${r.oid}") { ... on Blob { text isBinary isTruncated } }`
+            )
+            .join("\n");
+          const data = await gql!.query<{
+            repository: Record<string, Blob | null>;
+          }>(
+            `query($owner: String!, $repo: String!) {
+              repository(owner: $owner, name: $repo) { ${fields} }
+            }`,
+            { owner, repo }
+          );
+          await Promise.all(
+            chunk.map(async (request, i) => {
+              const blob = data.repository[`b${i}`];
+              if (!blob) return;
+              const text = blob.isBinary
+                ? null
+                : blob.isTruncated || blob.text === null
+                  ? await getFileContent(
+                      owner,
+                      repo,
+                      request.path,
+                      request.ref,
+                      false
+                    )
+                  : blob.text;
+              // Wrapped so a binary blob's null isn't read as a cache miss
+              cache.set(`blob:${owner}/${repo}/${request.oid}`, { text });
+              result.set(request.oid, text);
+            })
+          );
+        }
+      })
+    );
+    return result;
   }
 
   async function getPRComments(
