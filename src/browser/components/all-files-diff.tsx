@@ -230,7 +230,7 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
                 data-index={item.index}
                 data-find-file={item.index}
                 ref={virtualizer.measureElement}
-                className="absolute left-0 top-0 w-full pb-4"
+                className="absolute left-0 top-0 w-full pb-8"
                 style={{ transform: `translateY(${item.start}px)` }}
               >
                 <AllFileSection
@@ -251,6 +251,57 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
     </div>
   );
 });
+
+// Header above the diff, repeated below it so a file can be marked viewed
+// without scrolling back up.
+function FileBar({
+  file,
+  isViewed,
+  footer,
+}: {
+  file: PullRequestFile;
+  isViewed: boolean;
+  footer?: boolean;
+}) {
+  const store = usePRReviewStore();
+  return (
+    <div
+      className={cn(
+        "flex items-center gap-2 px-3 py-2 bg-muted/50 border-foreground/15",
+        footer ? "border-t" : "border-b"
+      )}
+    >
+      <FileCode className="w-4 h-4 text-muted-foreground shrink-0" />
+      <button
+        className="font-mono text-sm font-medium truncate text-left hover:text-blue-400"
+        onClick={() => {
+          store.selectFile(file.filename);
+          store.setFileLayoutMode("single");
+        }}
+        title="Open single file view"
+      >
+        {file.filename}
+      </button>
+      <span className="text-xs text-muted-foreground shrink-0">
+        <span className="text-green-500">+{file.additions}</span>{" "}
+        <span className="text-red-500">−{file.deletions}</span>
+      </span>
+      <button
+        className={cn(
+          "ml-auto flex items-center gap-1 px-2 py-1 text-xs rounded shrink-0",
+          isViewed
+            ? "bg-green-500/20 text-green-500"
+            : "bg-muted text-muted-foreground hover:text-foreground"
+        )}
+        onClick={() => store.toggleViewed(file.filename)}
+        aria-label={`${isViewed ? "Unmark" : "Mark"} ${file.filename} as viewed`}
+      >
+        <Check className="w-3.5 h-3.5" />
+        {isViewed ? "Viewed" : "Mark as viewed"}
+      </button>
+    </div>
+  );
+}
 
 const AllFileSection = memo(function AllFileSection({
   file,
@@ -361,37 +412,8 @@ const AllFileSection = memo(function AllFileSection({
   let codeLineIndex = 0;
 
   return (
-    <section className="border border-border rounded-lg overflow-hidden">
-      <div className="flex items-center gap-2 px-3 py-2 bg-muted/50 border-b border-border">
-        <FileCode className="w-4 h-4 text-muted-foreground shrink-0" />
-        <button
-          className="font-mono text-sm font-medium truncate text-left hover:text-blue-400"
-          onClick={() => {
-            store.selectFile(file.filename);
-            store.setFileLayoutMode("single");
-          }}
-          title="Open single file view"
-        >
-          {file.filename}
-        </button>
-        <span className="text-xs text-muted-foreground shrink-0">
-          <span className="text-green-500">+{file.additions}</span>{" "}
-          <span className="text-red-500">−{file.deletions}</span>
-        </span>
-        <button
-          className={cn(
-            "ml-auto flex items-center gap-1 px-2 py-1 text-xs rounded shrink-0",
-            isViewed
-              ? "bg-green-500/20 text-green-500"
-              : "bg-muted text-muted-foreground hover:text-foreground"
-          )}
-          onClick={() => store.toggleViewed(file.filename)}
-          aria-label={`${isViewed ? "Unmark" : "Mark"} ${file.filename} as viewed`}
-        >
-          <Check className="w-3.5 h-3.5" />
-          {isViewed ? "Viewed" : "Mark as viewed"}
-        </button>
-      </div>
+    <section className="border border-foreground/15 rounded-lg overflow-hidden">
+      <FileBar file={file} isViewed={isViewed} />
       {isViewed ? null : lines.length ? (
         <div className="font-mono text-xs overflow-x-auto [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)] diff-line-container">
           {lines.map((line, index) => {
@@ -466,6 +488,7 @@ const AllFileSection = memo(function AllFileSection({
           Binary file or file too large to display
         </div>
       )}
+      {!isViewed && <FileBar file={file} isViewed={isViewed} footer />}
     </section>
   );
 });
