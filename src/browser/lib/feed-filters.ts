@@ -174,3 +174,26 @@ export function buildSearchQueries(config: FilterConfig): string[] {
 
   return queries;
 }
+
+// Queries for text search: every PR in the feed's specific repos regardless of
+// mode (so PRs outside the user's review/authored filters are found), plus the
+// "All Repos" filters as-is since they have no repo list to widen to.
+export function buildSearchScopeQueries(config: FilterConfig): string[] {
+  const enabled = config.repos.filter((r) => r.enabled !== false);
+  const queries = buildSearchQueries({
+    ...config,
+    repos: enabled.filter(isAllReposFilter),
+  });
+
+  const names = [
+    ...new Set(enabled.filter((r) => !isAllReposFilter(r)).map((r) => r.name)),
+  ];
+  if (names.length > 0) {
+    const parts = ["is:pr", "archived:false"];
+    if (config.state === "open") parts.push("is:open");
+    if (config.state === "closed") parts.push("is:closed");
+    parts.push(...names.map((n) => `repo:${n}`));
+    queries.push(parts.join(" "));
+  }
+  return queries;
+}

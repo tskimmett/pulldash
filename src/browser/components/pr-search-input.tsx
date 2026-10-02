@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { GitPullRequest, Loader2 } from "lucide-react";
 import { cn } from "../cn";
 import { useOpenPRReviewTab } from "../contexts/tabs";
@@ -7,7 +14,11 @@ import {
   useGitHubStore,
   type PRSearchResult,
 } from "../contexts/github";
-import { getFilterConfig, buildSearchQueries } from "../lib/feed-filters";
+import {
+  buildSearchQueries,
+  buildSearchScopeQueries,
+  getFilterConfig,
+} from "../lib/feed-filters";
 import {
   buildTextSearchQueries,
   extractRepoFromUrl,
@@ -27,7 +38,8 @@ export function PRSearchInput() {
   const { ready } = useGitHubReady();
   const [value, setValue] = useState("");
   const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<PRSearchResult[]>([]);
+  const [feedResults, setFeedResults] = useState<PRSearchResult[]>([]);
+  const [moreResults, setMoreResults] = useState<PRSearchResult[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [active, setActive] = useState(0);
@@ -42,41 +54,54 @@ export function PRSearchInput() {
   useEffect(() => {
     setActive(0);
     setError(null);
-    if (!searchText || !ready) {
-      setResults([]);
+    setFeedResults([]);
+    setMoreResults([]);
+    const scopeQueries = buildTextSearchQueries(
+      buildSearchScopeQueries(getFilterConfig()),
+      searchText
+    );
+    if (!searchText || !ready || scopeQueries.length === 0) {
       setLoading(false);
       return;
     }
-    const feedQueries = buildSearchQueries(getFilterConfig());
-    const queries = buildTextSearchQueries(feedQueries, searchText);
-    if (queries.length === 0) {
-      setResults([]);
-      setLoading(false);
-      return;
-    }
+    const feedQueries = buildTextSearchQueries(
+      buildSearchQueries(getFilterConfig()),
+      searchText
+    );
     const controller = new AbortController();
-    setLoading(true);
-    const timer = setTimeout(() => {
+    const run = (queries: string[]) =>
       Promise.all(
         queries.map((q) =>
           store.searchPRs(q, 1, MAX_RESULTS, controller.signal)
         )
-      )
-        .then((all) => {
+      ).then((all) =>
+        mergeSearchResults(
+          all.map((r) => r.items as PRSearchResult[]),
+          MAX_RESULTS
+        )
+      );
+    const fail = (err: { status?: number }) => {
+      if (controller.signal.aborted) return;
+      setError(err?.status === 403 ? "Rate limited" : "Search failed");
+    };
+    setLoading(true);
+    const timer = setTimeout(() => {
+      // Stage 1: PRs already in the feed (narrow queries, return fastest)
+      run(feedQueries)
+        .then((items) => {
+          if (!controller.signal.aborted) setFeedResults(items);
+        })
+        .catch(fail);
+      // Stage 2: everything else in the feed's repos
+      run(scopeQueries)
+        .then((items) => {
           if (controller.signal.aborted) return;
-          setResults(
-            mergeSearchResults(
-              all.map((r) => r.items as PRSearchResult[]),
-              MAX_RESULTS
-            )
-          );
+          setMoreResults(items);
           setLoading(false);
         })
         .catch((err) => {
-          if (controller.signal.aborted) return;
-          setError(err?.status === 403 ? "Rate limited" : "Search failed");
-          setResults([]);
-          setLoading(false);
+          fail(err);
+          if (!controller.signal.aborted) setLoading(false);
         });
     }, DEBOUNCE_MS);
     return () => {
@@ -84,6 +109,11 @@ export function PRSearchInput() {
       controller.abort();
     };
   }, [searchText, ready, store]);
+
+  const results = useMemo(() => {
+    const feedIds = new Set(feedResults.map((p) => p.id));
+    return [...feedResults, ...moreResults.filter((p) => !feedIds.has(p.id))];
+  }, [feedResults, moreResults]);
 
   useEffect(() => {
     if (!open) return;
@@ -129,7 +159,8 @@ export function PRSearchInput() {
   };
 
   const showDropdown = open && searchText.length > 0;
-  const hasFeed = buildSearchQueries(getFilterConfig()).length > 0;
+  const hasFeed = buildSearchScopeQueries(getFilterConfig()).length > 0;
+  const feedCount = feedResults.length;
 
   return (
     <div ref={containerRef} className="relative w-[260px]">
@@ -164,13 +195,19 @@ export function PRSearchInput() {
             <Message>{loading ? "Searching..." : "No matching PRs"}</Message>
           ) : (
             results.map((pr, i) => (
-              <ResultRow
-                key={pr.id}
-                pr={pr}
-                active={i === active}
-                onHover={() => setActive(i)}
-                onSelect={() => openResult(pr)}
-              />
+              <Fragment key={pr.id}>
+                {i === feedCount && feedCount > 0 && (
+                  <div className="px-3 py-1 text-[10px] uppercase tracking-wide text-muted-foreground border-t border-border">
+                    Other PRs in your repos
+                  </div>
+                )}
+                <ResultRow
+                  pr={pr}
+                  active={i === active}
+                  onHover={() => setActive(i)}
+                  onSelect={() => openResult(pr)}
+                />
+              </Fragment>
             ))
           )}
         </div>
