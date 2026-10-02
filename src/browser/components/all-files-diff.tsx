@@ -252,6 +252,9 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
   );
 });
 
+// Diffs shorter than roughly a screen (~20px per line) skip the footer bar
+const FOOTER_MIN_LINES = 40;
+
 // Header above the diff, repeated below it so a file can be marked viewed
 // without scrolling back up.
 function FileBar({
@@ -488,7 +491,9 @@ const AllFileSection = memo(function AllFileSection({
           Binary file or file too large to display
         </div>
       )}
-      {!isViewed && <FileBar file={file} isViewed={isViewed} footer />}
+      {!isViewed && lines.length >= FOOTER_MIN_LINES && (
+        <FileBar file={file} isViewed={isViewed} footer />
+      )}
     </section>
   );
 });
