@@ -16,6 +16,7 @@ import {
   type TabStatus,
 } from "../contexts/tabs";
 import { Home } from "./home";
+import { PRSearchInput } from "./pr-search-input";
 import { PRReviewContent } from "./pr-review";
 import { UserMenuButton } from "./welcome-dialog";
 import { ThemeToggle } from "./theme-toggle";
@@ -181,7 +182,7 @@ export function AppShell() {
         {/* PR URL input & User menu */}
         <div className="h-full flex items-center gap-2 pr-2 sm:pr-3 app-no-drag">
           <div className="hidden sm:block">
-            <PRUrlInput />
+            <PRSearchInput />
           </div>
           {!isAuthenticated && (
             <a
@@ -370,45 +371,5 @@ function TabStatusIndicator({ status }: { status?: TabStatus }) {
       className={cn("w-2 h-2 rounded-full shrink-0", colorClass)}
       title={title}
     />
-  );
-}
-
-// ============================================================================
-// PR URL Input
-// ============================================================================
-
-function PRUrlInput() {
-  const openPRReviewTab = useOpenPRReviewTab();
-  const [prUrl, setPrUrl] = useState("");
-
-  const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      const url = prUrl.trim();
-      if (!url) return;
-
-      const match = url.match(/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/);
-      if (match) {
-        const [, owner, repo, number] = match;
-        openPRReviewTab(owner, repo, parseInt(number, 10));
-        setPrUrl("");
-      }
-    },
-    [prUrl, openPRReviewTab]
-  );
-
-  return (
-    <form onSubmit={handleSubmit} className="max-w-[180px]">
-      <div className="relative">
-        <input
-          type="text"
-          value={prUrl}
-          onChange={(e) => setPrUrl(e.target.value)}
-          placeholder="PR URL..."
-          className="w-full h-6 pl-6 pr-2 rounded-md border border-border/50 bg-foreground/5 text-[11px] placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring focus:border-transparent font-mono"
-        />
-        <GitPullRequest className="absolute left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground/50" />
-      </div>
-    </form>
   );
 }
