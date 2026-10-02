@@ -53,6 +53,8 @@ import {
   type PRCommit,
   type TimelineEvent,
   type ReviewThread,
+  type AutoMergeState,
+  type MergeMethod,
 } from "@/browser/contexts/github";
 
 // ============================================================================
@@ -186,8 +188,7 @@ export interface WorkflowRunAwaitingApproval {
   html_url: string;
 }
 
-// Merge method type
-export type MergeMethod = "merge" | "squash" | "rebase";
+export type { MergeMethod };
 
 export interface ExpandedSkipBlock {
   top: DiffLine[];
@@ -237,6 +238,8 @@ interface PRReviewState {
   merging: boolean;
   mergeMethod: MergeMethod;
   mergeError: string | null;
+  autoMerge: AutoMergeState | null;
+  updatingAutoMerge: boolean;
 
   // PR action states
   closingPR: boolean;
@@ -555,6 +558,8 @@ export class PRReviewStore {
       merging: false,
       mergeMethod: "squash",
       mergeError: null,
+      autoMerge: null,
+      updatingAutoMerge: false,
 
       // PR action states
       closingPR: false,
@@ -3178,6 +3183,7 @@ export class PRReviewStore {
         commitsData,
         timelineData,
         reviewThreadsResult,
+        autoMerge,
       ] = await Promise.all([
         this.github
           .getPRReviews(owner, repo, pr.number)
@@ -3205,6 +3211,7 @@ export class PRReviewStore {
           viewerPermission: null,
           viewerCanMergeAsAdmin: false,
         })),
+        this.github.getAutoMergeState(owner, repo, pr.number).catch(() => null),
       ]);
 
       // Find workflow runs awaiting approval (fork PRs)
@@ -3237,6 +3244,7 @@ export class PRReviewStore {
         viewerPermission:
           reviewThreadsResult.viewerPermission ?? this.state.viewerPermission,
         viewerCanMergeAsAdmin: reviewThreadsResult.viewerCanMergeAsAdmin,
+        autoMerge,
         branchDeleted: isBranchDeleted(timelineData),
         loading: false,
       });
@@ -3344,6 +3352,7 @@ export class PRReviewStore {
         workflowRunsAwaitingApproval: awaitingApproval,
         loadingChecks: false,
       });
+      if (this.state.autoMerge?.request) await this.refreshAutoMerge();
     } catch (error) {
       console.error("Failed to refresh checks:", error);
       this.set({ loadingChecks: false });
@@ -3398,6 +3407,60 @@ export class PRReviewStore {
         merging: false,
       });
       return false;
+    }
+  };
+
+  /**
+   * Re-read auto-merge state. A scheduled request that disappears means
+   * GitHub merged the PR (or dropped the request), so reload the PR too.
+   */
+  private refreshAutoMerge = async (): Promise<void> => {
+    const { owner, repo, pr, autoMerge: before } = this.state;
+    const autoMerge = await this.github
+      .getAutoMergeState(owner, repo, pr.number)
+      .catch(() => null);
+    if (!autoMerge) return;
+    this.set({ autoMerge });
+    if (!before?.request || autoMerge.request) return;
+
+    this.github.invalidateCache(`pr:${owner}/${repo}/${pr.number}`);
+    const [updatedPR, updatedTimeline] = await Promise.all([
+      this.github.getPR(owner, repo, pr.number),
+      this.github
+        .getPRTimeline(owner, repo, pr.number)
+        .catch(() => [] as TimelineEvent[]),
+    ]);
+    this.set({ pr: updatedPR, timeline: updatedTimeline });
+  };
+
+  /**
+   * Schedule (or cancel) GitHub's auto-merge for the selected merge method.
+   */
+  setAutoMerge = async (enabled: boolean): Promise<void> => {
+    const { owner, repo, pr, autoMerge, mergeMethod } = this.state;
+    if (!autoMerge) return;
+
+    this.set({ updatingAutoMerge: true, mergeError: null });
+    try {
+      if (enabled) {
+        await this.github.enableAutoMerge(autoMerge.pullRequestId, mergeMethod);
+      } else {
+        await this.github.disableAutoMerge(autoMerge.pullRequestId);
+      }
+      this.github.invalidateCache(`pr:${owner}/${repo}/${pr.number}:timeline`);
+      const [next, timeline] = await Promise.all([
+        this.github.getAutoMergeState(owner, repo, pr.number),
+        this.github
+          .getPRTimeline(owner, repo, pr.number)
+          .catch(() => this.state.timeline),
+      ]);
+      this.set({ autoMerge: next, timeline, updatingAutoMerge: false });
+    } catch (e) {
+      this.set({
+        mergeError:
+          e instanceof Error ? e.message : "Failed to update auto-merge",
+        updatingAutoMerge: false,
+      });
     }
   };
 

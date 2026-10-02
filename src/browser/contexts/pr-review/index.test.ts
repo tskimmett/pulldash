@@ -46,6 +46,7 @@ function createMockGitHubStore(): GitHubStore {
     peekCache: async () => null,
     getPR: async () => createMockPR(),
     mergePR: async () => ({ merged: true }),
+    getAutoMergeState: async () => null,
     closePR: async () => {},
     reopenPR: async () => {},
     deleteBranch: async () => {},
@@ -150,6 +151,46 @@ test("loadPRData keeps the complete timeline in API order", async () => {
 
   await store.loadPRData();
   expect(store.getSnapshot().timeline).toEqual(events);
+});
+
+test("setAutoMerge schedules with the selected method and stores the result", async () => {
+  const calls: string[] = [];
+  let request: { mergeMethod: "squash"; enabledBy: string } | null = null;
+  const github = {
+    ...createMockGitHubStore(),
+    getAutoMergeState: async () => ({
+      pullRequestId: "PR_1",
+      canEnable: !request,
+      canDisable: !!request,
+      request,
+    }),
+    enableAutoMerge: async (id: string, method: string) => {
+      calls.push(`enable:${id}:${method}`);
+      request = { mergeMethod: "squash", enabledBy: "testuser" };
+    },
+    disableAutoMerge: async (id: string) => {
+      calls.push(`disable:${id}`);
+      request = null;
+    },
+  } as unknown as GitHubStore;
+  const store = new PRReviewStore(github, {
+    pr: createMockPR(),
+    files: [],
+    comments: [],
+    owner: "test",
+    repo: "repo",
+    viewerPermission: "WRITE",
+  });
+
+  await store.loadPRData();
+  expect(store.getSnapshot().autoMerge?.canEnable).toBe(true);
+
+  await store.setAutoMerge(true);
+  expect(store.getSnapshot().autoMerge?.request?.mergeMethod).toBe("squash");
+
+  await store.setAutoMerge(false);
+  expect(store.getSnapshot().autoMerge?.request).toBeNull();
+  expect(calls).toEqual(["enable:PR_1:squash", "disable:PR_1"]);
 });
 
 // ============================================================================

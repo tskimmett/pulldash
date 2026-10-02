@@ -72,6 +72,7 @@ import {
   type TimelineEvent,
   type ReviewThread,
   type PullRequest,
+  type AutoMergeState,
 } from "../contexts/github";
 import { useCanWrite } from "../contexts/auth";
 import { useTelemetry } from "../contexts/telemetry";
@@ -122,6 +123,8 @@ export const PROverview = memo(function PROverview() {
   const merging = usePRReviewSelector((s) => s.merging);
   const mergeMethod = usePRReviewSelector((s) => s.mergeMethod);
   const mergeError = usePRReviewSelector((s) => s.mergeError);
+  const autoMerge = usePRReviewSelector((s) => s.autoMerge);
+  const updatingAutoMerge = usePRReviewSelector((s) => s.updatingAutoMerge);
 
   // Action loading states from store
   const closingPR = usePRReviewSelector((s) => s.closingPR);
@@ -1858,6 +1861,9 @@ export const PROverview = memo(function PROverview() {
                   mergeError={mergeError}
                   latestReviews={latestReviews}
                   onMerge={handleMerge}
+                  autoMerge={autoMerge}
+                  updatingAutoMerge={updatingAutoMerge}
+                  onSetAutoMerge={store.setAutoMerge}
                   onSetMergeMethod={store.setMergeMethod}
                   onToggleMergeOptions={() =>
                     setShowMergeOptions(!showMergeOptions)
@@ -3047,6 +3053,9 @@ function MergeSection({
   mergeError,
   latestReviews,
   onMerge,
+  autoMerge,
+  updatingAutoMerge,
+  onSetAutoMerge,
   onSetMergeMethod,
   onToggleMergeOptions,
   onUpdateBranch,
@@ -3074,6 +3083,9 @@ function MergeSection({
   mergeError: string | null;
   latestReviews: Review[];
   onMerge: () => void;
+  autoMerge: AutoMergeState | null;
+  updatingAutoMerge: boolean;
+  onSetAutoMerge: (enabled: boolean) => void;
   onSetMergeMethod: (method: "merge" | "squash" | "rebase") => void;
   onToggleMergeOptions: () => void;
   onUpdateBranch: () => void;
@@ -3209,6 +3221,12 @@ function MergeSection({
           reviewStatus === "pending"
         ? "pending"
         : "success";
+
+  // Offer scheduling instead of merging while requirements are unmet
+  const scheduledAutoMerge = autoMerge?.request ?? null;
+  const offerAutoMerge =
+    !!autoMerge?.canEnable && !scheduledAutoMerge && !bypassRules;
+  const busy = merging || updatingAutoMerge;
 
   return (
     <div
@@ -3575,94 +3593,127 @@ function MergeSection({
             </label>
           )}
 
-          {/* Merge button with dropdown */}
-          <div className="flex items-stretch">
-            {/* Main merge button */}
-            <button
-              onClick={onMerge}
-              disabled={merging || (!canMergePR && !bypassRules)}
-              className={cn(
-                "flex-1 min-w-0 flex items-center justify-center gap-2 px-4 py-2 rounded-l-md text-sm font-medium transition-colors",
-                canMergePR || bypassRules
-                  ? "bg-green-600 text-white hover:bg-green-700"
-                  : "bg-muted text-muted-foreground cursor-not-allowed"
-              )}
-            >
-              {merging ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <>{getMergeButtonText(mergeMethod)}</>
-              )}
-            </button>
-
-            {/* Dropdown button */}
-            <button
-              ref={buttonRef}
-              onClick={handleToggleDropdown}
-              disabled={merging}
-              className={cn(
-                "shrink-0 flex items-center px-2 rounded-r-md text-sm font-medium transition-colors border-l",
-                canMergePR || bypassRules
-                  ? "bg-green-600 text-white hover:bg-green-700 border-green-800"
-                  : "bg-muted text-muted-foreground cursor-not-allowed border-border"
-              )}
-            >
-              <ChevronDown
-                className={cn(
-                  "w-4 h-4 transition-transform",
-                  showMergeOptions && "rotate-180"
-                )}
-              />
-            </button>
-
-            {/* Dropdown menu */}
-            {showMergeOptions && (
-              <>
-                {/* Backdrop */}
-                <div
-                  className="fixed inset-0 z-[100]"
-                  onClick={onToggleMergeOptions}
-                />
-                {/* Menu */}
-                <div
-                  className="fixed bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
-                  style={{
-                    top: dropdownPosition.top,
-                    left: dropdownPosition.left,
-                    width: Math.max(dropdownPosition.width, 280),
-                  }}
+          {scheduledAutoMerge && (
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex-1 min-w-[180px]">
+                <p className="text-sm font-medium">
+                  Auto-merge enabled ({scheduledAutoMerge.mergeMethod})
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {scheduledAutoMerge.enabledBy
+                    ? `${scheduledAutoMerge.enabledBy} scheduled this`
+                    : "This"}{" "}
+                  pull request to merge when all requirements are met.
+                </p>
+              </div>
+              {autoMerge?.canDisable && (
+                <button
+                  onClick={() => onSetAutoMerge(false)}
+                  disabled={updatingAutoMerge}
+                  className="px-3 py-1.5 text-sm font-medium border border-border rounded-md hover:bg-muted transition-colors disabled:opacity-50"
                 >
-                  {(["squash", "merge", "rebase"] as const).map((method) => (
-                    <button
-                      key={method}
-                      onClick={() => {
-                        onSetMergeMethod(method);
-                        onToggleMergeOptions();
-                      }}
-                      className={cn(
-                        "w-full px-4 py-3 text-left hover:bg-muted transition-colors",
-                        mergeMethod === method && "bg-muted/50"
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
-                        {mergeMethod === method ? (
-                          <Check className="w-4 h-4 text-green-500" />
-                        ) : (
-                          <div className="w-4 h-4" />
+                  {updatingAutoMerge ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    "Disable auto-merge"
+                  )}
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Merge button with dropdown */}
+          {!scheduledAutoMerge && (
+            <div className="flex items-stretch">
+              {/* Main merge button */}
+              <button
+                onClick={offerAutoMerge ? () => onSetAutoMerge(true) : onMerge}
+                disabled={busy || (!canMergePR && !bypassRules)}
+                className={cn(
+                  "flex-1 min-w-0 flex items-center justify-center gap-2 px-4 py-2 rounded-l-md text-sm font-medium transition-colors",
+                  canMergePR || bypassRules
+                    ? "bg-green-600 text-white hover:bg-green-700"
+                    : "bg-muted text-muted-foreground cursor-not-allowed"
+                )}
+              >
+                {busy ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : offerAutoMerge ? (
+                  <>Enable auto-merge ({mergeMethod})</>
+                ) : (
+                  <>{getMergeButtonText(mergeMethod)}</>
+                )}
+              </button>
+
+              {/* Dropdown button */}
+              <button
+                ref={buttonRef}
+                onClick={handleToggleDropdown}
+                disabled={busy}
+                className={cn(
+                  "shrink-0 flex items-center px-2 rounded-r-md text-sm font-medium transition-colors border-l",
+                  canMergePR || bypassRules
+                    ? "bg-green-600 text-white hover:bg-green-700 border-green-800"
+                    : "bg-muted text-muted-foreground cursor-not-allowed border-border"
+                )}
+              >
+                <ChevronDown
+                  className={cn(
+                    "w-4 h-4 transition-transform",
+                    showMergeOptions && "rotate-180"
+                  )}
+                />
+              </button>
+
+              {/* Dropdown menu */}
+              {showMergeOptions && (
+                <>
+                  {/* Backdrop */}
+                  <div
+                    className="fixed inset-0 z-[100]"
+                    onClick={onToggleMergeOptions}
+                  />
+                  {/* Menu */}
+                  <div
+                    className="fixed bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
+                    style={{
+                      top: dropdownPosition.top,
+                      left: dropdownPosition.left,
+                      width: Math.max(dropdownPosition.width, 280),
+                    }}
+                  >
+                    {(["squash", "merge", "rebase"] as const).map((method) => (
+                      <button
+                        key={method}
+                        onClick={() => {
+                          onSetMergeMethod(method);
+                          onToggleMergeOptions();
+                        }}
+                        className={cn(
+                          "w-full px-4 py-3 text-left hover:bg-muted transition-colors",
+                          mergeMethod === method && "bg-muted/50"
                         )}
-                        <span className="font-medium text-sm">
-                          {getMergeButtonText(method)}
-                        </span>
-                      </div>
-                      <p className="text-xs text-muted-foreground ml-6 mt-0.5">
-                        {mergeDescriptions[method]}
-                      </p>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
+                      >
+                        <div className="flex items-center gap-2">
+                          {mergeMethod === method ? (
+                            <Check className="w-4 h-4 text-green-500" />
+                          ) : (
+                            <div className="w-4 h-4" />
+                          )}
+                          <span className="font-medium text-sm">
+                            {getMergeButtonText(method)}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground ml-6 mt-0.5">
+                          {mergeDescriptions[method]}
+                        </p>
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
 
           {/* Merge queue info */}
           <p className="text-xs text-muted-foreground">

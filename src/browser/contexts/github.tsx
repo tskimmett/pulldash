@@ -126,6 +126,16 @@ export interface WorkflowRunAwaitingApproval {
   html_url: string;
 }
 
+export type MergeMethod = "merge" | "squash" | "rebase";
+
+export interface AutoMergeState {
+  pullRequestId: string;
+  canEnable: boolean;
+  canDisable: boolean;
+  /** Set when auto-merge is currently scheduled. */
+  request: { mergeMethod: MergeMethod; enabledBy: string | null } | null;
+}
+
 export interface CheckStatus {
   checks: "pending" | "success" | "failure" | "none" | "action_required";
   state: "open" | "closed" | "merged" | "draft";
@@ -1702,6 +1712,74 @@ function createGitHubStore() {
     return data;
   }
 
+  async function getAutoMergeState(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<AutoMergeState> {
+    if (!gql) throw new Error("Not initialized");
+
+    const data = await gql.query<{
+      repository: {
+        pullRequest: {
+          id: string;
+          viewerCanEnableAutoMerge: boolean;
+          viewerCanDisableAutoMerge: boolean;
+          autoMergeRequest: {
+            mergeMethod: "MERGE" | "SQUASH" | "REBASE";
+            enabledBy: { login: string } | null;
+          } | null;
+        };
+      };
+    }>(
+      `query ($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          pullRequest(number: $number) {
+            id
+            viewerCanEnableAutoMerge
+            viewerCanDisableAutoMerge
+            autoMergeRequest {
+              mergeMethod
+              enabledBy { login }
+            }
+          }
+        }
+      }`,
+      { owner, repo, number }
+    );
+
+    const pr = data.repository.pullRequest;
+    const request = pr.autoMergeRequest;
+    return {
+      pullRequestId: pr.id,
+      canEnable: pr.viewerCanEnableAutoMerge,
+      canDisable: pr.viewerCanDisableAutoMerge,
+      request: request && {
+        mergeMethod: request.mergeMethod.toLowerCase() as MergeMethod,
+        enabledBy: request.enabledBy?.login ?? null,
+      },
+    };
+  }
+
+  async function enableAutoMerge(
+    pullRequestId: string,
+    mergeMethod: MergeMethod
+  ): Promise<void> {
+    if (!gql) throw new Error("Not initialized");
+    await gql.query(
+      `mutation ($input: EnablePullRequestAutoMergeInput!) { enablePullRequestAutoMerge(input: $input) { clientMutationId } }`,
+      { input: { pullRequestId, mergeMethod: mergeMethod.toUpperCase() } }
+    );
+  }
+
+  async function disableAutoMerge(pullRequestId: string): Promise<void> {
+    if (!gql) throw new Error("Not initialized");
+    await gql.query(
+      `mutation ($input: DisablePullRequestAutoMergeInput!) { disablePullRequestAutoMerge(input: $input) { clientMutationId } }`,
+      { input: { pullRequestId } }
+    );
+  }
+
   async function getPRCommits(owner: string, repo: string, number: number) {
     if (!octokit) throw new Error("Not initialized");
 
@@ -3141,6 +3219,9 @@ function createGitHubStore() {
     getWorkflowRuns: getWorkflowRunsForSha,
     approveWorkflowRun,
     mergePR,
+    getAutoMergeState,
+    enableAutoMerge,
+    disableAutoMerge,
     getPRCommits,
     getPRConversation,
     createPRConversationComment,
