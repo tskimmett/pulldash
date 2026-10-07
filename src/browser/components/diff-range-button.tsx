@@ -1,4 +1,4 @@
-import { History, Loader2, X } from "lucide-react";
+import { ChevronDown, History, Loader2, X } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -153,20 +153,20 @@ export const DiffRangeButton = memo(function DiffRangeButton() {
   }
 
   return (
-    <div className="flex items-center">
+    <div className="flex items-stretch">
       {primary}
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
           <button
             className={cn(
-              "px-1 py-1 text-xs rounded-r-md border-l transition-colors",
+              "flex items-center px-1 text-xs rounded-r-md border-l transition-colors",
               active
                 ? "bg-blue-600 text-white hover:bg-blue-700 border-blue-500"
                 : "bg-blue-600/20 text-blue-600 dark:text-blue-400 hover:bg-blue-600/30 border-blue-600/30"
             )}
             title="Pick commits to view"
           >
-            <span className="px-0.5">▾</span>
+            <ChevronDown className="w-3.5 h-3.5" />
           </button>
         </PopoverTrigger>
         {content}

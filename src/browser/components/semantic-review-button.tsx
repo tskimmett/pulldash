@@ -1,4 +1,4 @@
-import { Loader2, Sparkles, TriangleAlert, X } from "lucide-react";
+import { ChevronDown, Loader2, Sparkles, TriangleAlert, X } from "lucide-react";
 import { memo, useEffect } from "react";
 import { cn } from "../cn";
 import { usePRReviewSelector, usePRReviewStore } from "../contexts/pr-review";
@@ -94,7 +94,7 @@ export const SemanticReviewButton = memo(function SemanticReviewButton() {
   if (status === "done" && review) {
     const semanticActive = viewMode === "semantic";
     return (
-      <div className="flex items-center">
+      <div className="flex items-stretch">
         <button
           onClick={() =>
             store.setViewMode(semanticActive ? "files" : "semantic")
@@ -118,14 +118,14 @@ export const SemanticReviewButton = memo(function SemanticReviewButton() {
           <DropdownMenuTrigger asChild>
             <button
               className={cn(
-                "px-1 py-1 text-xs rounded-r-md border-l transition-colors",
+                "flex items-center px-1 text-xs rounded-r-md border-l transition-colors",
                 semanticActive
                   ? "bg-violet-600 text-white hover:bg-violet-700 border-violet-500"
                   : "bg-violet-600/20 text-violet-600 dark:text-violet-400 hover:bg-violet-600/30 border-violet-600/30"
               )}
               title="Semantic review options"
             >
-              <span className="px-0.5">▾</span>
+              <ChevronDown className="w-3.5 h-3.5" />
             </button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-[240px]">
