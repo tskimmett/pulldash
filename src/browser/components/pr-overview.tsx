@@ -76,6 +76,7 @@ import {
   type AutoMergeState,
 } from "../contexts/github";
 import { useCanWrite } from "../contexts/auth";
+import { StackNav } from "./pr-stack-nav";
 
 // ============================================================================
 // Types
@@ -1058,6 +1059,7 @@ export const PROverview = memo(function PROverview() {
               label="Files Changed"
               count={files.length}
             />
+            <StackNav owner={owner} repo={repo} number={pr.number} />
           </div>
         </div>
       </div>
@@ -1418,7 +1420,14 @@ export const PROverview = memo(function PROverview() {
           </div>
 
           {/* Right Column - Sidebar */}
-          <div className="w-full lg:w-[296px] shrink-0 space-y-4 order-1 lg:order-2">
+          <div
+            className={cn(
+              "w-full lg:w-[296px] shrink-0 space-y-4 order-1 lg:order-2",
+              // Stacked above the content on mobile, the sidebar pushes the
+              // commits/checks lists off-screen so the tabs look broken.
+              activeTab !== "conversation" && "hidden lg:block"
+            )}
+          >
             {/* Reviewers */}
             <SidebarSection
               title="Reviewers"

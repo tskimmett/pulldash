@@ -3,6 +3,7 @@ import {
   useContext,
   useEffect,
   useRef,
+  useState,
   useCallback,
   useSyncExternalStore,
   type ReactNode,
@@ -27,6 +28,20 @@ import {
 import { fetchAllPages } from "../lib/fetch-all-pages";
 import { openPersistentStore } from "../lib/persistent-cache";
 import { RequestCache } from "../lib/request-cache";
+import {
+  discoverStacks,
+  MAX_STACK_CHILDREN,
+  orderStacked,
+  prKey as stackKey,
+  stackFromDiscovery,
+  stackSlot,
+  toStackNode,
+  STACK_NODE_FIELDS,
+  type GqlStackNode,
+  type PRStack,
+  type StackNode,
+  type StackSlot,
+} from "../lib/pr-stacks";
 import {
   PR_FINGERPRINT_QUERY,
   fingerprintMatchesPR,
@@ -118,6 +133,11 @@ export interface PRSearchResult {
     avatarUrl: string;
     state: "APPROVED" | "CHANGES_REQUESTED";
   }>;
+  // Stacks
+  stackNode?: StackNode;
+  stack?: StackSlot;
+  /** Listed only because a stack-mate matches the list's filters. */
+  stackOnly?: boolean;
 }
 
 export interface WorkflowRunAwaitingApproval {
@@ -163,6 +183,7 @@ export interface PREnrichment {
     avatarUrl: string;
     state: "APPROVED" | "CHANGES_REQUESTED";
   }>;
+  stackNode: StackNode;
 }
 
 export interface ReviewThread {
@@ -232,6 +253,217 @@ class GraphQLClient {
       if (query.trimStart().startsWith("mutation")) this.onMutation();
     }
   }
+}
+
+// ============================================================================
+// PR enrichment fields
+// ============================================================================
+
+const ENRICHMENT_FIELDS = `
+    number
+    changedFiles
+    additions
+    deletions
+    reviewDecision
+    latestOpinionatedReviews(first: 10) {
+      nodes {
+        author {
+          login
+          avatarUrl
+        }
+        state
+      }
+    }
+    commits(last: 1) {
+      nodes {
+        commit {
+          committedDate
+          statusCheckRollup {
+            state
+            contexts(first: 50) {
+              nodes {
+                __typename
+                ... on CheckRun {
+                  name
+                  conclusion
+                  status
+                }
+                ... on StatusContext {
+                  context
+                  state
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    viewerLatestReview {
+      submittedAt
+    }
+  ${STACK_NODE_FIELDS}`;
+
+type CheckContext =
+  | {
+      __typename: "CheckRun";
+      name: string;
+      conclusion: string | null;
+      status: string;
+    }
+  | {
+      __typename: "StatusContext";
+      context: string;
+      state: string;
+    };
+
+type GqlEnrichedPR = GqlStackNode & {
+  number: number;
+  changedFiles: number;
+  additions: number;
+  deletions: number;
+  reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  latestOpinionatedReviews: {
+    nodes: Array<{
+      author: { login: string; avatarUrl: string } | null;
+      state: "APPROVED" | "CHANGES_REQUESTED";
+    }>;
+  };
+  commits: {
+    nodes: Array<{
+      commit: {
+        committedDate: string;
+        statusCheckRollup: {
+          state: "EXPECTED" | "ERROR" | "FAILURE" | "PENDING" | "SUCCESS";
+          contexts: {
+            nodes: CheckContext[];
+          };
+        } | null;
+      };
+    }>;
+  };
+  viewerLatestReview: { submittedAt: string } | null;
+};
+
+function parseEnrichment(result: GqlEnrichedPR): PREnrichment {
+  const lastCommit = result.commits.nodes[0]?.commit;
+  const lastCommitAt = lastCommit?.committedDate || null;
+  const viewerLastReviewAt = result.viewerLatestReview?.submittedAt || null;
+  let hasNewChanges = false;
+  if (viewerLastReviewAt && lastCommitAt) {
+    hasNewChanges = new Date(lastCommitAt) > new Date(viewerLastReviewAt);
+  }
+
+  // Map GraphQL status to our CI status
+  const statusState = lastCommit?.statusCheckRollup?.state;
+  let ciStatus: PREnrichment["ciStatus"] = "none";
+  if (statusState) {
+    if (statusState === "SUCCESS") {
+      ciStatus = "success";
+    } else if (statusState === "FAILURE" || statusState === "ERROR") {
+      ciStatus = "failure";
+    } else if (statusState === "PENDING" || statusState === "EXPECTED") {
+      ciStatus = "pending";
+    }
+  }
+
+  // Parse check contexts for detailed info
+  const contexts = lastCommit?.statusCheckRollup?.contexts?.nodes || [];
+  const ciChecks: PREnrichment["ciChecks"] = contexts.map((ctx) => {
+    if (ctx.__typename === "CheckRun") {
+      let state: "pending" | "success" | "failure" = "pending";
+      if (ctx.status === "COMPLETED") {
+        state = ctx.conclusion === "SUCCESS" ? "success" : "failure";
+      }
+      return { name: ctx.name, state };
+    } else {
+      // StatusContext
+      const state =
+        ctx.state === "SUCCESS"
+          ? "success"
+          : ctx.state === "FAILURE" || ctx.state === "ERROR"
+            ? "failure"
+            : "pending";
+      return { name: ctx.context, state };
+    }
+  });
+
+  // Build summary
+  let ciSummary = "";
+  if (ciChecks.length > 0) {
+    const passed = ciChecks.filter((c) => c.state === "success").length;
+    const failed = ciChecks.filter((c) => c.state === "failure").length;
+    const pending = ciChecks.filter((c) => c.state === "pending").length;
+
+    if (failed > 0) {
+      const failedCheck = ciChecks.find((c) => c.state === "failure");
+      ciSummary = failedCheck ? failedCheck.name : `${failed} failed`;
+    } else if (pending > 0) {
+      const pendingCheck = ciChecks.find((c) => c.state === "pending");
+      ciSummary = pendingCheck ? pendingCheck.name : `${pending} running`;
+    } else {
+      ciSummary = `${passed}/${ciChecks.length} passed`;
+    }
+  }
+
+  // Parse latest reviews - deduplicate by user (keep latest)
+  const reviewsByUser = new Map<
+    string,
+    {
+      login: string;
+      avatarUrl: string;
+      state: "APPROVED" | "CHANGES_REQUESTED";
+    }
+  >();
+  for (const review of result.latestOpinionatedReviews?.nodes || []) {
+    if (review.author) {
+      reviewsByUser.set(review.author.login, {
+        login: review.author.login,
+        avatarUrl: review.author.avatarUrl,
+        state: review.state,
+      });
+    }
+  }
+  const latestReviews = Array.from(reviewsByUser.values());
+
+  return {
+    changedFiles: result.changedFiles,
+    additions: result.additions,
+    deletions: result.deletions,
+    lastCommitAt,
+    viewerLastReviewAt,
+    hasNewChanges,
+    ciStatus,
+    ciSummary,
+    ciChecks,
+    reviewDecision: result.reviewDecision,
+    latestReviews,
+    stackNode: toStackNode(result),
+  };
+}
+
+// Fields that turn a GraphQL PullRequest into a list row
+const ROW_FIELDS = `
+  fullDatabaseId
+  url
+  createdAt
+  updatedAt
+  mergedAt
+  author { login avatarUrl }
+  labels(first: 10) { nodes { name color } }`;
+
+interface GqlRow {
+  fullDatabaseId: string;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+  mergedAt: string | null;
+  author: { login: string; avatarUrl: string } | null;
+  labels: { nodes: Array<{ name: string; color: string }> };
+}
+
+function rowKey(item: PRSearchResult): string {
+  const match = item.repository_url.match(/repos\/([^/]+)\/([^/]+)/);
+  return match ? stackKey(match[1], match[2], item.number) : String(item.id);
 }
 
 // ============================================================================
@@ -647,10 +879,23 @@ function createGitHubStore() {
           new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
       );
 
+      // Stack-mates from the last load keep their place until stacks resolve
+      const listedKeys = new Set(combined.map(rowKey));
+      const listedStacks = new Set(
+        combined.flatMap((item) => (item.stack ? [item.stack.id] : []))
+      );
+      let extra = [...previous.values()].filter(
+        (item) =>
+          item.stackOnly &&
+          item.stack &&
+          listedStacks.has(item.stack.id) &&
+          !listedKeys.has(rowKey(item))
+      );
+
       // Render search results now; enrichment is a second round trip
       setState({
         prList: {
-          items: combined,
+          items: orderStacked(combined, extra),
           totalCount: combined.length,
           loading: false,
           refreshing: true,
@@ -693,20 +938,35 @@ function createGitHubStore() {
         }
       }
 
+      if (signal.aborted) return;
+
+      // Show CI and reviews now; stacks take another round trip or two
+      setState((s) => ({
+        prList: { ...s.prList, items: orderStacked(combined, extra) },
+      }));
+
+      try {
+        const stacks = await resolveListStacks(combined);
+        if (signal.aborted) return;
+        combined = stacks.rows;
+        extra = stacks.extra;
+      } catch (stackError) {
+        console.error("PR stack discovery failed:", stackError);
+      }
+
       // Final check before updating state
       if (signal.aborted) return;
 
+      // Stack-mates ride along but don't count toward the list's size
+      const items = orderStacked(combined, extra);
+
       // Cache the result (persist for instant load next time)
       // Use combined.length instead of total to reflect deduplicated count
-      cache.set(
-        cacheKey,
-        { items: combined, totalCount: combined.length },
-        true
-      );
+      cache.set(cacheKey, { items, totalCount: combined.length }, true);
 
       setState({
         prList: {
-          items: combined,
+          items,
           totalCount: combined.length,
           loading: false,
           refreshing: false,
@@ -2537,214 +2797,176 @@ function createGitHubStore() {
       .map(
         (pr, idx) => `
       pr${idx}: repository(owner: "${pr.owner}", name: "${pr.repo}") {
-        pullRequest(number: ${pr.number}) {
-          number
-          changedFiles
-          additions
-          deletions
-          reviewDecision
-          latestOpinionatedReviews(first: 10) {
-            nodes {
-              author {
-                login
-                avatarUrl
-              }
-              state
-            }
-          }
-          commits(last: 1) {
-            nodes {
-              commit {
-                committedDate
-                statusCheckRollup {
-                  state
-                  contexts(first: 50) {
-                    nodes {
-                      __typename
-                      ... on CheckRun {
-                        name
-                        conclusion
-                        status
-                      }
-                      ... on StatusContext {
-                        context
-                        state
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-          viewerLatestReview {
-            submittedAt
-          }
-        }
-      }
-    `
+        pullRequest(number: ${pr.number}) { ${ENRICHMENT_FIELDS} }
+      }`
       )
       .join("\n");
 
-    type CheckContext =
-      | {
-          __typename: "CheckRun";
-          name: string;
-          conclusion: string | null;
-          status: string;
-        }
-      | {
-          __typename: "StatusContext";
-          context: string;
-          state: string;
-        };
-
     const data = await gql.query<
-      Record<
-        string,
-        {
-          pullRequest: {
-            number: number;
-            changedFiles: number;
-            additions: number;
-            deletions: number;
-            reviewDecision:
-              | "APPROVED"
-              | "CHANGES_REQUESTED"
-              | "REVIEW_REQUIRED"
-              | null;
-            latestOpinionatedReviews: {
-              nodes: Array<{
-                author: { login: string; avatarUrl: string } | null;
-                state: "APPROVED" | "CHANGES_REQUESTED";
-              }>;
-            };
-            commits: {
-              nodes: Array<{
-                commit: {
-                  committedDate: string;
-                  statusCheckRollup: {
-                    state:
-                      | "EXPECTED"
-                      | "ERROR"
-                      | "FAILURE"
-                      | "PENDING"
-                      | "SUCCESS";
-                    contexts: {
-                      nodes: CheckContext[];
-                    };
-                  } | null;
-                };
-              }>;
-            };
-            viewerLatestReview: { submittedAt: string } | null;
-          } | null;
-        }
-      >
+      Record<string, { pullRequest: GqlEnrichedPR | null }>
     >(`query { ${prQueries} }`);
 
     const enrichmentMap = new Map<string, PREnrichment>();
-
     prs.forEach((pr, idx) => {
       const result = data[`pr${idx}`]?.pullRequest;
       if (result) {
-        const lastCommit = result.commits.nodes[0]?.commit;
-        const lastCommitAt = lastCommit?.committedDate || null;
-        const viewerLastReviewAt =
-          result.viewerLatestReview?.submittedAt || null;
-        let hasNewChanges = false;
-        if (viewerLastReviewAt && lastCommitAt) {
-          hasNewChanges = new Date(lastCommitAt) > new Date(viewerLastReviewAt);
-        }
-
-        // Map GraphQL status to our CI status
-        const statusState = lastCommit?.statusCheckRollup?.state;
-        let ciStatus: PREnrichment["ciStatus"] = "none";
-        if (statusState) {
-          if (statusState === "SUCCESS") {
-            ciStatus = "success";
-          } else if (statusState === "FAILURE" || statusState === "ERROR") {
-            ciStatus = "failure";
-          } else if (statusState === "PENDING" || statusState === "EXPECTED") {
-            ciStatus = "pending";
-          }
-        }
-
-        // Parse check contexts for detailed info
-        const contexts = lastCommit?.statusCheckRollup?.contexts?.nodes || [];
-        const ciChecks: PREnrichment["ciChecks"] = contexts.map((ctx) => {
-          if (ctx.__typename === "CheckRun") {
-            let state: "pending" | "success" | "failure" = "pending";
-            if (ctx.status === "COMPLETED") {
-              state = ctx.conclusion === "SUCCESS" ? "success" : "failure";
-            }
-            return { name: ctx.name, state };
-          } else {
-            // StatusContext
-            const state =
-              ctx.state === "SUCCESS"
-                ? "success"
-                : ctx.state === "FAILURE" || ctx.state === "ERROR"
-                  ? "failure"
-                  : "pending";
-            return { name: ctx.context, state };
-          }
-        });
-
-        // Build summary
-        let ciSummary = "";
-        if (ciChecks.length > 0) {
-          const passed = ciChecks.filter((c) => c.state === "success").length;
-          const failed = ciChecks.filter((c) => c.state === "failure").length;
-          const pending = ciChecks.filter((c) => c.state === "pending").length;
-
-          if (failed > 0) {
-            const failedCheck = ciChecks.find((c) => c.state === "failure");
-            ciSummary = failedCheck ? failedCheck.name : `${failed} failed`;
-          } else if (pending > 0) {
-            const pendingCheck = ciChecks.find((c) => c.state === "pending");
-            ciSummary = pendingCheck ? pendingCheck.name : `${pending} running`;
-          } else {
-            ciSummary = `${passed}/${ciChecks.length} passed`;
-          }
-        }
-
-        // Parse latest reviews - deduplicate by user (keep latest)
-        const reviewsByUser = new Map<
-          string,
-          {
-            login: string;
-            avatarUrl: string;
-            state: "APPROVED" | "CHANGES_REQUESTED";
-          }
-        >();
-        for (const review of result.latestOpinionatedReviews?.nodes || []) {
-          if (review.author) {
-            reviewsByUser.set(review.author.login, {
-              login: review.author.login,
-              avatarUrl: review.author.avatarUrl,
-              state: review.state,
-            });
-          }
-        }
-        const latestReviews = Array.from(reviewsByUser.values());
-
-        enrichmentMap.set(`${pr.owner}/${pr.repo}/${pr.number}`, {
-          changedFiles: result.changedFiles,
-          additions: result.additions,
-          deletions: result.deletions,
-          lastCommitAt,
-          viewerLastReviewAt,
-          hasNewChanges,
-          ciStatus,
-          ciSummary,
-          ciChecks,
-          reviewDecision: result.reviewDecision,
-          latestReviews,
-        });
+        enrichmentMap.set(
+          `${pr.owner}/${pr.repo}/${pr.number}`,
+          parseEnrichment(result)
+        );
       }
     });
-
     return enrichmentMap;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stacks
+  // ---------------------------------------------------------------------------
+
+  // Open PRs stacked directly on top of (down) or underneath (up) each PR
+  async function probeStacks(frontier: StackNode[]): Promise<StackNode[]> {
+    if (!gql || frontier.length === 0) return [];
+    const fields = `nodes { ${STACK_NODE_FIELDS} }`;
+    const query = frontier
+      .map((n, idx) => {
+        const owner = JSON.stringify(n.owner);
+        const name = JSON.stringify(n.repo);
+        // A fork's branch can't be the base of a PR in this repo
+        const down = n.isCrossRepository
+          ? ""
+          : `down: pullRequests(baseRefName: ${JSON.stringify(n.headRefName)}, states: OPEN, first: ${MAX_STACK_CHILDREN + 1}) { ${fields} }`;
+        return `p${idx}: repository(owner: ${owner}, name: ${name}) {
+          up: pullRequests(headRefName: ${JSON.stringify(n.baseRefName)}, states: OPEN, first: 5) { ${fields} }
+          ${down}
+        }`;
+      })
+      .join("\n");
+
+    type Probe = {
+      up: { nodes: GqlStackNode[] };
+      down?: { nodes: GqlStackNode[] };
+    } | null;
+    const data = await gql.query<Record<string, Probe>>(`query { ${query} }`);
+
+    return Object.values(data).flatMap((result) => {
+      if (!result) return [];
+      const up = result.up.nodes.filter((pr) => !pr.isCrossRepository);
+      // Many PRs targeting one branch means an integration branch, not a stack
+      const down = result.down?.nodes ?? [];
+      const children = down.length > MAX_STACK_CHILDREN ? [] : down;
+      return [...up, ...children].map(toStackNode);
+    });
+  }
+
+  /** Full list rows for PRs no search returned (stack-mates of listed PRs). */
+  async function getPRRows(nodes: StackNode[]): Promise<PRSearchResult[]> {
+    if (!gql || nodes.length === 0) return [];
+    const query = nodes
+      .map(
+        (n, idx) => `
+      pr${idx}: repository(owner: ${JSON.stringify(n.owner)}, name: ${JSON.stringify(n.repo)}) {
+        pullRequest(number: ${n.number}) { ${ROW_FIELDS} ${ENRICHMENT_FIELDS} }
+      }`
+      )
+      .join("\n");
+    const data = await gql.query<
+      Record<string, { pullRequest: (GqlEnrichedPR & GqlRow) | null } | null>
+    >(`query { ${query} }`);
+
+    return nodes.flatMap((n, idx): PRSearchResult[] => {
+      const pr = data[`pr${idx}`]?.pullRequest;
+      if (!pr) return [];
+      return [
+        {
+          // Search rows carry issue ids; negative PR ids can't collide
+          id: -Number(pr.fullDatabaseId),
+          number: pr.number,
+          title: pr.title,
+          html_url: pr.url,
+          created_at: pr.createdAt,
+          updated_at: pr.updatedAt,
+          draft: pr.isDraft,
+          state: pr.state === "OPEN" ? "open" : "closed",
+          repository_url: `https://api.github.com/repos/${n.owner}/${n.repo}`,
+          user: pr.author
+            ? { login: pr.author.login, avatar_url: pr.author.avatarUrl }
+            : null,
+          labels: pr.labels.nodes,
+          pull_request: { merged_at: pr.mergedAt },
+          ...parseEnrichment(pr),
+        },
+      ];
+    });
+  }
+
+  // Tag listed rows with their stack slot and fetch stack-mates that aren't
+  // listed, so the list can show each stack whole.
+  async function resolveListStacks(rows: PRSearchResult[]) {
+    const seeds = rows.flatMap((r) => (r.stackNode ? [r.stackNode] : []));
+    const { nodes, placements } = await discoverStacks(seeds, probeStacks);
+
+    const listed = new Set(rows.map(rowKey));
+    const missing = new Set<string>();
+    for (const placement of new Set(placements.values())) {
+      if (!placement.members.some((k) => listed.has(k))) continue;
+      for (const key of placement.members) {
+        if (!listed.has(key)) missing.add(key);
+      }
+    }
+    const fetched = await getPRRows(
+      [...missing].flatMap((k) => nodes.get(k) ?? [])
+    );
+
+    const slotted = (row: PRSearchResult, stackOnly: boolean) => {
+      const key = rowKey(row);
+      const placement = placements.get(key);
+      return {
+        ...row,
+        stack: placement && stackSlot(placement, key),
+        stackOnly,
+      };
+    };
+    return {
+      rows: rows.map((r) => slotted(r, false)),
+      extra: fetched.map((r) => slotted(r, true)),
+    };
+  }
+
+  async function getPRStack(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<PRStack | null> {
+    if (!gql) throw new Error("Not initialized");
+    const key = stackKey(owner, repo, number);
+    const cacheKey = `stack:${key}`;
+
+    // Wrapped so "not stacked" is a cache hit too
+    const cached = cache.get<{ stack: PRStack | null }>(cacheKey);
+    if (cached) return cached.stack;
+    const pending = cache.getPending<PRStack | null>(cacheKey);
+    if (pending) return pending;
+
+    const promise = gql
+      .query<{ repository: { pullRequest: GqlStackNode | null } | null }>(
+        `query($owner: String!, $repo: String!, $number: Int!) {
+          repository(owner: $owner, name: $repo) {
+            pullRequest(number: $number) { ${STACK_NODE_FIELDS} }
+          }
+        }`,
+        { owner, repo, number }
+      )
+      .then(async (data) => {
+        const pr = data.repository?.pullRequest;
+        if (!pr) return null;
+        const discovery = await discoverStacks([toStackNode(pr)], probeStacks);
+        const stack = stackFromDiscovery(discovery, key);
+        cache.set(cacheKey, { stack });
+        return stack;
+      });
+
+    cache.setPending(cacheKey, promise);
+    return promise;
   }
 
   interface ReviewThreadsResult {
@@ -3245,6 +3467,7 @@ function createGitHubStore() {
     // GraphQL
     graphql,
     getPREnrichment,
+    getPRStack,
     getReviewThreads,
     resolveThread,
     unresolveThread,
@@ -3391,6 +3614,40 @@ export function usePRChecks(owner: string, repo: string, number: number) {
     refresh: () => store.fetchPRChecks(owner, repo, number),
   };
 }
+
+/** The stack this PR sits in, or null when it isn't stacked. */
+export function usePRStack(
+  owner: string,
+  repo: string,
+  number: number
+): PRStack | null {
+  const store = useGitHubStore();
+  const ready = useGitHubSelector((s) => s.ready);
+  const [stack, setStack] = useState<{ key: string; stack: PRStack } | null>(
+    null
+  );
+  const key = stackKey(owner, repo, number);
+
+  useEffect(() => {
+    if (!ready) return;
+    let cancelled = false;
+    store
+      .getPRStack(owner, repo, number)
+      .then((result) => {
+        if (!cancelled) setStack(result ? { key, stack: result } : null);
+      })
+      .catch(() => {
+        // Stacks are a nicety; the PR works without them
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, store, owner, repo, number, key]);
+
+  return stack?.key === key ? stack.stack : null;
+}
+
+export type { PRStack };
 
 export function useRefreshAll() {
   const store = useGitHubStore();

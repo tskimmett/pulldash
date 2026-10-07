@@ -22,6 +22,7 @@ import {
   AlertCircle,
   MessageSquare,
   Clock,
+  Layers,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "../cn";
@@ -53,6 +54,7 @@ import {
   type FilterMode,
 } from "../lib/feed-filters";
 import { extractRepoFromUrl } from "../lib/pr-query";
+import { stackRuns } from "../lib/pr-stacks";
 
 // ============================================================================
 // Types
@@ -789,9 +791,34 @@ export function Home() {
               </div>
             ) : (
               <div className="divide-y divide-border">
-                {prs.map((pr) => (
-                  <PRListItem key={pr.id} pr={pr} onSelect={handleOpenPR} />
-                ))}
+                {stackRuns(prs).map((run) =>
+                  run.stack ? (
+                    <div
+                      key={run.stack.id}
+                      className="border-l-2 border-teal-500/60 bg-teal-500/[0.03]"
+                    >
+                      <div className="flex items-center gap-1.5 px-2 sm:px-4 pt-2 text-[11px] font-medium text-teal-600 dark:text-teal-400">
+                        <Layers className="w-3 h-3" />
+                        Stack of {run.stack.size}
+                      </div>
+                      <div className="divide-y divide-border/50">
+                        {run.items.map((pr) => (
+                          <PRListItem
+                            key={pr.id}
+                            pr={pr}
+                            onSelect={handleOpenPR}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    <PRListItem
+                      key={run.items[0].id}
+                      pr={run.items[0]}
+                      onSelect={handleOpenPR}
+                    />
+                  )
+                )}
               </div>
             )}
           </div>
@@ -1260,6 +1287,14 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
+          {pr.stack && (
+            <span
+              className="shrink-0 font-mono text-[10px] text-teal-600 dark:text-teal-400"
+              title={`Position ${pr.stack.position} of ${pr.stack.size}, counting up from the base branch`}
+            >
+              {pr.stack.position}/{pr.stack.size}
+            </span>
+          )}
           <span className="font-medium hover:text-blue-400 break-words">
             {pr.title}
           </span>
@@ -1295,6 +1330,14 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
             </>
           )}
           <span>#{pr.number}</span>
+          {pr.stackOnly && (
+            <span
+              className="italic"
+              title="Doesn't match your filters; shown with its stack"
+            >
+              • via stack
+            </span>
+          )}
           <span className="hidden xs:inline">•</span>
           <span className="hidden xs:inline">
             {getTimeAgo(new Date(pr.updated_at))}
