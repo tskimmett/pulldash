@@ -1404,6 +1404,9 @@ const DiffViewer = memo(function DiffViewer({
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [findIndex, setFindIndex] = useState(0);
+  // Bumped only by find navigation (typing, Enter, arrows) so row shifts from
+  // expanding context or inserting comments don't yank the scroll position.
+  const [findScrollRequest, setFindScrollRequest] = useState(0);
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -1942,17 +1945,21 @@ const DiffViewer = memo(function DiffViewer({
     parentRef.current?.scrollTo({ top: 0, left: 0 });
   }, [selectedFile]);
 
+  const activeFindRowRef = useRef(activeFindRow);
+  activeFindRowRef.current = activeFindRow;
   useEffect(() => {
-    if (findOpen && activeFindRow !== undefined) {
-      virtualizer.scrollToIndex(activeFindRow, { align: "center" });
+    const row = activeFindRowRef.current;
+    if (findScrollRequest && row !== undefined) {
+      virtualizer.scrollToIndex(row, { align: "center" });
     }
-  }, [findOpen, activeFindRow, virtualizer]);
+  }, [findScrollRequest, virtualizer]);
 
   const stepFind = (direction: number) => {
     if (!findMatches.length) return;
     setFindIndex(
       (index) => (index + direction + findMatches.length) % findMatches.length
     );
+    setFindScrollRequest((n) => n + 1);
   };
 
   const totalSize = virtualizer.getTotalSize();
@@ -2380,6 +2387,7 @@ const DiffViewer = memo(function DiffViewer({
               onChange={(event) => {
                 setFindQuery(event.target.value);
                 setFindIndex(0);
+                setFindScrollRequest((n) => n + 1);
               }}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
