@@ -169,7 +169,10 @@ export function PRSearchInput({
   const feedCount = feedResults.length;
 
   return (
-    <div ref={containerRef} className={cn("relative w-[260px]", className)}>
+    <div
+      ref={containerRef}
+      className={cn("relative w-[180px] lg:w-[260px]", className)}
+    >
       <form onSubmit={handleSubmit}>
         <div className="relative">
           <input

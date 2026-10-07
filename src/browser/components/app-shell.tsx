@@ -171,7 +171,7 @@ export function AppShell() {
           onSelect={handleTabSelect}
           onClose={closeTab}
         />
-        <div className="h-full flex-1 hidden sm:flex items-center gap-0.5 overflow-x-auto hide-scrollbar">
+        <div className="h-full flex-1 min-w-0 hidden sm:flex items-center gap-0.5 overflow-x-auto hide-scrollbar [mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]">
           {tabs.map((tab) => (
             <TabItem
               key={tab.id}
@@ -184,7 +184,7 @@ export function AppShell() {
         </div>
 
         {/* PR URL input & User menu */}
-        <div className="h-full flex items-center gap-2 pr-2 sm:pr-3">
+        <div className="h-full flex items-center gap-2 pr-2 sm:pr-3 sm:pl-2 shrink-0">
           <div className="hidden sm:block">
             <PRSearchInput />
           </div>
