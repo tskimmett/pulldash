@@ -181,7 +181,9 @@ export function WelcomeDialog() {
               <h2 className="text-lg font-semibold text-foreground">
                 better pr
               </h2>
-              <p className="text-sm text-muted-foreground">Fast PR reviews</p>
+              <p className="text-sm text-muted-foreground">
+                What GitHub should be
+              </p>
             </div>
           </div>
 
