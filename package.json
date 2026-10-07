@@ -9,6 +9,7 @@
     "start": "bun run build:browser && bun run src/node/main.ts",
     "typecheck": "tsgo --noEmit",
     "build:browser": "bun run ./scripts/build-browser.ts",
+    "deploy": "bun run ./scripts/deploy-azure.ts",
     "fmt": "prettier --write --cache .",
     "fmt:check": "prettier --check .",
     "lint": "echo 'No linter configured yet'",

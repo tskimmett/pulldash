@@ -56,6 +56,11 @@ async function build() {
     resolve(process.cwd(), "src", "browser", "logo.svg"),
     resolve(process.cwd(), "dist", "browser", "logo.svg")
   );
+  // Azure Static Web Apps routing (SPA fallback, cache headers)
+  await cp(
+    resolve(process.cwd(), "src", "browser", "staticwebapp.config.json"),
+    resolve(process.cwd(), "dist", "browser", "staticwebapp.config.json")
+  );
 
   // Build worker separately with document shim for Prism/refractor
   const workerResult = await Bun.build({
