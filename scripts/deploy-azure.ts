@@ -19,6 +19,7 @@ if (!token) {
   throw new Error("Could not fetch the Static Web App deployment token");
 }
 
-await $`bunx --bun @azure/static-web-apps-cli@latest deploy ./dist/browser --env production --no-use-keychain`.env(
+// Pinned: this tool receives the deploy token and uploads the bundle.
+await $`bunx --bun @azure/static-web-apps-cli@2.0.10 deploy ./dist/browser --env production --no-use-keychain`.env(
   { ...process.env, SWA_CLI_DEPLOYMENT_TOKEN: token }
 );

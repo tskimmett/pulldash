@@ -15,6 +15,7 @@ import remarkGfm from "remark-gfm";
 import remarkGemoji from "remark-gemoji";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize from "rehype-sanitize";
+import { isAllowedHtmlAttribute, isAllowedHtmlTag } from "../lib/safe-html";
 import rehypeHighlight from "rehype-highlight";
 import { cn } from "../cn";
 import { isMac } from "./keycap";
@@ -50,6 +51,11 @@ interface MarkdownProps {
    * This is needed for private user-attachments which have signed URLs in the HTML.
    */
   html?: string;
+  /**
+   * Drop images. Set for model-generated text, where an injected image URL
+   * would make the browser send a request to an arbitrary host.
+   */
+  noImages?: boolean;
 }
 
 // Pattern to match @mentions (GitHub-style: @username)
@@ -310,6 +316,7 @@ function parseNode(node: Node): HtmlNode | null {
   if (node.nodeType === Node.ELEMENT_NODE) {
     const el = node as Element;
     const tag = el.tagName.toLowerCase();
+    if (!isAllowedHtmlTag(tag)) return null;
 
     // Check if this is a GitHub user-mention link
     if (tag === "a" && el.classList.contains("user-mention")) {
@@ -328,7 +335,9 @@ function parseNode(node: Node): HtmlNode | null {
     // Build attributes map
     const attributes: Record<string, string> = {};
     for (const attr of Array.from(el.attributes)) {
-      attributes[attr.name] = attr.value;
+      if (isAllowedHtmlAttribute(attr.name, attr.value)) {
+        attributes[attr.name] = attr.value;
+      }
     }
 
     return {
@@ -472,6 +481,7 @@ export const Markdown = memo(function Markdown({
   className,
   emptyState,
   html,
+  noImages,
 }: MarkdownProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [isEmpty, setIsEmpty] = useState(false);
@@ -539,6 +549,7 @@ export const Markdown = memo(function Markdown({
           className={cn("markdown-body", className, isEmpty && "hidden")}
         >
           <ReactMarkdown
+            disallowedElements={noImages ? ["img"] : undefined}
             remarkPlugins={[remarkGfm, remarkGemoji]}
             rehypePlugins={[
               rehypeRaw,
@@ -579,6 +590,7 @@ export const Markdown = memo(function Markdown({
         className={cn("markdown-body", className, isEmpty && "hidden")}
       >
         <ReactMarkdown
+          disallowedElements={noImages ? ["img"] : undefined}
           remarkPlugins={[remarkGfm, remarkGemoji]}
           rehypePlugins={[
             rehypeRaw,

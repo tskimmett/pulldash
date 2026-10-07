@@ -56,6 +56,7 @@ import {
   usePRReviewSelector,
   usePRReviewStore,
   getTimeAgo,
+  isForkPR,
 } from "../contexts/pr-review";
 import { parseDiffCached, type ParsedDiff } from "../lib/diff";
 import { getLatestReviewsByUser } from "../lib/latest-reviews";
@@ -1889,8 +1890,7 @@ export const PROverview = memo(function PROverview() {
             {pr.merged &&
               (() => {
                 // Check if the head branch is from a fork (different repo than base)
-                const isFromFork =
-                  pr.head.repo?.full_name !== pr.base.repo?.full_name;
+                const isFromFork = isForkPR(pr);
                 return (
                   <div className="border border-purple-500/30 rounded-md overflow-hidden bg-purple-500/10">
                     <div className="flex flex-wrap items-start gap-3 p-4">
@@ -1989,7 +1989,7 @@ export const PROverview = memo(function PROverview() {
                       branch has unmerged commits.
                     </p>
                   </div>
-                  {canMergeRepo && !branchDeleted && (
+                  {canMergeRepo && !branchDeleted && !isForkPR(pr) && (
                     <button
                       onClick={handleDeleteBranch}
                       disabled={deletingBranch}
@@ -2005,7 +2005,7 @@ export const PROverview = memo(function PROverview() {
                       )}
                     </button>
                   )}
-                  {branchDeleted && (
+                  {branchDeleted && !isForkPR(pr) && (
                     <div className="w-full flex flex-col items-start gap-3">
                       <span className="text-sm text-muted-foreground flex items-center gap-2">
                         <Check className="w-4 h-4 text-green-400" />

@@ -450,7 +450,7 @@ export const SemanticLayerBar = memo(function SemanticLayerBar() {
       </div>
 
       <div className="text-xs text-muted-foreground [&_p]:my-0">
-        <Markdown>{layer.summary}</Markdown>
+        <Markdown noImages>{layer.summary}</Markdown>
       </div>
 
       {layer.diagram && (

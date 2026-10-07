@@ -125,17 +125,27 @@ function PATAuthSection() {
       </div>
 
       <p className="text-xs text-muted-foreground">
-        Requires{" "}
+        Use a fine-grained token limited to the repos you review{" "}
+        <a
+          href="https://github.com/settings/personal-access-tokens/new"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-foreground hover:underline"
+        >
+          (create →)
+        </a>
+        , or a classic token with{" "}
         <code className="px-1 py-0.5 rounded bg-muted font-mono">repo</code>{" "}
-        scope.{" "}
+        scope{" "}
         <a
           href="https://github.com/settings/tokens/new?scopes=repo,read:user&description=better%20pr"
           target="_blank"
           rel="noopener noreferrer"
           className="text-foreground hover:underline"
         >
-          Create token →
+          (create →)
         </a>
+        .
       </p>
     </div>
   );
@@ -192,8 +202,8 @@ export function WelcomeDialog() {
             <PATAuthSection />
 
             <p className="text-xs text-center text-muted-foreground">
-              All GitHub API calls are made directly from your device. better pr
-              does not store your GitHub token.
+              Your token is kept only in this browser&apos;s local storage and
+              is sent only to api.github.com. Log out to remove it.
             </p>
           </div>
         </div>

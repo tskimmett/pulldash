@@ -2,6 +2,7 @@ import { test, expect, beforeEach } from "bun:test";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import {
   PRReviewStore,
+  isForkPR,
   commentThreadKey,
   isThreadCollapsed,
   sortFilesLikeTree,
@@ -191,6 +192,39 @@ test("setAutoMerge schedules with the selected method and stores the result", as
   await store.setAutoMerge(false);
   expect(store.getSnapshot().autoMerge?.request).toBeNull();
   expect(calls).toEqual(["enable:PR_1:squash", "disable:PR_1"]);
+});
+
+test("branch actions never run for fork PRs", async () => {
+  const calls: string[] = [];
+  const github = {
+    ...createMockGitHubStore(),
+    deleteBranch: async () => {
+      calls.push("delete");
+    },
+    restoreBranch: async () => {
+      calls.push("restore");
+    },
+  } as unknown as GitHubStore;
+  const base = createMockPR();
+  const pr = {
+    ...base,
+    head: { ...base.head, repo: { full_name: "someone/repo" } },
+    base: { ...base.base, repo: { full_name: "test/repo" } },
+  } as PullRequest;
+  expect(isForkPR(pr)).toBe(true);
+  expect(isForkPR(base)).toBe(false);
+
+  const store = new PRReviewStore(github, {
+    pr,
+    files: [],
+    comments: [],
+    owner: "test",
+    repo: "repo",
+    viewerPermission: "WRITE",
+  });
+  expect(await store.deleteBranch()).toBe(false);
+  expect(await store.restoreBranch()).toBe(false);
+  expect(calls).toEqual([]);
 });
 
 // ============================================================================

@@ -90,6 +90,20 @@ function clearStoredToken(): void {
 // Provider
 // ============================================================================
 
+/**
+ * Classic PATs report their scopes and need full `repo` (not just
+ * `public_repo`). Fine-grained PATs report none; their per-repo permissions
+ * are enforced by GitHub on each call.
+ */
+export function hasRequiredScopes(
+  token: string,
+  scopesHeader: string | null
+): boolean {
+  if (token.startsWith("github_pat_")) return true;
+  const scopes = (scopesHeader ?? "").split(",").map((s) => s.trim());
+  return scopes.includes("repo");
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(() => {
     const token = getStoredToken();
@@ -138,11 +152,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const userData = await response.json();
 
-    // Check token scopes from response headers
-    const scopes = response.headers.get("x-oauth-scopes") || "";
-    const hasRepoScope = scopes.includes("repo");
-
-    if (!hasRepoScope) {
+    if (
+      !hasRequiredScopes(trimmedToken, response.headers.get("x-oauth-scopes"))
+    ) {
       throw new Error(
         'Token is missing the required "repo" scope. Please create a new token with the repo scope.'
       );

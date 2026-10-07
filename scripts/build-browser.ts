@@ -1,9 +1,32 @@
 import tailwind from "bun-plugin-tailwind";
+import { createHash } from "crypto";
 import { watch } from "fs";
 import { cp, rm } from "fs/promises";
 import { resolve } from "path";
 
 const isWatch = process.argv.includes("--watch");
+
+/**
+ * Copy the Static Web App config, allowing the inline <script>s of the built
+ * index.html by hash so the CSP's script-src needs no 'unsafe-inline'.
+ */
+async function writeStaticWebAppConfig(indexHtml: string) {
+  const config = await Bun.file(
+    "./src/browser/staticwebapp.config.json"
+  ).json();
+  const hashes = [...indexHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(
+    ([, body]) =>
+      `'sha256-${createHash("sha256").update(body!).digest("base64")}'`
+  );
+  const headers = config.globalHeaders as Record<string, string>;
+  headers["Content-Security-Policy"] = headers[
+    "Content-Security-Policy"
+  ]!.replace("script-src 'self'", ["script-src 'self'", ...hashes].join(" "));
+  await Bun.write(
+    "./dist/browser/staticwebapp.config.json",
+    JSON.stringify(config, null, 2)
+  );
+}
 
 async function build() {
   // With code splitting, chunk hash assignments reshuffle between builds;
@@ -56,11 +79,9 @@ async function build() {
     resolve(process.cwd(), "src", "browser", "logo.svg"),
     resolve(process.cwd(), "dist", "browser", "logo.svg")
   );
-  // Azure Static Web Apps routing (SPA fallback, cache headers)
-  await cp(
-    resolve(process.cwd(), "src", "browser", "staticwebapp.config.json"),
-    resolve(process.cwd(), "dist", "browser", "staticwebapp.config.json")
-  );
+  // Azure Static Web Apps routing (SPA fallback, cache and security
+  // headers). The local server also serves these headers.
+  await writeStaticWebAppConfig(indexHtml);
 
   // Build worker separately with document shim for Prism/refractor
   const workerResult = await Bun.build({

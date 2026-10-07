@@ -9,6 +9,7 @@ import {
   buildCorrectionPrompt,
   extractJson,
   isElidedPatch,
+  UNTRUSTED_INPUT_NOTICE,
 } from "./prompt";
 import type { AnalysisInput } from "./providers/types";
 
@@ -48,6 +49,7 @@ test("prompt: includes PR metadata and real patches, elides lockfiles/binaries",
   expect(prompt).toContain("bun.lock");
   expect(prompt).toContain("logo.png");
   expect(prompt).toContain("Files listed without patches");
+  expect(prompt).toContain(UNTRUSTED_INPUT_NOTICE);
 });
 
 test("prompt: isElidedPatch matches lockfiles and generated files", () => {
@@ -246,6 +248,7 @@ test("map-reduce: buildMapPrompt and buildReducePrompt carry the essentials", ()
   expect(mapPrompt).toContain("section 2 of 5");
   expect(mapPrompt).toContain("+added");
   expect(mapPrompt).toContain('"fragments"');
+  expect(mapPrompt).toContain(UNTRUSTED_INPUT_NOTICE);
 
   const reducePrompt = buildReducePrompt(input, [
     {
@@ -261,6 +264,7 @@ test("map-reduce: buildMapPrompt and buildReducePrompt carry the essentials", ()
   expect(reducePrompt).toContain("img.png (added, +0/-0) [patch not analyzed]");
   expect(reducePrompt).toContain('"cohorts"');
   expect(reducePrompt).not.toContain("+added");
+  expect(reducePrompt).toContain(UNTRUSTED_INPUT_NOTICE);
 });
 
 test("map-reduce: analysisPromptFits detects oversized diffs", () => {

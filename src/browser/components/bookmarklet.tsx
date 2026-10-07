@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Dialog,
   DialogContent,
@@ -128,23 +128,10 @@ export function BookmarkletDialog({
   open,
   onOpenChange,
 }: BookmarkletDialogProps) {
-  // Generate the bookmarklet HTML - using dangerouslySetInnerHTML to bypass React's sanitization of javascript: URLs
-  const bookmarkletHtml = useMemo(() => {
-    if (typeof window === "undefined") return "";
-    const code = getBookmarkletCode(window.location.origin);
-    return `<a 
-      href="${code.replace(/"/g, "&quot;")}" 
-      draggable="true"
-      style="display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 56px; border-radius: 10px; font-weight: 600; background: linear-gradient(135deg, rgb(59 130 246) 0%, rgb(79 70 229) 100%); color: white; text-decoration: none; cursor: grab; user-select: none; transition: all 0.15s;"
-      onmouseover="this.style.transform='translateY(-1px)';"
-      onmouseout="this.style.transform='translateY(0)';"
-      onmousedown="this.style.cursor='grabbing'; this.style.transform='scale(0.98)';"
-      onmouseup="this.style.cursor='grab'; this.style.transform='scale(1)';"
-      onclick="event.preventDefault(); alert('Drag this button to your bookmarks bar!')"
-      alt="Open in better pr"
-    >
-      <span style="display: none;">Open in better pr</span>
-    </a>`;
+  // React refuses javascript: hrefs, so set the bookmarklet URL directly.
+  // Plain React handlers (no inline on* attributes) keep this CSP-compatible.
+  const setBookmarkletHref = useCallback((el: HTMLAnchorElement | null) => {
+    el?.setAttribute("href", getBookmarkletCode(window.location.origin));
   }, []);
 
   return (
@@ -179,10 +166,19 @@ export function BookmarkletDialog({
 
         {/* Bookmarklet */}
         <div className="mx-6 mb-6 relative h-14">
-          <div
-            className="absolute inset-0"
-            dangerouslySetInnerHTML={{ __html: bookmarkletHtml }}
-          />
+          <a
+            ref={setBookmarkletHref}
+            draggable
+            aria-label="Open in better pr"
+            onClick={(e) => {
+              e.preventDefault();
+              alert("Drag this button to your bookmarks bar!");
+            }}
+            className="absolute inset-0 flex items-center justify-center rounded-[10px] bg-gradient-to-br from-blue-500 to-indigo-600 cursor-grab active:cursor-grabbing select-none transition-all hover:-translate-y-px active:scale-[0.98] active:translate-y-0"
+          >
+            {/* Dragged links take their text as the bookmark name. */}
+            <span className="hidden">Open in better pr</span>
+          </a>
           <span className="pointer-events-none select-none text-sm font-semibold text-white absolute inset-0 flex items-center justify-center gap-2">
             <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current">
               <path d="M5 4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16l-7-3.5L5 20V4z" />

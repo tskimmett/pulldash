@@ -11,6 +11,26 @@ const distDir = resolve(__dirname, "..", "..", "dist", "browser");
 
 console.log("distDir", distDir);
 
+// Same security headers (CSP etc.) as the hosted build; written by
+// build:browser. Read lazily so a server started mid-build picks them up.
+let securityHeaders: Record<string, string> | null = null;
+app.use(async (c, next) => {
+  await next();
+  if (!securityHeaders) {
+    try {
+      const config = JSON.parse(
+        readFileSync(resolve(distDir, "staticwebapp.config.json"), "utf-8")
+      );
+      securityHeaders = config.globalHeaders;
+    } catch {
+      return;
+    }
+  }
+  for (const [name, value] of Object.entries(securityHeaders!)) {
+    c.header(name, value);
+  }
+});
+
 // API routes first
 app.route("/", api);
 
@@ -30,6 +50,8 @@ app.get("*", (c) => {
 serve(
   {
     fetch: app.fetch,
+    // Loopback only: the API runs local agents and has no auth of its own.
+    hostname: "127.0.0.1",
     port: Number(process.env.PORT) || 3002,
   },
   (address) => {

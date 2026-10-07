@@ -67,6 +67,15 @@ import {
  * - At each level, folders come before files
  * - Items are sorted alphabetically within each group
  */
+/**
+ * Whether the PR's head branch lives in another repo. Branch actions use the
+ * base repo, so they must not run for forks: they would hit a same-named
+ * branch in the base repo instead.
+ */
+export function isForkPR(pr: Pick<PullRequest, "head" | "base">): boolean {
+  return pr.head.repo?.full_name !== pr.base.repo?.full_name;
+}
+
 export function sortFilesLikeTree<T extends { filename: string }>(
   files: T[]
 ): T[] {
@@ -3539,6 +3548,7 @@ export class PRReviewStore {
    */
   deleteBranch = async (): Promise<boolean> => {
     const { owner, repo, pr } = this.state;
+    if (isForkPR(pr)) return false;
 
     this.set({ deletingBranch: true });
 
@@ -3569,6 +3579,7 @@ export class PRReviewStore {
    */
   restoreBranch = async (): Promise<boolean> => {
     const { owner, repo, pr } = this.state;
+    if (isForkPR(pr)) return false;
 
     this.set({ restoringBranch: true });
 

@@ -11,6 +11,7 @@ import { existsSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import type { SemanticProvider, ProviderRunOptions } from "./types";
+import { agentEnv, withScratchDir } from "./sandbox";
 
 const CLAUDE_MODEL = "claude-opus-5-5";
 
@@ -50,48 +51,56 @@ export const claudeProvider: SemanticProvider = {
     let resultText = "";
     let assistantText = "";
     try {
-      const stream = query({
-        prompt,
-        options: {
-          // Pure analysis over an inlined diff: no tools needed.
-          allowedTools: [],
-          disallowedTools: ["Bash", "Write", "Edit"],
-          maxTurns: 1,
-          model: CLAUDE_MODEL,
-          abortController: controller,
-        },
-      });
+      await withScratchDir(async (cwd) => {
+        const stream = query({
+          prompt,
+          options: {
+            // Pure analysis over an inlined diff: no tools, no user settings
+            // (hooks, MCP servers, CLAUDE.md), nothing to read in cwd.
+            tools: [],
+            settingSources: [],
+            mcpServers: {},
+            strictMcpConfig: true,
+            permissionMode: "dontAsk",
+            cwd,
+            env: agentEnv(process.env, ["ANTHROPIC_", "CLAUDE_"]),
+            maxTurns: 1,
+            model: CLAUDE_MODEL,
+            abortController: controller,
+          },
+        });
 
-      let model: string | null = null;
-      for await (const message of stream) {
-        if (options.signal.aborted) break;
-        const m = message as {
-          type: string;
-          subtype?: string;
-          result?: string;
-          model?: string;
-          message?: { content?: Array<{ type: string; text?: string }> };
-        };
-        if (m.type === "system" && m.subtype === "init" && m.model) {
-          model = m.model;
-          options.onProgress(`starting Claude agent (${model})`);
-        } else if (m.type === "assistant") {
-          for (const block of m.message?.content ?? []) {
-            if (block.type === "text" && block.text) {
-              assistantText += block.text;
+        let model: string | null = null;
+        for await (const message of stream) {
+          if (options.signal.aborted) break;
+          const m = message as {
+            type: string;
+            subtype?: string;
+            result?: string;
+            model?: string;
+            message?: { content?: Array<{ type: string; text?: string }> };
+          };
+          if (m.type === "system" && m.subtype === "init" && m.model) {
+            model = m.model;
+            options.onProgress(`starting Claude agent (${model})`);
+          } else if (m.type === "assistant") {
+            for (const block of m.message?.content ?? []) {
+              if (block.type === "text" && block.text) {
+                assistantText += block.text;
+              }
+            }
+            options.onProgress(
+              model
+                ? `Claude (${model}) is analyzing the diff`
+                : "Claude is analyzing the diff"
+            );
+          } else if (m.type === "result") {
+            if (typeof m.result === "string") {
+              resultText = m.result;
             }
           }
-          options.onProgress(
-            model
-              ? `Claude (${model}) is analyzing the diff`
-              : "Claude is analyzing the diff"
-          );
-        } else if (m.type === "result") {
-          if (typeof m.result === "string") {
-            resultText = m.result;
-          }
         }
-      }
+      });
     } finally {
       options.signal.removeEventListener("abort", onAbort);
     }
