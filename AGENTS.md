@@ -13,6 +13,10 @@ _NEVER_ use browser tools - they will not work with this project.
 - Performance is P1. If things feel laggy or are not smooth, it is of the utmost importance to fix. better pr exists because GitHub's PR review is slow.
 - Tests should primarily occur at the data-layer, and the frontend should mostly dummily render the data.
 
+## Changelog
+
+Any user-visible feature or change must add an entry (newest first) to `CHANGELOG` in `src/browser/lib/changelog.ts`. It powers the "What's new" dialog; users see a dot until they open it. Use a unique `id` like `YYYY-MM-DD-slug`.
+
 ## Testing
 
 Tests should be minimal, not conflict with each other, and not be race-prone.

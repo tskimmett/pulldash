@@ -20,6 +20,7 @@ import { PRSearchInput } from "./pr-search-input";
 import { PRReviewContent } from "./pr-review";
 import { UserMenuButton } from "./welcome-dialog";
 import { ThemeToggle } from "./theme-toggle";
+import { WhatsNewButton } from "./whats-new";
 import {
   HoverCard,
   HoverCardTrigger,
@@ -200,6 +201,7 @@ export function AppShell() {
           >
             <Search className="w-4 h-4" />
           </button>
+          <WhatsNewButton />
           <ThemeToggle />
           <UserMenuButton />
         </div>
