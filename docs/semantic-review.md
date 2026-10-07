@@ -10,7 +10,7 @@ Status: **spec / not implemented**
 
 Reviewers experience a PR as an alphabetical file list and must mentally reconstruct
 the author's narrative before evaluating correctness. On large (often AI-generated)
-PRs, that reconstruction is the bottleneck. Pulldash already has the fast,
+PRs, that reconstruction is the bottleneck. better pr already has the fast,
 keyboard-driven review shell; this adds the semantic layer on top.
 
 ## Concepts
@@ -75,21 +75,21 @@ the cache entry for debugging.
 ## Architecture
 
 ```
-Browser (PRReviewStore)                Local server (Hono, node or electron)
+Browser (PRReviewStore)                Local server (Hono, node)
 ────────────────────────               ─────────────────────────────────────
 POST /api/semantic/analyze  ────────►  job runner ──► provider (pluggable)
   { owner, repo, number,                    │             ├─ claude (Agent SDK)
     headSha, prMeta, diff }                 │             └─ codex  (codex exec)
 GET  /api/semantic/jobs/:id (SSE) ◄───  progress + result
-GET  /api/semantic/result/...       ◄──  disk cache  ~/.pulldash/semantic/
+GET  /api/semantic/result/...       ◄──  disk cache  ~/.better-pr/semantic/
 GET  /api/semantic/providers        ◄──  availability detection
 ```
 
 - The **browser supplies the input** (PR title/description + per-file patches it
   already fetched from GitHub). The local server never holds GitHub credentials.
-- Endpoints live in the shared Hono `api` app (`src/api/`), so dev/CLI and Electron
-  get them for free. On the hosted (Vercel) deployment, `/api/semantic/providers`
-  returns an empty list and the browser hides the feature.
+- Endpoints live in the shared Hono `api` app (`src/api/`). Static deployments
+  have no server, so `/api/semantic/providers` fails and the browser hides the
+  feature.
 
 ### Provider interface
 
@@ -117,7 +117,7 @@ interface AnalysisInput {
 ```
 
 - **claude**: `@anthropic-ai/claude-agent-sdk` `query()` — rides the user's
-  Claude subscription auth (no API key handling in pulldash).
+  Claude subscription auth (no API key handling in better pr).
 - **codex**: spawns `codex exec` — rides the user's ChatGPT subscription.
 - Both receive the same prompt contract and must emit JSON conforming to the
   schema below; output is validated before acceptance and the provider is asked to
@@ -169,7 +169,7 @@ actual hunk are pruned with a warning.
 
 ### Caching
 
-- Disk: `~/.pulldash/semantic/<owner>--<repo>--<number>/<headSha>.json`
+- Disk: `~/.better-pr/semantic/<owner>--<repo>--<number>/<headSha>.json`
   (+ `<headSha>.raw.txt` for the unvalidated provider output).
 - Keyed by head SHA, so historical revisions accumulate naturally — enabling a
   future "what changed since I last reviewed" snapshot feature.
@@ -205,7 +205,7 @@ summaries) instead of failing.
 - Checkout/repo-context analysis (interface keeps the door open).
 - Cross-revision diffs of semantic results ("what changed since snapshot N").
 - Sharing/exporting semantic reviews.
-- Semantic review on the hosted pulldash.com (requires a local agent by design).
+- Semantic review on the hosted deployment (requires a local agent by design).
 - Author-defined manual grouping.
 
 ## Performance notes

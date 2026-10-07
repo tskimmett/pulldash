@@ -1,13 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import {
-  X,
-  Home as HomeIcon,
-  GitMerge,
-  GitPullRequest,
-  ExternalLink,
-  Github,
-} from "lucide-react";
+import { X, Home as HomeIcon, GitMerge, GitPullRequest } from "lucide-react";
 import { cn } from "../cn";
 import {
   useTabContext,
@@ -20,7 +13,6 @@ import { PRSearchInput } from "./pr-search-input";
 import { PRReviewContent } from "./pr-review";
 import { UserMenuButton } from "./welcome-dialog";
 import { ThemeToggle } from "./theme-toggle";
-import { useAuth } from "../contexts/auth";
 import {
   HoverCard,
   HoverCardTrigger,
@@ -42,7 +34,6 @@ export function AppShell() {
     openTab,
     getExistingPRTab,
   } = useTabContext();
-  const { isAuthenticated } = useAuth();
   const params = useParams<{ owner: string; repo: string; number: string }>();
   const navigate = useNavigate();
 
@@ -124,15 +115,15 @@ export function AppShell() {
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-background">
       {/* Native-style Tab Bar */}
-      <div className="h-9 bg-muted/40 dark:bg-[#1a1a1a] flex items-center shrink-0 border-b border-border/50 app-drag-region">
+      <div className="h-9 bg-muted/40 dark:bg-[#1a1a1a] flex items-center shrink-0 border-b border-border/50">
         {/* Logo with tooltip */}
-        <div className="h-full flex items-center gap-1.5 px-3 shrink-0 app-no-drag">
+        <div className="h-full flex items-center gap-1.5 px-3 shrink-0">
           <HoverCard openDelay={200} closeDelay={100}>
             <HoverCardTrigger asChild>
               <button className="flex items-center focus:outline-none">
                 <img
                   src={"/logo.svg"}
-                  alt="Pulldash"
+                  alt="better pr"
                   className="w-4 h-4 block"
                 />
               </button>
@@ -140,34 +131,24 @@ export function AppShell() {
             <HoverCardContent side="bottom" align="start" className="w-64">
               <div className="space-y-3">
                 <div className="flex items-center gap-2">
-                  <img src={"/logo.svg"} alt="Pulldash" className="w-6 h-6" />
+                  <img src={"/logo.svg"} alt="better pr" className="w-6 h-6" />
                   <div>
-                    <h4 className="text-sm font-semibold">Pulldash</h4>
+                    <h4 className="text-sm font-semibold">better pr</h4>
                     <p className="text-[10px] text-muted-foreground font-mono">
                       v{version}
                     </p>
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground leading-relaxed">
-                  A fast, local PR review dashboard for GitHub. Review pull
-                  requests with a native-like experience.
+                  A fast PR review dashboard for GitHub.
                 </p>
-                <a
-                  href="https://github.com/coder/pulldash"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1.5 text-xs text-primary hover:underline"
-                >
-                  <ExternalLink className="w-3 h-3" />
-                  View on GitHub
-                </a>
               </div>
             </HoverCardContent>
           </HoverCard>
         </div>
 
         {/* Tabs */}
-        <div className="h-full flex-1 flex items-center gap-0.5 overflow-x-auto hide-scrollbar app-no-drag">
+        <div className="h-full flex-1 flex items-center gap-0.5 overflow-x-auto hide-scrollbar">
           {tabs.map((tab) => (
             <TabItem
               key={tab.id}
@@ -180,21 +161,10 @@ export function AppShell() {
         </div>
 
         {/* PR URL input & User menu */}
-        <div className="h-full flex items-center gap-2 pr-2 sm:pr-3 app-no-drag">
+        <div className="h-full flex items-center gap-2 pr-2 sm:pr-3">
           <div className="hidden sm:block">
             <PRSearchInput />
           </div>
-          {!isAuthenticated && (
-            <a
-              href="https://github.com/coder/pulldash"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
-              title="View on GitHub"
-            >
-              <Github className="w-4 h-4" />
-            </a>
-          )}
           <ThemeToggle />
           <UserMenuButton />
         </div>

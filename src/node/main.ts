@@ -33,8 +33,6 @@ serve(
     port: Number(process.env.PORT) || 3002,
   },
   (address) => {
-    console.log(
-      `🚀 pulldash running at http://pulldash.localhost:${address.port}`
-    );
+    console.log(`🚀 better pr running at http://localhost:${address.port}`);
   }
 );

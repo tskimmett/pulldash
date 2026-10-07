@@ -16,7 +16,6 @@ import {
   User,
   Users,
   RefreshCw,
-  Github,
   Circle,
   CheckCircle2,
   XCircle,
@@ -44,7 +43,6 @@ import {
   usePRListActions,
   type PRSearchResult,
 } from "../contexts/github";
-import { useAuth } from "../contexts/auth";
 import {
   ALL_REPOS_KEY,
   buildSearchQueries,
@@ -150,7 +148,6 @@ export function Home() {
   const openPRReviewTab = useOpenPRReviewTab();
   const { ready: githubReady, error: githubError } = useGitHubReady();
   const github = useGitHubStore();
-  const { isAuthenticated, isAnonymous, setShowWelcomeDialog } = useAuth();
 
   // Data store
   const prList = usePRList();
@@ -177,21 +174,11 @@ export function Home() {
   }, [config]);
 
   // Fetch PRs when queries or page changes (or when GitHub becomes ready)
-  // Skip if anonymous and queries use @me (requires authentication)
-  const queriesRequireAuth = searchQueries.some((q) => q.includes("@me"));
   useEffect(() => {
-    if (githubReady && !(isAnonymous && queriesRequireAuth)) {
+    if (githubReady) {
       fetchPRList(searchQueries, page, perPage);
     }
-  }, [
-    fetchPRList,
-    searchQueries,
-    page,
-    perPage,
-    githubReady,
-    isAnonymous,
-    queriesRequireAuth,
-  ]);
+  }, [fetchPRList, searchQueries, page, perPage, githubReady]);
 
   // Reset page when config changes
   useEffect(() => {
@@ -200,8 +187,8 @@ export function Home() {
 
   // Set document title
   useEffect(() => {
-    document.title = isAuthenticated ? "Home · Pulldash" : "Pulldash";
-  }, [isAuthenticated]);
+    document.title = "Home · better pr";
+  }, []);
 
   // Convenience accessors
   const prs = prList.items;
@@ -326,9 +313,6 @@ export function Home() {
     }
     return <HomeLoadingSkeleton />;
   }
-
-  // Check if user needs to auth to see PRs (anonymous + queries that require @me)
-  const needsAuth = isAnonymous && !isAuthenticated && queriesRequireAuth;
 
   return (
     <div className="h-full bg-background flex flex-col overflow-hidden">
@@ -780,27 +764,8 @@ export function Home() {
 
           {/* PR List */}
           <div className="flex-1 overflow-auto">
-            {/* Show auth prompt for anonymous users */}
-            {needsAuth ? (
-              <div className="flex flex-col items-center justify-center py-20 text-center">
-                <GitPullRequest className="w-12 h-12 text-muted-foreground/30 mb-4" />
-                <p className="text-lg font-medium text-muted-foreground">
-                  Sign in to view your PRs
-                </p>
-                <p className="text-sm text-muted-foreground/70 mt-1 max-w-md">
-                  Sign in with a personal access token to see your review
-                  requests, authored PRs, and more
-                </p>
-                <button
-                  onClick={() => setShowWelcomeDialog(true)}
-                  className="flex items-center gap-2 px-4 py-2 mt-4 rounded-lg bg-foreground text-background font-medium text-sm hover:bg-foreground/90 transition-colors"
-                >
-                  <Github className="w-4 h-4" />
-                  Sign in
-                </button>
-              </div>
-            ) : loadingPrs ||
-              (config.repos.length > 0 && prs.length === 0 && !prList.error) ? (
+            {loadingPrs ||
+            (config.repos.length > 0 && prs.length === 0 && !prList.error) ? (
               <PRListSkeleton count={8} />
             ) : prs.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center">

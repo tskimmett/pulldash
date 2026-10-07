@@ -1,22 +1,18 @@
 /**
  * Semantic review API routes.
  *
- * These run only where a local agent can run (the pulldash CLI/dev server
- * and the Electron internal server). On the hosted deployment the providers
- * list is empty and the browser hides the feature. All semantic modules are
- * imported lazily so hosted bundles never load provider/agent code.
+ * These run only on the local server, where an agent can run. Static
+ * deployments have no server, so the providers request fails and the browser
+ * hides the feature. Semantic modules are imported lazily.
  */
 
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
-const HOSTED = !!process.env.VERCEL;
-
 const semantic = new Hono()
 
   // Which local agents are usable? Empty list => feature hidden in the UI.
   .get("/providers", async (c) => {
-    if (HOSTED) return c.json({ providers: [] });
     try {
       const { listAvailableProviders } =
         await import("@/semantic/providers/index");
@@ -28,7 +24,6 @@ const semantic = new Hono()
 
   // Cached result lookup (repo + PR + head SHA).
   .get("/result/:owner/:repo/:number/:sha", async (c) => {
-    if (HOSTED) return c.json({ error: "not available" }, 501);
     const { readCachedReview } = await import("@/semantic/cache");
     const number = parseInt(c.req.param("number"), 10);
     if (!Number.isInteger(number)) {
@@ -46,7 +41,6 @@ const semantic = new Hono()
 
   // Start (or join) an analysis job. Body: { provider, input: AnalysisInput }.
   .post("/analyze", async (c) => {
-    if (HOSTED) return c.json({ error: "not available" }, 501);
     const { startAnalysisJob } = await import("@/semantic/jobs");
     const body = await c.req.json<{
       provider?: string;
@@ -69,7 +63,6 @@ const semantic = new Hono()
 
   // Stream job progress via SSE; replays the full progress log on connect.
   .get("/jobs/:id", async (c) => {
-    if (HOSTED) return c.json({ error: "not available" }, 501);
     const { getJob } = await import("@/semantic/jobs");
     const job = getJob(c.req.param("id"));
     if (!job) return c.json({ error: "not found" }, 404);
@@ -106,7 +99,6 @@ const semantic = new Hono()
 
   // Cancel a running job.
   .delete("/jobs/:id", async (c) => {
-    if (HOSTED) return c.json({ error: "not available" }, 501);
     const { getJob } = await import("@/semantic/jobs");
     const job = getJob(c.req.param("id"));
     if (!job) return c.json({ error: "not found" }, 404);

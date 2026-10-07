@@ -76,8 +76,7 @@ import {
   usePRChecks,
   useCurrentUser,
 } from "../contexts/github";
-import { useCanWrite, useAuth } from "../contexts/auth";
-import { useTelemetry } from "../contexts/telemetry";
+import { useCanWrite } from "../contexts/auth";
 import {
   PRReviewProvider,
   usePRReviewSelector,
@@ -227,7 +226,6 @@ export function PRReviewContent({
 }: PRReviewContentProps) {
   const { ready: githubReady, error: githubError } = useGitHubReady();
   const github = useGitHubStore();
-  const { track } = useTelemetry();
   const [pr, setPr] = useState<PullRequest | null>(null);
   const [files, setFiles] = useState<PullRequestFile[]>([]);
   const [comments, setComments] = useState<ReviewComment[]>([]);
@@ -262,7 +260,7 @@ export function PRReviewContent({
       .then(([cachedPr, cachedFiles, cachedComments, current]) => {
         if (cachedPr) {
           console.debug(
-            `[pulldash] cached PR ${current ? "verified" : "outdated"} in ${Math.round(performance.now() - started)}ms${freshLoaded ? " (fresh data already shown)" : ""}`
+            `[better-pr] cached PR ${current ? "verified" : "outdated"} in ${Math.round(performance.now() - started)}ms${freshLoaded ? " (fresh data already shown)" : ""}`
           );
         }
         if (cancelled || freshLoaded || !current) return;
@@ -284,22 +282,12 @@ export function PRReviewContent({
       .then(([prData, filesData]) => {
         if (cancelled) return;
         console.debug(
-          `[pulldash] fresh PR loaded in ${Math.round(performance.now() - started)}ms`
+          `[better-pr] fresh PR loaded in ${Math.round(performance.now() - started)}ms`
         );
         freshLoaded = true;
         setPr(prData);
         setFiles(filesData);
         setLoading(false);
-
-        // Track PR viewed
-        track("pr_viewed", {
-          pr_number: number,
-          owner,
-          repo,
-          file_count: filesData.length,
-          additions: prData.additions,
-          deletions: prData.deletions,
-        });
 
         github
           .recoverPRFilePatches(owner, repo, prData, filesData)
@@ -326,7 +314,7 @@ export function PRReviewContent({
     return () => {
       cancelled = true;
     };
-  }, [github, owner, repo, number, track, githubReady]);
+  }, [github, owner, repo, number, githubReady]);
 
   // Show loading while GitHub client initializes
   if (!githubReady) {
@@ -380,7 +368,6 @@ export function PRReviewContent({
 
 function PRReviewLayout() {
   const store = usePRReviewStore();
-  const { track } = useTelemetry();
   const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
     useCommandPalette();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
@@ -474,22 +461,7 @@ function PRReviewLayout() {
   const pr = usePRReviewSelector((s) => s.pr);
   const owner = usePRReviewSelector((s) => s.owner);
   const repo = usePRReviewSelector((s) => s.repo);
-  const selectedFile = usePRReviewSelector((s) => s.selectedFile);
   const fileLayoutMode = usePRReviewSelector((s) => s.fileLayoutMode);
-
-  // Track file views (only once per file per session)
-  const trackedFilesRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (selectedFile && !trackedFilesRef.current.has(selectedFile)) {
-      trackedFilesRef.current.add(selectedFile);
-      track("file_viewed", {
-        pr_number: pr.number,
-        owner,
-        repo,
-        file_path: selectedFile,
-      });
-    }
-  }, [selectedFile, pr.number, owner, repo, track]);
 
   const canWrite = useCanWrite();
   // Primitive selectors: useSyncExternalStore needs a stable snapshot, so
@@ -784,37 +756,6 @@ const FilePanel = memo(function FilePanel({
 });
 
 // ============================================================================
-// Read-Only Banner
-// ============================================================================
-
-const ReadOnlyBanner = memo(function ReadOnlyBanner() {
-  const canWrite = useCanWrite();
-  const { setShowWelcomeDialog } = useAuth();
-
-  if (canWrite) return null;
-
-  return (
-    <div className="shrink-0 bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 flex items-center justify-between">
-      <div className="flex items-center gap-2 text-sm">
-        <Eye className="w-4 h-4 text-amber-500" />
-        <span className="text-amber-200">
-          <span className="font-medium">Read-only mode</span>
-          <span className="text-amber-200/70 ml-1.5">
-            – Sign in to comment and submit reviews
-          </span>
-        </span>
-      </div>
-      <button
-        onClick={() => setShowWelcomeDialog(true)}
-        className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium rounded-md bg-amber-500/20 text-amber-200 hover:bg-amber-500/30 transition-colors"
-      >
-        Sign in
-      </button>
-    </div>
-  );
-});
-
-// ============================================================================
 // Diff Panel (Main Content)
 // ============================================================================
 
@@ -871,7 +812,6 @@ const DiffPanel = memo(function DiffPanel() {
   if (showOverview) {
     return (
       <main className="flex-1 overflow-hidden flex flex-col">
-        <ReadOnlyBanner />
         <DiffRangeBanner />
         <PROverview />
       </main>
@@ -881,7 +821,6 @@ const DiffPanel = memo(function DiffPanel() {
   if (fileLayoutMode === "all") {
     return (
       <main className="flex-1 overflow-hidden flex flex-col">
-        <ReadOnlyBanner />
         <DiffRangeBanner />
         <AllFilesDiff />
       </main>
@@ -890,7 +829,6 @@ const DiffPanel = memo(function DiffPanel() {
 
   return (
     <main className="flex-1 overflow-hidden flex flex-col">
-      <ReadOnlyBanner />
       <DiffRangeBanner />
 
       {viewMode === "semantic" && <SemanticLayerBar />}
@@ -3202,9 +3140,7 @@ export const InlineCommentForm = memo(function InlineCommentForm({
   side,
 }: InlineCommentFormProps) {
   const store = usePRReviewStore();
-  const canWrite = useCanWrite();
   const currentUser = useCurrentUser();
-  const { setShowWelcomeDialog } = useAuth();
   const { addPendingComment } = useCommentActions();
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
   const [text, setText, clearText] = useCommentDraft(
@@ -3256,37 +3192,6 @@ export const InlineCommentForm = memo(function InlineCommentForm({
   );
 
   const lineLabel = startLine ? `lines ${startLine}-${line}` : `line ${line}`;
-
-  // Show sign-in prompt for read-only users
-  if (!canWrite) {
-    return (
-      <div className="mx-4 my-3 rounded-lg border border-amber-500/30 bg-amber-500/5 overflow-hidden shadow-sm">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-amber-500/20">
-          <div className="flex items-center gap-2.5 text-sm font-medium text-amber-200">
-            <MessageSquare className="w-4 h-4 text-amber-600 dark:text-amber-400" />
-            <span>Comment on {lineLabel}</span>
-          </div>
-          <button
-            onClick={handleCancel}
-            className="text-muted-foreground hover:text-foreground transition-colors p-1 rounded hover:bg-muted/50"
-          >
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="p-4 flex items-center gap-3">
-          <span className="text-sm text-muted-foreground">
-            Sign in to leave comments
-          </span>
-          <button
-            onClick={() => setShowWelcomeDialog(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors"
-          >
-            Sign in
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div

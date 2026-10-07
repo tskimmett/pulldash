@@ -11,8 +11,8 @@ import type { SemanticReview } from "./schema";
 
 function cacheDir(owner: string, repo: string, number: number): string {
   const base =
-    process.env.PULLDASH_SEMANTIC_CACHE_DIR ??
-    join(homedir(), ".pulldash", "semantic");
+    process.env.BETTER_PR_SEMANTIC_CACHE_DIR ??
+    join(homedir(), ".better-pr", "semantic");
   // owner/repo are path-unsafe as-is; keep them readable but flat.
   const key = `${owner}--${repo}--${number}`.replace(/[^a-zA-Z0-9._-]/g, "_");
   return join(base, key);

@@ -1,32 +1,14 @@
 {
-  "name": "pulldash",
+  "name": "better-pr",
   "version": "0.0.5",
-  "description": "Fast, filterable PR review. Entirely client-side.",
+  "description": "Fast, filterable PR review.",
   "type": "module",
-  "bin": {
-    "pulldash": "./dist/pulldash"
-  },
-  "files": [
-    "dist"
-  ],
-  "main": "dist/electron/main.js",
   "scripts": {
     "dev": "concurrently \"bun run build:browser --watch\" \"bun run dev:node\"",
     "dev:node": "bun run src/node/main.ts",
     "start": "bun run build:browser && bun run src/node/main.ts",
     "typecheck": "tsgo --noEmit",
     "build:browser": "bun run ./scripts/build-browser.ts",
-    "electron:dev": "concurrently \"bun run build:browser --watch\" \"bun run scripts/electron-dev.ts\"",
-    "electron:build": "bun run scripts/build-electron.ts",
-    "electron:package": "bun run electron:build && electron-builder --config electron-builder.json",
-    "electron:package:mac": "bun run electron:build && electron-builder --config electron-builder.json --mac",
-    "electron:package:win": "bun run electron:build && electron-builder --config electron-builder.json --win",
-    "electron:package:linux": "bun run electron:build && electron-builder --config electron-builder.json --linux",
-    "electron:publish": "bun run electron:build && electron-builder --config electron-builder.json --publish always",
-    "electron:publish:mac": "bun run electron:build && electron-builder --config electron-builder.json --mac --publish always",
-    "electron:publish:win": "bun run electron:build && electron-builder --config electron-builder.json --win --publish always",
-    "electron:publish:linux": "bun run electron:build && electron-builder --config electron-builder.json --linux --publish always",
-    "icons": "bun run scripts/generate-icons.ts",
     "fmt": "prettier --write --cache .",
     "fmt:check": "prettier --check .",
     "lint": "echo 'No linter configured yet'",
@@ -36,17 +18,11 @@
     "github",
     "pull-request",
     "code-review",
-    "diff",
-    "cli"
+    "diff"
   ],
   "license": "AGPL-3.0-only",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/tskimmett/pulldash.git"
-  },
   "devDependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.282",
-    "@electron/asar": "^4.0.1",
     "@hono/node-server": "^1.19.6",
     "@octokit/core": "^7.0.6",
     "@radix-ui/react-collapsible": "^1.1.12",
@@ -65,14 +41,9 @@
     "cmdk": "^1.1.1",
     "concurrently": "^9.2.1",
     "diff": "^8.0.2",
-    "electron": "^39.2.4",
-    "electron-builder": "^26.0.12",
-    "electron-updater": "^6.6.2",
     "gitdiff-parser": "^0.3.1",
     "hono": "^4.10.7",
     "lucide-react": "^0.555.0",
-    "png2icons": "^2.0.1",
-    "posthog-js": "^1.300.0",
     "prettier": "^3.7.3",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
@@ -80,10 +51,8 @@
     "react-router-dom": "^7.9.6",
     "refractor": "^5.0.0",
     "remark-gfm": "^4.0.1",
-    "sharp": "^0.34.5",
     "tailwind-merge": "^3.4.0",
     "tailwindcss": "^4",
-    "tsx": "^4.21.0",
     "tw-animate-css": "^1.4.0",
     "typescript": "^5"
   },

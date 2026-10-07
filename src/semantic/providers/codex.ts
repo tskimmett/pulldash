@@ -1,9 +1,9 @@
 /**
  * Codex provider - runs the analysis through the Codex TypeScript SDK, which
  * bundles the `codex` CLI and rides the user's ChatGPT login (no API key
- * handling in pulldash).
+ * handling in better pr).
  *
- * Node-only. Import lazily from API routes so browser/Vercel bundles never
+ * Node-only. Import lazily from API routes so browser bundles never
  * pull in the SDK.
  */
 

@@ -75,7 +75,6 @@ import {
   type AutoMergeState,
 } from "../contexts/github";
 import { useCanWrite } from "../contexts/auth";
-import { useTelemetry } from "../contexts/telemetry";
 
 // ============================================================================
 // Types
@@ -96,7 +95,6 @@ export const PROverview = memo(function PROverview() {
   const github = useGitHub();
   const store = usePRReviewStore();
   const canWrite = useCanWrite();
-  const { track } = useTelemetry();
   const pr = usePRReviewSelector((s) => s.pr);
   const owner = usePRReviewSelector((s) => s.owner);
   const repo = usePRReviewSelector((s) => s.repo);
@@ -192,7 +190,7 @@ export const PROverview = memo(function PROverview() {
   const assigneeSearchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    document.title = `${pr.title} · Pull Request #${pr.number} · Pulldash`;
+    document.title = `${pr.title} · Pull Request #${pr.number} · better pr`;
   }, [pr.title, pr.number]);
 
   // Scroll to target when overviewScrollTarget changes
@@ -239,17 +237,8 @@ export const PROverview = memo(function PROverview() {
   }, [store, pr.state, pr.merged]);
 
   const handleMerge = useCallback(async () => {
-    const success = await store.mergePR();
-    if (success) {
-      // Track PR merged
-      track("pr_merged", {
-        pr_number: pr.number,
-        owner,
-        repo,
-        merge_method: store.getSnapshot().mergeMethod,
-      });
-    }
-  }, [store, track, pr.number, owner, repo]);
+    await store.mergePR();
+  }, [store]);
 
   const handleApproveWorkflows = useCallback(async () => {
     await store.approveWorkflows();

@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo } from "react";
-import { isElectron } from "../contexts/telemetry";
 import {
   Dialog,
   DialogContent,
@@ -16,7 +15,7 @@ function getBookmarkletCode(origin: string): string {
   return `javascript:(function(){var m=location.href.match(/^https:\\/\\/github\\.com\\/([^\\/]+)\\/([^\\/]+)\\/pull\\/(\\d+)/);if(!m){alert('Open a GitHub PR first');return;}location.href='${origin}/'+m[1]+'/'+m[2]+'/pull/'+m[3];})();`;
 }
 
-// Animation showing the flow: GitHub → Click → Pulldash
+// Animation showing the flow: GitHub → Click → better pr
 function BookmarkletAnimation() {
   const [step, setStep] = useState(0);
 
@@ -96,7 +95,7 @@ function BookmarkletAnimation() {
         )}
       />
 
-      {/* Pulldash */}
+      {/* better pr */}
       <div
         className={cn(
           "flex flex-col items-center gap-1.5 transition-all duration-300",
@@ -110,10 +109,10 @@ function BookmarkletAnimation() {
               "ring-2 ring-blue-400/30 ring-offset-2 ring-offset-background"
           )}
         >
-          <img src="/logo.svg" alt="Pulldash" className="w-7 h-7" />
+          <img src="/logo.svg" alt="better pr" className="w-7 h-7" />
         </div>
         <span className="text-[10px] text-muted-foreground font-medium">
-          Pulldash
+          better pr
         </span>
       </div>
     </div>
@@ -142,9 +141,9 @@ export function BookmarkletDialog({
       onmousedown="this.style.cursor='grabbing'; this.style.transform='scale(0.98)';"
       onmouseup="this.style.cursor='grab'; this.style.transform='scale(1)';"
       onclick="event.preventDefault(); alert('Drag this button to your bookmarks bar!')"
-      alt="Open in Pulldash"
+      alt="Open in better pr"
     >
-      <span style="display: none;">Open in Pulldash</span>
+      <span style="display: none;">Open in better pr</span>
     </a>`;
   }, []);
 
@@ -153,7 +152,7 @@ export function BookmarkletDialog({
       <DialogContent className="sm:max-w-md p-0 gap-0 bg-background border-border overflow-hidden">
         <DialogTitle className="sr-only">Redirect Bookmark</DialogTitle>
         <DialogDescription className="sr-only">
-          Add a bookmark to quickly redirect from any GitHub PR to Pulldash
+          Add a bookmark to quickly redirect from any GitHub PR to better pr
         </DialogDescription>
 
         {/* Header */}
@@ -167,7 +166,7 @@ export function BookmarkletDialog({
                 Redirect Bookmark
               </h2>
               <p className="text-xs text-muted-foreground">
-                One click from GitHub to Pulldash
+                One click from GitHub to better pr
               </p>
             </div>
           </div>
@@ -209,14 +208,14 @@ export function BookmarkletDialog({
   );
 }
 
-// Hook to check if bookmarklet should be shown (not in Electron, not dismissed)
+// Hook to check if bookmarklet should be shown (not dismissed)
 export function useShowBookmarklet() {
   const [show, setShow] = useState(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const dismissed = localStorage.getItem(DISMISSED_KEY) === "true";
-    setShow(!isElectron() && !dismissed);
+    setShow(!dismissed);
   }, []);
 
   return show;

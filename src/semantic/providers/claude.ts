@@ -1,9 +1,9 @@
 /**
  * Claude provider - runs the analysis through the Claude Agent SDK, which
  * rides the user's existing Claude Code login/subscription (no API key
- * handling in pulldash).
+ * handling in better pr).
  *
- * Node-only. Import lazily from API routes so browser/Vercel bundles never
+ * Node-only. Import lazily from API routes so browser bundles never
  * pull in the SDK.
  */
 

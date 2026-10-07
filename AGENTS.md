@@ -1,6 +1,6 @@
-# pulldash
+# better pr
 
-Pulldash is the fastest way to review pull requests.
+better pr is the fastest way to review pull requests.
 
 ## Development
 
@@ -10,7 +10,7 @@ _NEVER_ use browser tools - they will not work with this project.
 
 ## Principles
 
-- Performance is P1. If things feel laggy or are not smooth, it is of the utmost importance to fix. Pulldash exists because GitHub's PR review is slow.
+- Performance is P1. If things feel laggy or are not smooth, it is of the utmost importance to fix. better pr exists because GitHub's PR review is slow.
 - Tests should primarily occur at the data-layer, and the frontend should mostly dummily render the data.
 
 ## Testing

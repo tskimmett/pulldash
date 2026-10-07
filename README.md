@@ -1,4 +1,4 @@
-# Pulldash (team fork)
+# better pr
 
 A fast, keyboard-driven PR review UI.
 
@@ -7,8 +7,8 @@ A fast, keyboard-driven PR review UI.
 Requires [Bun](https://bun.sh).
 
 ```bash
-git clone git@github.com:tskimmett/pulldash.git
-cd pulldash
+git clone git@github.com:tskimmett/pulldash.git better-pr
+cd better-pr
 bun install
 bun start
 ```
