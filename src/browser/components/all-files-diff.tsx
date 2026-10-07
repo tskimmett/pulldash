@@ -27,17 +27,21 @@ import {
 import { diffService } from "../lib/diff";
 import { parsePatchLines, type PatchLine } from "../lib/patch-lines";
 import { isTestFile } from "../lib/test-file";
+import { NARROW_VIEWPORT_QUERY, useMediaQuery } from "../lib/use-media-query";
+import { useWidthCssVar } from "../lib/use-width-css-var";
 import type { PullRequestFile, ReviewComment } from "@/api/types";
 import {
   CommentThread,
   InlineCommentForm,
   PendingCommentItem,
+  PinToVisibleWidth,
 } from "./pr-review";
 
 const highlightedPatchCache = new WeakMap<PullRequestFile, string[]>();
 
 export const AllFilesDiff = memo(function AllFilesDiff() {
   const store = usePRReviewStore();
+  const wrapLines = !useMediaQuery(NARROW_VIEWPORT_QUERY);
   const prFiles = usePRReviewSelector((s) => s.files);
   const hideTestFiles = usePRReviewSelector((s) => s.hideTestFiles);
   const files = useMemo(
@@ -246,6 +250,7 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
                   file={file}
                   isViewed={viewedFiles.has(file.filename)}
                   fileIndex={item.index}
+                  wrapLines={wrapLines}
                   activeLine={
                     activeMatch?.fileIndex === item.index
                       ? activeMatch.lineIndex
@@ -322,13 +327,19 @@ const AllFileSection = memo(function AllFileSection({
   isViewed,
   fileIndex,
   activeLine,
+  wrapLines,
 }: {
   file: PullRequestFile;
   isViewed: boolean;
   fileIndex: number;
   activeLine: number | null;
+  /** When false, long lines scroll horizontally instead of wrapping. */
+  wrapLines: boolean;
 }) {
   const store = usePRReviewStore();
+  const hScrollRef = useRef<HTMLDivElement>(null);
+  useWidthCssVar(hScrollRef, "--diff-visible-w", !wrapLines);
+  const pinned = !wrapLines;
   const lines = useMemo(
     () => (isViewed ? [] : parsePatchLines(file.patch ?? "")),
     [file.patch, isViewed]
@@ -429,73 +440,84 @@ const AllFileSection = memo(function AllFileSection({
     <section className="border border-foreground/15 rounded-lg overflow-hidden">
       <FileBar file={file} isViewed={isViewed} />
       {isViewed ? null : lines.length ? (
-        <div className="font-mono text-xs overflow-x-auto [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)] diff-line-container">
-          {lines.map((line, index) => {
-            const side = line.type === "delete" ? "LEFT" : "RIGHT";
-            const lineNum = side === "LEFT" ? line.oldLine : line.newLine;
-            const key = `${side}:${lineNum}`;
-            return (
-              <Fragment key={index}>
-                <div
-                  data-find-line={index}
-                  data-find-active={activeLine === index ? "" : undefined}
-                >
-                  <AllFileLine
-                    line={line}
-                    html={
-                      line.type === "hunk"
-                        ? undefined
-                        : highlightedLines?.[codeLineIndex++]
-                    }
-                    onComment={
-                      lineNum
-                        ? () =>
-                            store.startCommenting(
-                              lineNum,
-                              undefined,
-                              side === "LEFT" ? "old" : "new",
-                              file.filename
-                            )
-                        : undefined
-                    }
-                  />
-                </div>
-                {lineNum &&
-                  pendingByKey
-                    .get(key)
-                    ?.map((comment) => (
-                      <PendingCommentItem
-                        key={comment.id}
-                        comment={comment}
-                        isFocused={focusedPendingCommentId === comment.id}
-                        isEditing={editingPendingCommentId === comment.id}
-                      />
-                    ))}
-                {lineNum &&
-                  threadsByKey
-                    .get(key)
-                    ?.map((thread) => (
-                      <CommentThread
-                        key={thread[0].id}
-                        comments={thread}
-                        focusedCommentId={focusedCommentId}
-                        editingCommentId={editingCommentId}
-                        replyingToCommentId={replyingToCommentId}
-                      />
-                    ))}
-                {lineNum &&
-                  commenting?.line === lineNum &&
-                  commenting.side === side && (
-                    <InlineCommentForm
-                      path={file.filename}
-                      line={commenting.line}
-                      startLine={commenting.startLine}
-                      side={commenting.side}
+        <div
+          ref={hScrollRef}
+          className={cn(
+            "font-mono text-xs overflow-x-auto [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)] diff-line-container",
+            !wrapLines &&
+              "[&_.diff-line-row]:whitespace-pre [&_[data-find-code]]:whitespace-pre [&_[data-find-code]]:[overflow-wrap:normal]"
+          )}
+        >
+          {/* Unwrapped, every line stretches to the widest one so row
+              backgrounds stay aligned while scrolling sideways. */}
+          <div className={cn(!wrapLines && "w-max min-w-full")}>
+            {lines.map((line, index) => {
+              const side = line.type === "delete" ? "LEFT" : "RIGHT";
+              const lineNum = side === "LEFT" ? line.oldLine : line.newLine;
+              const key = `${side}:${lineNum}`;
+              return (
+                <Fragment key={index}>
+                  <div
+                    data-find-line={index}
+                    data-find-active={activeLine === index ? "" : undefined}
+                  >
+                    <AllFileLine
+                      line={line}
+                      html={
+                        line.type === "hunk"
+                          ? undefined
+                          : highlightedLines?.[codeLineIndex++]
+                      }
+                      onComment={
+                        lineNum
+                          ? () =>
+                              store.startCommenting(
+                                lineNum,
+                                undefined,
+                                side === "LEFT" ? "old" : "new",
+                                file.filename
+                              )
+                          : undefined
+                      }
                     />
-                  )}
-              </Fragment>
-            );
-          })}
+                  </div>
+                  {lineNum &&
+                    pendingByKey.get(key)?.map((comment) => (
+                      <PinToVisibleWidth key={comment.id} pinned={pinned}>
+                        <PendingCommentItem
+                          comment={comment}
+                          isFocused={focusedPendingCommentId === comment.id}
+                          isEditing={editingPendingCommentId === comment.id}
+                        />
+                      </PinToVisibleWidth>
+                    ))}
+                  {lineNum &&
+                    threadsByKey.get(key)?.map((thread) => (
+                      <PinToVisibleWidth key={thread[0].id} pinned={pinned}>
+                        <CommentThread
+                          comments={thread}
+                          focusedCommentId={focusedCommentId}
+                          editingCommentId={editingCommentId}
+                          replyingToCommentId={replyingToCommentId}
+                        />
+                      </PinToVisibleWidth>
+                    ))}
+                  {lineNum &&
+                    commenting?.line === lineNum &&
+                    commenting.side === side && (
+                      <PinToVisibleWidth pinned={pinned}>
+                        <InlineCommentForm
+                          path={file.filename}
+                          line={commenting.line}
+                          startLine={commenting.startLine}
+                          side={commenting.side}
+                        />
+                      </PinToVisibleWidth>
+                    )}
+                </Fragment>
+              );
+            })}
+          </div>
         </div>
       ) : (
         <div className="p-4 text-sm text-muted-foreground">
