@@ -78,19 +78,19 @@ export const FileHeader = memo(function FileHeader({
     switch (file.status) {
       case "added":
         return (
-          <span className="px-1.5 py-0.5 text-xs rounded bg-green-500/20 text-green-500 font-medium">
+          <span className="shrink-0 px-1.5 py-0.5 text-xs rounded bg-green-500/20 text-green-500 font-medium">
             Added
           </span>
         );
       case "removed":
         return (
-          <span className="px-1.5 py-0.5 text-xs rounded bg-red-500/20 text-red-500 font-medium">
+          <span className="shrink-0 px-1.5 py-0.5 text-xs rounded bg-red-500/20 text-red-500 font-medium">
             Deleted
           </span>
         );
       case "renamed":
         return (
-          <span className="px-1.5 py-0.5 text-xs rounded bg-blue-500/20 text-blue-500 font-medium">
+          <span className="shrink-0 px-1.5 py-0.5 text-xs rounded bg-blue-500/20 text-blue-500 font-medium">
             Renamed
           </span>
         );
@@ -100,13 +100,25 @@ export const FileHeader = memo(function FileHeader({
   })();
 
   const showNavigation = currentIndex !== undefined && totalFiles !== undefined;
+  const slash = file.filename.lastIndexOf("/");
+  const dirname = slash >= 0 ? file.filename.slice(0, slash + 1) : "";
+  const basename = file.filename.slice(slash + 1);
 
   return (
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-3 min-w-0 flex-1">
-        <FileCode className="w-4 h-4 text-muted-foreground shrink-0" />
-        <span className="font-mono text-sm font-medium truncate">
-          {file.filename}
+    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5">
+      {/* basis-64: once the toolbar can't fit beside the filename, it wraps
+          onto its own row instead of squeezing the filename to nothing. */}
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1 basis-64">
+        <FileCode className="w-4 h-4 text-muted-foreground shrink-0 hidden sm:block" />
+        {/* The directory truncates before the basename does. */}
+        <span
+          className="flex min-w-0 font-mono text-sm font-medium"
+          title={file.filename}
+        >
+          {dirname && (
+            <span className="truncate text-muted-foreground">{dirname}</span>
+          )}
+          <span className="truncate shrink-0 max-w-full">{basename}</span>
         </span>
         {fileStatusBadge}
         <span className="text-xs text-muted-foreground shrink-0">
@@ -115,7 +127,7 @@ export const FileHeader = memo(function FileHeader({
         </span>
         {/* Navigation buttons */}
         {showNavigation && (
-          <div className="flex items-center gap-1 shrink-0 ml-2">
+          <div className="flex items-center gap-1 shrink-0 ml-auto sm:ml-2">
             <button
               onClick={onPrevFile}
               className="flex items-center gap-0.5 px-1.5 py-0.5 text-xs rounded hover:bg-muted transition-colors text-muted-foreground hover:text-foreground"
@@ -143,7 +155,7 @@ export const FileHeader = memo(function FileHeader({
         )}
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-1.5 sm:gap-2 ml-auto">
         {/* Jump to prev/next change block in the diff */}
         <TooltipProvider delayDuration={300}>
           <div className="flex items-center rounded-md border border-border bg-muted/30 shrink-0">
@@ -337,15 +349,21 @@ export const FileHeader = memo(function FileHeader({
         <button
           onClick={onToggleViewed}
           className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors shrink-0",
+            "flex items-center gap-1.5 px-2 sm:px-3 py-1.5 text-sm rounded-md transition-colors shrink-0",
             isViewed
               ? "bg-green-500/20 text-green-500 hover:bg-green-500/30"
               : "bg-muted hover:bg-muted/80 text-muted-foreground"
           )}
         >
           <Check className={cn("w-4 h-4", isViewed && "text-green-500")} />
-          {isViewed ? "Viewed" : "Mark as viewed"}
-          <Keycap keyName="v" size="xs" className="ml-1" />
+          <span className="hidden sm:inline">
+            {isViewed ? "Viewed" : "Mark as viewed"}
+          </span>
+          <Keycap
+            keyName="v"
+            size="xs"
+            className="ml-1 hidden sm:inline-flex"
+          />
         </button>
       </div>
     </div>

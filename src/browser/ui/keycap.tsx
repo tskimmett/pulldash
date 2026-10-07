@@ -167,7 +167,10 @@ export const KeycapGroup = memo(function KeycapGroup({
   separator = "none",
 }: KeycapGroupProps) {
   return (
-    <span className={cn("inline-flex items-center gap-0.5", className)}>
+    <span
+      data-keyboard-hint
+      className={cn("inline-flex items-center gap-0.5", className)}
+    >
       {keys.map((key, index) => (
         <span key={index} className="inline-flex items-center">
           {index > 0 && separator === "+" && (

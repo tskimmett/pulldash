@@ -45,14 +45,17 @@ export const SemanticReviewButton = memo(function SemanticReviewButton() {
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
-            className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md bg-violet-600/20 text-violet-600 dark:text-violet-400 hover:bg-violet-600/30 transition-colors max-w-[220px]"
+            className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md bg-violet-600/20 text-violet-600 dark:text-violet-400 hover:bg-violet-600/30 transition-colors max-w-[120px] md:max-w-[220px]"
             title={latest ?? "Analyzing…"}
           >
             <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
             <span className="truncate">{latest ?? "Analyzing…"}</span>
           </button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-[360px]">
+        <DropdownMenuContent
+          align="end"
+          className="w-[360px] max-w-[calc(100vw-1rem)]"
+        >
           <DropdownMenuLabel className="font-semibold">
             Semantic analysis in progress
           </DropdownMenuLabel>
@@ -109,7 +112,7 @@ export const SemanticReviewButton = memo(function SemanticReviewButton() {
           }
         >
           <Sparkles className="w-3.5 h-3.5" />
-          <span className="hidden sm:inline">Semantic</span>
+          <span className="hidden md:inline">Semantic</span>
         </button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -167,7 +170,7 @@ export const SemanticReviewButton = memo(function SemanticReviewButton() {
           ) : (
             <Sparkles className="w-3.5 h-3.5" />
           )}
-          <span className="hidden sm:inline">Semantic review</span>
+          <span className="hidden md:inline">Semantic review</span>
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-[280px]">

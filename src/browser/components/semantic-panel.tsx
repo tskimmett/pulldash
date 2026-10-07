@@ -443,7 +443,10 @@ export const SemanticLayerBar = memo(function SemanticLayerBar() {
         >
           <Check className="w-3 h-3" />
           {isReviewed ? "Reviewed" : "Mark reviewed"}
-          <span className="px-1 text-[10px] bg-background/40 rounded font-mono">
+          <span
+            data-keyboard-hint
+            className="px-1 text-[10px] bg-background/40 rounded font-mono"
+          >
             V
           </span>
         </button>

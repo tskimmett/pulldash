@@ -32,7 +32,13 @@ const DEBOUNCE_MS = 250;
 
 // Header input: paste a PR URL to open it, or type text or a branch name to
 // search the PRs covered by the feed's filters.
-export function PRSearchInput() {
+export function PRSearchInput({
+  className,
+  autoFocus,
+}: {
+  className?: string;
+  autoFocus?: boolean;
+} = {}) {
   const openPRReviewTab = useOpenPRReviewTab();
   const store = useGitHubStore();
   const { ready } = useGitHubReady();
@@ -163,7 +169,7 @@ export function PRSearchInput() {
   const feedCount = feedResults.length;
 
   return (
-    <div ref={containerRef} className="relative w-[260px]">
+    <div ref={containerRef} className={cn("relative w-[260px]", className)}>
       <form onSubmit={handleSubmit}>
         <div className="relative">
           <input
@@ -175,8 +181,9 @@ export function PRSearchInput() {
             }}
             onFocus={() => setOpen(true)}
             onKeyDown={handleKeyDown}
+            autoFocus={autoFocus}
             placeholder="Search PRs, paste URL or branch..."
-            className="w-full h-6 pl-6 pr-2 rounded-md border border-border/50 bg-foreground/5 text-[11px] placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring focus:border-transparent font-mono"
+            className="w-full h-9 sm:h-6 pl-7 sm:pl-6 pr-2 rounded-md border border-border/50 bg-foreground/5 text-base sm:text-[11px] placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-ring focus:border-transparent font-mono"
           />
           {loading ? (
             <Loader2 className="absolute left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 text-muted-foreground/50 animate-spin" />
@@ -186,7 +193,7 @@ export function PRSearchInput() {
         </div>
       </form>
       {showDropdown && (
-        <div className="absolute right-0 top-full mt-1 w-[520px] rounded-md border border-border bg-card shadow-lg z-50 overflow-hidden">
+        <div className="absolute right-0 top-full mt-1 w-full sm:w-[520px] max-h-[60dvh] overflow-y-auto rounded-md border border-border bg-card shadow-lg z-50 overflow-hidden">
           {!hasFeed ? (
             <Message>No repositories in your feed</Message>
           ) : error ? (

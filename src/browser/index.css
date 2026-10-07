@@ -2,52 +2,12 @@
 @import "tw-animate-css";
 @import "./ui/diff/theme.css";
 
-/* Custom xs breakpoint for extra small screens (between 0 and sm) */
-@custom-media --xs-screen (min-width: 420px);
-
-@layer utilities {
-  @media (--xs-screen) {
-    .xs\:inline {
-      display: inline !important;
-    }
-    .xs\:inline-block {
-      display: inline-block !important;
-    }
-    .xs\:flex {
-      display: flex !important;
-    }
-    .xs\:hidden {
-      display: none !important;
-    }
-    .hidden.xs\:inline {
-      display: none;
-    }
-    .hidden.xs\:inline-block {
-      display: none;
-    }
-    .hidden.xs\:flex {
-      display: none;
-    }
-  }
-}
-
-/* Extra small screen utilities */
-@media (min-width: 420px) {
-  .xs\:inline {
-    display: inline !important;
-  }
-  .xs\:inline-block {
-    display: inline-block !important;
-  }
-  .xs\:flex {
-    display: flex !important;
-  }
-  .xs\:hidden {
-    display: none !important;
-  }
-}
-
 @custom-variant dark (&:is(.dark *));
+
+/* Extra small breakpoint for phones between 420px and sm */
+@theme {
+  --breakpoint-xs: 26.25rem;
+}
 
 @theme inline {
   --color-background: var(--background);
@@ -691,4 +651,24 @@
 
 ::highlight(find-active) {
   background-color: rgb(249 115 22 / 0.7);
+}
+
+/* iOS Safari zooms the page when a focused field is under 16px. */
+@media (max-width: 639px) {
+  input:not([type="checkbox"]):not([type="radio"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
+/* Keyboard shortcut hints are noise on touch devices. Bare <kbd>s and menu
+   shortcut slots are caught directly; tag composite hints (text + keys, or
+   key badges that aren't <kbd>) with data-keyboard-hint. */
+@media (pointer: coarse) {
+  kbd,
+  [data-keyboard-hint],
+  [data-slot$="-shortcut"] {
+    display: none;
+  }
 }

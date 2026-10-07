@@ -367,7 +367,10 @@ export function Home() {
                         const rect = e.currentTarget.getBoundingClientRect();
                         setRepoDropdownPosition({
                           top: rect.bottom + 4,
-                          left: rect.left,
+                          left: Math.max(
+                            8,
+                            Math.min(rect.left, window.innerWidth - 232)
+                          ),
                         });
                       }
                       setOpenRepoDropdown(isOpen ? null : repo.name);
@@ -379,7 +382,10 @@ export function Home() {
                         const rect = e.currentTarget.getBoundingClientRect();
                         setRepoDropdownPosition({
                           top: rect.bottom + 4,
-                          left: rect.left,
+                          left: Math.max(
+                            8,
+                            Math.min(rect.left, window.innerWidth - 232)
+                          ),
                         });
                         setOpenRepoDropdown(isOpen ? null : repo.name);
                         setShowAddRepo(false);
@@ -726,7 +732,7 @@ export function Home() {
         {/* PR List Panel */}
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Results Header */}
-          <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
+          <div className="flex items-center justify-between gap-2 px-2 sm:px-4 py-2 border-b border-border shrink-0">
             <span className="text-xs text-muted-foreground">
               {loadingPrs ? (
                 <span className="flex items-center gap-2">
@@ -1380,7 +1386,7 @@ function HomeLoadingSkeleton() {
       <div className="flex-1 flex overflow-hidden">
         <div className="flex-1 flex flex-col overflow-hidden">
           {/* Results Header Skeleton */}
-          <div className="flex items-center justify-between px-4 py-2 border-b border-border shrink-0">
+          <div className="flex items-center justify-between gap-2 px-2 sm:px-4 py-2 border-b border-border shrink-0">
             <Skeleton className="h-4 w-32" />
             <Skeleton className="h-4 w-20" />
           </div>

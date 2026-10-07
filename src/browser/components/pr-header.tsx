@@ -56,7 +56,7 @@ export const PRHeader = memo(function PRHeader({
       : "bg-red-600";
 
   return (
-    <header className="border-b border-border px-2 sm:px-4 py-2 flex items-center gap-2 sm:gap-3 shrink-0 bg-card/30">
+    <header className="border-b border-border px-2 sm:px-4 py-2 flex items-center gap-1.5 sm:gap-3 shrink-0 bg-card/30">
       {/* Mobile menu button */}
       {onToggleSidebar && (
         <button
@@ -100,7 +100,7 @@ export const PRHeader = memo(function PRHeader({
           href={`https://github.com/${owner}/${repo}/pull/${pr.number}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-muted-foreground hover:text-blue-400 transition-colors shrink-0"
+          className="text-muted-foreground hover:text-blue-400 transition-colors shrink-0 hidden md:inline"
           title="View on GitHub"
         >
           <ExternalLink className="w-4 h-4" />
@@ -110,7 +110,7 @@ export const PRHeader = memo(function PRHeader({
         />
         {/* Author */}
         <UserHoverCard login={pr.user.login}>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors shrink-0">
+          <div className="items-center gap-1.5 text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors shrink-0 hidden md:flex">
             <img
               src={pr.user.avatar_url}
               alt={pr.user.login}
@@ -128,7 +128,7 @@ export const PRHeader = memo(function PRHeader({
       </h1>
 
       {/* Right side info */}
-      <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+      <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
         {/* Line diff stats */}
         <span className="text-xs hidden sm:inline">
           <span className="text-green-500">+{additions}</span>{" "}
@@ -158,7 +158,7 @@ function CopyUrlButton({ url }: { url: string }) {
   return (
     <button
       onClick={handleCopy}
-      className="text-muted-foreground hover:text-blue-400 transition-colors shrink-0"
+      className="text-muted-foreground hover:text-blue-400 transition-colors shrink-0 hidden md:inline"
       title="Copy PR link"
     >
       {copied ? (

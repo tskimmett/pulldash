@@ -118,7 +118,7 @@ export const DiffRangeButton = memo(function DiffRangeButton() {
       ) : (
         <History className="w-3.5 h-3.5" />
       )}
-      <span className="hidden sm:inline">{label}</span>
+      <span className="hidden md:inline">{label}</span>
     </button>
   );
 

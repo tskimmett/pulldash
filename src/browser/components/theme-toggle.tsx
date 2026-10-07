@@ -31,7 +31,7 @@ export function ThemeToggle() {
     <button
       type="button"
       onClick={handleClick}
-      className="flex items-center justify-center w-7 h-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
+      className="flex items-center justify-center w-9 h-9 sm:w-7 sm:h-7 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors"
       title={`${LABELS[theme]} (click to change)`}
       aria-label={LABELS[theme]}
     >

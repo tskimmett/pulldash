@@ -64,6 +64,10 @@ import {
   useSidebarWidth,
 } from "@/browser/lib/sidebar-width";
 import { isTestFile } from "@/browser/lib/test-file";
+import {
+  NARROW_VIEWPORT_QUERY,
+  useMediaQuery,
+} from "@/browser/lib/use-media-query";
 import { FileHeader } from "./file-header";
 import { AllFilesDiff } from "./all-files-diff";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
@@ -196,7 +200,7 @@ export function PRReviewPage() {
 
   if (!owner || !repo || !number) {
     return (
-      <div className="flex items-center justify-center h-screen">
+      <div className="flex items-center justify-center h-full">
         <p className="text-destructive">Invalid PR URL</p>
       </div>
     );
@@ -511,7 +515,7 @@ function PRReviewLayout() {
               )}
             >
               <List className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">All files</span>
+              <span className="hidden md:inline">All files</span>
             </button>
             <DiffRangeButton />
             <SemanticReviewButton />
@@ -769,7 +773,11 @@ const DiffPanel = memo(function DiffPanel() {
   const selectedFiles = usePRReviewSelector((s) => s.selectedFiles);
   const showOverview = usePRReviewSelector((s) => s.showOverview);
   const fileLayoutMode = usePRReviewSelector((s) => s.fileLayoutMode);
-  const diffViewMode = usePRReviewSelector((s) => s.diffViewMode);
+  const storedDiffViewMode = usePRReviewSelector((s) => s.diffViewMode);
+  // Split view leaves too little room per side on phones; show unified there
+  // without overwriting the saved preference.
+  const isNarrow = useMediaQuery(NARROW_VIEWPORT_QUERY);
+  const diffViewMode = isNarrow ? "unified" : storedDiffViewMode;
   const allCommentsCollapsed = usePRReviewSelector(
     (s) => s.allCommentsCollapsed
   );
@@ -855,7 +863,9 @@ const DiffPanel = memo(function DiffPanel() {
                     : store.navigateToNextUnviewedFile()
                 }
                 diffViewMode={diffViewMode}
-                onToggleDiffViewMode={() => store.toggleDiffViewMode()}
+                onToggleDiffViewMode={
+                  isNarrow ? undefined : () => store.toggleDiffViewMode()
+                }
                 commentCount={currentFileCommentCount}
                 allCommentsCollapsed={allCommentsCollapsed}
                 onToggleAllComments={() => store.toggleAllCommentsCollapsed()}
@@ -929,8 +939,9 @@ const KeybindsBar = memo(function KeybindsBar() {
 
   return (
     <div
+      data-keyboard-hint
       className={cn(
-        "shrink-0 border-t border-border px-3 py-2 min-h-[36px]",
+        "shrink-0 border-t border-border px-3 py-2 min-h-[36px] hidden md:block",
         gotoLineMode && "bg-blue-500/10",
         (focusedCommentId || focusedPendingCommentId) && "bg-yellow-500/10",
         commentingOnLine && "bg-green-500/10",
@@ -1295,7 +1306,7 @@ const DiffOverviewRuler = memo(function DiffOverviewRuler({
     <div
       aria-hidden
       onPointerDown={onPointerDown}
-      className="group absolute top-0 right-0 z-20 w-[14px] cursor-default select-none touch-none bg-[var(--scrollbar-track)]"
+      className="group absolute top-0 right-0 z-20 w-[14px] cursor-default select-none touch-none bg-[var(--scrollbar-track)] pointer-coarse:hidden"
       style={{ height: track }}
     >
       {marks.map((mark, i) => {
@@ -2722,7 +2733,7 @@ const DiffLineRow = memo(function DiffLineRow({
       {/* Code content - click to focus line (unless selecting text) */}
       <div
         data-find-code
-        className="flex-1 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-5 pr-6 pl-2 cursor-text"
+        className="flex-1 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-5 pr-6 pointer-coarse:pr-2 pl-2 cursor-text"
         onMouseDown={handleContentMouseDown}
         onClick={handleContentClick}
       >
@@ -3074,7 +3085,10 @@ const SkipBlockRow = memo(function SkipBlockRow({
           {hunk.content ? ` · ${hunk.content}` : ""}
         </span>
         {!isExpanding && isFocused && (
-          <span className="ml-2 text-xs shrink-0 text-blue-600 dark:text-blue-400 opacity-70">
+          <span
+            data-keyboard-hint
+            className="ml-2 text-xs shrink-0 text-blue-600 dark:text-blue-400 opacity-70"
+          >
             Press Enter to expand all
           </span>
         )}
@@ -3195,7 +3209,7 @@ export const InlineCommentForm = memo(function InlineCommentForm({
 
   return (
     <div
-      className="mx-4 my-3 rounded-lg border border-border bg-card overflow-hidden shadow-sm"
+      className="mx-2 md:mx-4 my-3 rounded-lg border border-border bg-card overflow-hidden shadow-sm"
       style={{ fontFamily: "var(--font-sans)" }}
     >
       {/* Header with avatar and title */}
@@ -3921,7 +3935,7 @@ function EmojiReactions({
       const rect = buttonRef.current.getBoundingClientRect();
       setPickerPosition({
         top: rect.bottom + 4,
-        left: rect.left,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - 248)),
       });
     }
     setShowPicker(!showPicker);
@@ -4348,19 +4362,26 @@ const SubmitReviewDropdown = memo(function SubmitReviewDropdown() {
     <DropdownMenu open={isOpen} onOpenChange={setIsOpen} modal={false}>
       <DropdownMenuTrigger asChild>
         <button className="flex items-center gap-1.5 px-2 py-1 text-xs leading-4 font-medium rounded-md bg-green-600 text-white hover:bg-green-700 transition-colors">
-          <span>Submit review</span>
+          <span className="sm:hidden">Review</span>
+          <span className="hidden sm:inline">Submit review</span>
           {pendingCount > 0 && (
             <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 text-[10px] leading-none bg-green-500/50 rounded tabular-nums">
               {pendingCount}
             </span>
           )}
-          <span className="inline-flex items-center justify-center h-4 min-w-4 px-1 text-[10px] leading-none bg-green-500/50 rounded font-mono">
+          <span
+            data-keyboard-hint
+            className="hidden md:inline-flex items-center justify-center h-4 min-w-4 px-1 text-[10px] leading-none bg-green-500/50 rounded font-mono"
+          >
             S
           </span>
-          <ChevronsUpDown className="w-3.5 h-3.5 opacity-70" />
+          <ChevronsUpDown className="w-3.5 h-3.5 opacity-70 hidden sm:block" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-[450px]">
+      <DropdownMenuContent
+        align="end"
+        className="w-[450px] max-w-[calc(100vw-1rem)]"
+      >
         <DropdownMenuLabel className="font-semibold">
           Finish your review
         </DropdownMenuLabel>

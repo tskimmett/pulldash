@@ -1233,7 +1233,8 @@ export const MarkdownEditor = memo(function MarkdownEditor({
       const rect = emojiButtonRef.current.getBoundingClientRect();
       setEmojiPickerPosition({
         top: rect.bottom + 4,
-        left: Math.max(8, rect.right - 200), // Align right edge, with min left margin
+        // Align right edges; the picker is ~300px wide, keep it on screen.
+        left: Math.max(8, Math.min(rect.right - 300, window.innerWidth - 308)),
       });
     }
     setShowEmojiPicker(!showEmojiPicker);
@@ -1298,7 +1299,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({
       style={{ fontFamily: "var(--font-sans)" }}
     >
       {/* Tab bar with toolbar */}
-      <div className="flex items-center justify-between border-b border-border bg-muted/30 px-1">
+      <div className="flex flex-wrap items-center justify-between border-b border-border bg-muted/30 px-1">
         <div className="flex items-center">
           <button
             type="button"
@@ -1336,7 +1337,7 @@ export const MarkdownEditor = memo(function MarkdownEditor({
 
         {/* Formatting toolbar - only visible in write mode */}
         {activeTab === "write" && (
-          <div className="flex items-center gap-0.5 pr-1">
+          <div className="flex flex-wrap items-center gap-0.5 pr-1">
             {toolbarButtons.map((btn, idx) =>
               btn.type === "separator" ? (
                 <div key={idx} className="w-px h-4 bg-border mx-1" />
@@ -1354,7 +1355,10 @@ export const MarkdownEditor = memo(function MarkdownEditor({
                   <TooltipContent side="bottom" className="text-xs">
                     {btn.label}
                     {btn.shortcut && (
-                      <span className="ml-2 text-muted-foreground">
+                      <span
+                        data-keyboard-hint
+                        className="ml-2 text-muted-foreground"
+                      >
                         {btn.shortcut}
                       </span>
                     )}
@@ -1519,14 +1523,16 @@ export const MarkdownEditor = memo(function MarkdownEditor({
         className="px-3 py-2 border-t border-border bg-muted/20"
         style={{ fontFamily: "var(--font-sans)" }}
       >
-        <p className="text-[11px] text-muted-foreground flex items-center gap-1.5">
+        <p className="text-[11px] text-muted-foreground flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
           <span>Supports Markdown</span>
           <span className="text-border">·</span>
           <span>
             Type <span className="text-foreground/70">@</span> to mention
           </span>
-          <span className="text-border">·</span>
-          <span className="inline-flex items-center gap-0.5">
+          <span data-keyboard-hint className="text-border">
+            ·
+          </span>
+          <span data-keyboard-hint className="inline-flex items-center gap-0.5">
             <kbd
               className="px-1 py-0.5 bg-muted border border-border/50 rounded text-[10px]"
               style={{ fontFamily: "var(--font-mono)" }}

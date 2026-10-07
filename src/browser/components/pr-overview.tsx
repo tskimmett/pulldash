@@ -303,7 +303,7 @@ export const PROverview = memo(function PROverview() {
       const rect = reviewersButtonRef.current.getBoundingClientRect();
       setReviewersPickerPosition({
         top: rect.bottom + 4,
-        left: Math.min(rect.left, window.innerWidth - 280),
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - 280)),
       });
       fetchCollaborators();
       setReviewerSearchQuery("");
@@ -319,7 +319,7 @@ export const PROverview = memo(function PROverview() {
       const rect = assigneesButtonRef.current.getBoundingClientRect();
       setAssigneesPickerPosition({
         top: rect.bottom + 4,
-        left: Math.min(rect.left, window.innerWidth - 280),
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - 280)),
       });
       fetchCollaborators();
       setAssigneeSearchQuery("");
@@ -1020,7 +1020,7 @@ export const PROverview = memo(function PROverview() {
   }
 
   return (
-    <div className="flex-1 overflow-auto themed-scrollbar bg-background">
+    <div className="flex-1 overflow-y-auto overflow-x-hidden themed-scrollbar bg-background">
       {/* Tabs */}
       <div className="border-b border-border overflow-x-auto">
         <div className="max-w-[1280px] mx-auto px-2 sm:px-6">
@@ -1356,7 +1356,7 @@ export const PROverview = memo(function PROverview() {
                         className="w-10 h-10 rounded-full shrink-0"
                       />
                     )}
-                    <div className="flex-1 flex flex-col gap-2">
+                    <div className="flex-1 min-w-0 flex flex-col gap-2">
                       <MarkdownEditor
                         value={commentText}
                         onChange={setCommentText}
@@ -1364,7 +1364,7 @@ export const PROverview = memo(function PROverview() {
                         placeholder="Add your comment here..."
                         minHeight="100px"
                       />
-                      <div className="flex items-center justify-end gap-2">
+                      <div className="flex flex-wrap items-center justify-end gap-2">
                         {canMergeRepo && pr.state === "open" && !pr.merged && (
                           <button
                             onClick={handleClosePR}
@@ -1564,7 +1564,7 @@ export const PROverview = memo(function PROverview() {
                   onClick={() => setShowReviewersPicker(false)}
                 />
                 <div
-                  className="fixed w-[260px] bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
+                  className="fixed w-[min(260px,calc(100vw-16px))] bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
                   style={{
                     top: reviewersPickerPosition.top,
                     left: reviewersPickerPosition.left,
@@ -1694,7 +1694,7 @@ export const PROverview = memo(function PROverview() {
                   onClick={() => setShowAssigneesPicker(false)}
                 />
                 <div
-                  className="fixed w-[260px] bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
+                  className="fixed w-[min(260px,calc(100vw-16px))] bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
                   style={{
                     top: assigneesPickerPosition.top,
                     left: assigneesPickerPosition.left,
@@ -1905,7 +1905,7 @@ export const PROverview = memo(function PROverview() {
                           {isFromFork ? (
                             <>
                               The{" "}
-                              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs break-all">
                                 {pr.head.label || pr.head.ref}
                               </code>{" "}
                               branch is in a fork and cannot be deleted from
@@ -1914,7 +1914,7 @@ export const PROverview = memo(function PROverview() {
                           ) : (
                             <>
                               You're all set — the{" "}
-                              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs break-all">
                                 {pr.head.label || pr.head.ref}
                               </code>{" "}
                               branch can be safely deleted.
@@ -1940,10 +1940,10 @@ export const PROverview = memo(function PROverview() {
                       )}
                       {branchDeleted && !isFromFork && (
                         <div className="w-full flex flex-col items-start gap-3">
-                          <span className="text-sm text-muted-foreground flex items-center gap-2">
+                          <span className="text-sm text-muted-foreground flex flex-wrap items-center gap-2 min-w-0">
                             <Check className="w-4 h-4 text-green-400" />
                             Deleted{" "}
-                            <code className="px-1.5 py-0.5 bg-muted rounded text-xs">
+                            <code className="px-1.5 py-0.5 bg-muted rounded text-xs break-all">
                               {pr.head.ref}
                             </code>
                           </span>
@@ -1983,7 +1983,7 @@ export const PROverview = memo(function PROverview() {
                     </h3>
                     <p className="text-sm text-muted-foreground mt-1">
                       This pull request is closed, but the{" "}
-                      <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+                      <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs break-all">
                         {pr.head.ref}
                       </code>{" "}
                       branch has unmerged commits.
@@ -2007,10 +2007,10 @@ export const PROverview = memo(function PROverview() {
                   )}
                   {branchDeleted && !isForkPR(pr) && (
                     <div className="w-full flex flex-col items-start gap-3">
-                      <span className="text-sm text-muted-foreground flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground flex flex-wrap items-center gap-2 min-w-0">
                         <Check className="w-4 h-4 text-green-400" />
                         Deleted{" "}
-                        <code className="px-1.5 py-0.5 bg-muted rounded text-xs">
+                        <code className="px-1.5 py-0.5 bg-muted rounded text-xs break-all">
                           {pr.head.ref}
                         </code>
                       </span>
@@ -2178,7 +2178,7 @@ function LabelsSection({
       const rect = buttonRef.current.getBoundingClientRect();
       setPickerPosition({
         top: rect.bottom + 4,
-        left: Math.min(rect.left, window.innerWidth - 280),
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - 280)),
       });
       fetchLabels();
     }
@@ -2239,7 +2239,7 @@ function LabelsSection({
             onClick={() => setShowPicker(false)}
           />
           <div
-            className="fixed w-[260px] bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
+            className="fixed w-[min(260px,calc(100vw-16px))] bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
             style={{ top: pickerPosition.top, left: pickerPosition.left }}
           >
             <div className="px-3 py-2 border-b border-border">
@@ -2349,7 +2349,7 @@ function CommentBox({
       {/* Header */}
       <div
         className={cn(
-          "flex items-center gap-2 px-4 py-2 text-sm border-b border-border bg-card",
+          "flex flex-wrap items-center gap-2 px-4 py-2 text-sm border-b border-border bg-card",
           isAuthor && "bg-blue-500/10"
         )}
       >
@@ -2473,7 +2473,7 @@ function ReviewBox({ review }: { review: Review }) {
         >
           <ReviewStateIcon state={review.state} />
         </div>
-        <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+        <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap wrap-anywhere">
           <UserHoverCard login={review.user.login}>
             <span className="font-semibold text-foreground hover:text-blue-400 hover:underline cursor-pointer">
               {review.user.login}
@@ -2502,7 +2502,7 @@ function ReviewBox({ review }: { review: Review }) {
         >
           <div
             className={cn(
-              "flex items-center gap-2 px-4 py-2 text-sm border-b border-border bg-card",
+              "flex flex-wrap items-center gap-2 px-4 py-2 text-sm border-b border-border bg-card",
               stateHeaderBg
             )}
           >
@@ -2525,7 +2525,7 @@ function ReviewBox({ review }: { review: Review }) {
                 href={review.html_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-blue-400 hover:underline text-xs"
+                className="text-blue-400 hover:underline text-xs shrink-0"
               >
                 View on GitHub
               </a>
@@ -2710,10 +2710,12 @@ function ReviewThreadBox({
       <div className="relative z-10 ml-8 rounded-lg border border-border bg-card overflow-hidden">
         <button
           onClick={() => setShowResolved(true)}
-          className="w-full flex items-center justify-between px-4 py-3 text-sm hover:bg-muted/50 transition-colors"
+          className="w-full flex items-center justify-between gap-2 px-4 py-3 text-sm hover:bg-muted/50 transition-colors"
         >
-          <span className="font-mono text-muted-foreground">{filePath}</span>
-          <span className="flex items-center gap-2 text-muted-foreground hover:text-foreground">
+          <span className="font-mono text-muted-foreground min-w-0 truncate text-left">
+            {filePath}
+          </span>
+          <span className="flex items-center gap-2 text-muted-foreground hover:text-foreground shrink-0">
             <svg className="w-4 h-4" viewBox="0 0 16 16" fill="currentColor">
               <path d="M8 4a.5.5 0 01.5.5v3h3a.5.5 0 010 1h-3v3a.5.5 0 01-1 0v-3h-3a.5.5 0 010-1h3v-3A.5.5 0 018 4z" />
               <path
@@ -2763,19 +2765,19 @@ function ReviewThreadBox({
       )}
     >
       {/* File header */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-card border-b border-border text-sm">
+      <div className="flex flex-wrap items-center gap-2 px-3 py-2 bg-card border-b border-border text-sm">
         <a
           href={`https://github.com/${owner}/${repo}/blob/HEAD/${filePath}`}
           target="_blank"
           rel="noopener noreferrer"
-          className="font-mono text-muted-foreground hover:text-blue-400 hover:underline"
+          className="font-mono text-muted-foreground hover:text-blue-400 hover:underline min-w-0 break-all"
         >
           {filePath}
         </a>
         {thread.isResolved && (
           <button
             onClick={() => setShowResolved(false)}
-            className="ml-auto flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="ml-auto shrink-0 flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
           >
             <Check className="w-3 h-3" />
             Resolved
@@ -2901,7 +2903,7 @@ function ReviewThreadBox({
                     className="w-6 h-6 rounded-full shrink-0 mt-1"
                   />
                 )}
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <MarkdownEditor
                     value={replyText}
                     onChange={setReplyText}
@@ -2912,7 +2914,7 @@ function ReviewThreadBox({
                   />
                 </div>
               </div>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex items-center gap-2">
                   {canResolveThread && !thread.isResolved && (
                     <button
@@ -3134,10 +3136,15 @@ function MergeSection({
   const handleToggleDropdown = useCallback(() => {
     if (!showMergeOptions && buttonRef.current) {
       const rect = buttonRef.current.getBoundingClientRect();
+      // Right-align to the trigger and keep the menu on screen on phones.
+      const width = Math.min(Math.max(rect.width, 280), window.innerWidth - 16);
       setDropdownPosition({
         top: rect.bottom + 4,
-        left: rect.left,
-        width: rect.width,
+        left: Math.max(
+          8,
+          Math.min(rect.right - width, window.innerWidth - width - 8)
+        ),
+        width,
       });
     }
     onToggleMergeOptions();
@@ -3668,7 +3675,7 @@ function MergeSection({
                     style={{
                       top: dropdownPosition.top,
                       left: dropdownPosition.left,
-                      width: Math.max(dropdownPosition.width, 280),
+                      width: dropdownPosition.width,
                     }}
                   >
                     {(["squash", "merge", "rebase"] as const).map((method) => (
@@ -3875,13 +3882,13 @@ function CheckRunItem({ check }: { check: CheckRun }) {
   return (
     <div className="flex items-center gap-3 p-3 hover:bg-card/30">
       {getIcon()}
-      <span className="flex-1 text-sm">{check.name}</span>
+      <span className="flex-1 min-w-0 text-sm wrap-anywhere">{check.name}</span>
       {check.html_url && (
         <a
           href={check.html_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-sm text-blue-400 hover:underline"
+          className="text-sm text-blue-400 hover:underline shrink-0"
         >
           Details
         </a>
@@ -3916,7 +3923,7 @@ function StatusItem({
     <div className="flex items-center gap-3 p-3 hover:bg-card/30">
       {getIcon()}
       <div className="flex-1 min-w-0">
-        <span className="text-sm">{status.context}</span>
+        <span className="text-sm wrap-anywhere">{status.context}</span>
         {status.description && (
           <p className="text-xs text-muted-foreground truncate">
             {status.description}
@@ -3928,7 +3935,7 @@ function StatusItem({
           href={status.target_url}
           target="_blank"
           rel="noopener noreferrer"
-          className="text-sm text-blue-400 hover:underline"
+          className="text-sm text-blue-400 hover:underline shrink-0"
         >
           Details
         </a>
@@ -4043,7 +4050,7 @@ function EmojiReactions({
       const rect = buttonRef.current.getBoundingClientRect();
       setPickerPosition({
         top: rect.bottom + 4,
-        left: rect.left,
+        left: Math.max(8, Math.min(rect.left, window.innerWidth - 308)),
       });
     }
     setShowPicker(!showPicker);
@@ -4297,7 +4304,7 @@ function CommitGroup({ commits, prCommits, owner, repo }: CommitGroupProps) {
           <div className="relative z-10 p-1.5 rounded-full bg-background border border-border shrink-0">
             <GitCommit className="w-4 h-4" />
           </div>
-          <span>
+          <span className="min-w-0 wrap-anywhere">
             {firstAuthorInfo.login ? (
               <UserHoverCard login={firstAuthorInfo.login}>
                 <span className="font-medium text-foreground cursor-pointer hover:text-blue-400 hover:underline">
@@ -4735,7 +4742,7 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
                 </UserHoverCard>
               )}{" "}
               force-pushed the{" "}
-              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs break-all">
                 {pr?.head?.ref || "branch"}
               </code>{" "}
               branch
@@ -4784,7 +4791,7 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
                   pr?.merge_commit_sha?.slice(0, 7)}
               </code>{" "}
               into{" "}
-              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">
+              <code className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs break-all">
                 {pr?.base?.ref || "main"}
               </code>
             </span>
@@ -4940,7 +4947,7 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
       >
         {eventInfo.icon}
       </div>
-      <div className="flex-1 min-w-0 flex items-center gap-2 flex-wrap">
+      <div className="flex-1 min-w-0 flex items-center gap-x-2 gap-y-1 flex-wrap wrap-anywhere">
         {eventInfo.text}
         {displayDate && (
           <span title={new Date(displayDate).toLocaleString()}>
@@ -4961,7 +4968,7 @@ function PROverviewSkeleton() {
     <div className="flex-1 overflow-auto bg-background">
       {/* Tabs skeleton */}
       <div className="border-b border-border">
-        <div className="max-w-[1280px] mx-auto px-6">
+        <div className="max-w-[1280px] mx-auto px-3 sm:px-6 overflow-hidden">
           <div className="flex items-center gap-4 py-2">
             <Skeleton className="h-8 w-32" />
             <Skeleton className="h-8 w-24" />
@@ -4971,10 +4978,10 @@ function PROverviewSkeleton() {
       </div>
 
       {/* Main Content skeleton */}
-      <div className="max-w-[1280px] mx-auto px-6 py-6">
-        <div className="flex gap-6">
+      <div className="max-w-[1280px] mx-auto px-3 sm:px-6 py-4 sm:py-6">
+        <div className="flex flex-col lg:flex-row gap-4 lg:gap-6">
           {/* Left Column */}
-          <div className="flex-1 min-w-0 space-y-4">
+          <div className="flex-1 min-w-0 space-y-4 order-2 lg:order-1">
             {/* PR Description skeleton */}
             <CommentBoxSkeleton isLarge />
 
@@ -5015,7 +5022,7 @@ function PROverviewSkeleton() {
           </div>
 
           {/* Right Column - Sidebar skeleton */}
-          <div className="w-[296px] shrink-0 space-y-4">
+          <div className="w-full lg:w-[296px] shrink-0 space-y-4 order-1 lg:order-2">
             <SidebarSectionSkeleton title="Reviewers" itemCount={2} />
             <SidebarSectionSkeleton title="Assignees" itemCount={1} />
             <SidebarSectionSkeleton title="Labels" itemCount={3} hasLabels />

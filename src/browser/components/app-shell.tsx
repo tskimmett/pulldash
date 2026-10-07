@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { X, Home as HomeIcon, GitMerge, GitPullRequest } from "lucide-react";
+import {
+  X,
+  Home as HomeIcon,
+  GitMerge,
+  GitPullRequest,
+  Search,
+  ChevronDown,
+} from "lucide-react";
 import { cn } from "../cn";
 import {
   useTabContext,
@@ -18,6 +25,12 @@ import {
   HoverCardTrigger,
   HoverCardContent,
 } from "../ui/hover-card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 import { version } from "../../../package.json";
 
 // ============================================================================
@@ -36,6 +49,10 @@ export function AppShell() {
   } = useTabContext();
   const params = useParams<{ owner: string; repo: string; number: string }>();
   const navigate = useNavigate();
+  // Below sm the header has no room for the search input, so it opens as a
+  // full-width row under the tab bar instead.
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  useEffect(() => setMobileSearchOpen(false), [activeTabId]);
 
   // URL is the source of truth - sync URL → Tab
   useEffect(() => {
@@ -113,7 +130,7 @@ export function AppShell() {
   }, [tabs, activeTabId, handleTabSelect, closeTab]);
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden bg-background">
+    <div className="h-dvh flex flex-col overflow-hidden bg-background">
       {/* Native-style Tab Bar */}
       <div className="h-9 bg-muted/40 dark:bg-[#1a1a1a] flex items-center shrink-0 border-b border-border/50">
         {/* Logo with tooltip */}
@@ -147,8 +164,14 @@ export function AppShell() {
           </HoverCard>
         </div>
 
-        {/* Tabs */}
-        <div className="h-full flex-1 flex items-center gap-0.5 overflow-x-auto hide-scrollbar">
+        {/* Tabs: a strip on wide screens, a switcher dropdown on phones */}
+        <MobileTabSwitcher
+          tabs={tabs}
+          activeTab={activeTab}
+          onSelect={handleTabSelect}
+          onClose={closeTab}
+        />
+        <div className="h-full flex-1 hidden sm:flex items-center gap-0.5 overflow-x-auto hide-scrollbar">
           {tabs.map((tab) => (
             <TabItem
               key={tab.id}
@@ -165,10 +188,28 @@ export function AppShell() {
           <div className="hidden sm:block">
             <PRSearchInput />
           </div>
+          <button
+            type="button"
+            onClick={() => setMobileSearchOpen((o) => !o)}
+            aria-label="Search PRs"
+            aria-expanded={mobileSearchOpen}
+            className={cn(
+              "sm:hidden flex items-center justify-center w-9 h-9 rounded-md text-muted-foreground hover:text-foreground hover:bg-foreground/5 transition-colors",
+              mobileSearchOpen && "bg-foreground/10 text-foreground"
+            )}
+          >
+            <Search className="w-4 h-4" />
+          </button>
           <ThemeToggle />
           <UserMenuButton />
         </div>
       </div>
+
+      {mobileSearchOpen && (
+        <div className="sm:hidden px-2 py-2 border-b border-border/50 bg-muted/40 dark:bg-[#1a1a1a] shrink-0 relative z-50">
+          <PRSearchInput className="w-full" autoFocus />
+        </div>
+      )}
 
       {/* Content Area - Only render active tab to avoid parallel data fetching */}
       <div className="flex-1 overflow-hidden relative">
@@ -257,13 +298,7 @@ function TabItem({ tab, isActive, onSelect, onClose }: TabItemProps) {
           : "border-transparent text-muted-foreground hover:text-foreground hover:bg-foreground/5"
       )}
     >
-      {isHome ? (
-        <HomeIcon className="w-3 h-3 shrink-0" />
-      ) : tab.status?.state === "merged" ? (
-        <GitMerge className="w-3 h-3 shrink-0 text-purple-500" />
-      ) : (
-        <TabStatusIndicator status={tab.status} />
-      )}
+      <TabIcon tab={tab} />
 
       <span className="shrink-0">{isHome ? "Home" : tab.label}</span>
       {!isHome && tab.title && (
@@ -287,7 +322,7 @@ function TabItem({ tab, isActive, onSelect, onClose }: TabItemProps) {
             "p-0.5 rounded hover:bg-foreground/10 transition-opacity shrink-0",
             isActive
               ? "opacity-60 hover:opacity-100"
-              : "opacity-0 group-hover:opacity-60 hover:!opacity-100"
+              : "opacity-0 group-hover:opacity-60 hover:!opacity-100 pointer-coarse:opacity-60"
           )}
         >
           <X className="w-3 h-3" />
@@ -295,6 +330,113 @@ function TabItem({ tab, isActive, onSelect, onClose }: TabItemProps) {
       )}
     </div>
   );
+}
+
+// ============================================================================
+// Mobile Tab Switcher
+// ============================================================================
+
+interface MobileTabSwitcherProps {
+  tabs: Tab[];
+  activeTab: Tab | undefined;
+  onSelect: (tab: Tab) => void;
+  onClose: (tabId: string) => void;
+}
+
+function MobileTabSwitcher({
+  tabs,
+  activeTab,
+  onSelect,
+  onClose,
+}: MobileTabSwitcherProps) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button
+          type="button"
+          className="sm:hidden h-full flex-1 min-w-0 flex items-center gap-1.5 px-1 text-xs font-medium text-foreground"
+        >
+          {activeTab && <TabIcon tab={activeTab} />}
+          <span className="shrink-0">
+            {!activeTab || activeTab.type === "home" ? "Home" : activeTab.label}
+          </span>
+          {activeTab?.type === "pr-review" && activeTab.title && (
+            <span className="min-w-0 truncate text-[11px] font-normal text-muted-foreground">
+              {activeTab.title}
+            </span>
+          )}
+          {tabs.length > 1 && (
+            <span className="shrink-0 inline-flex items-center justify-center h-4 min-w-4 px-1 rounded bg-foreground/10 text-[10px] tabular-nums text-muted-foreground">
+              {tabs.length}
+            </span>
+          )}
+          <ChevronDown className="w-3.5 h-3.5 shrink-0 text-muted-foreground" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="start"
+        className="w-[calc(100vw-1rem)] max-w-sm"
+      >
+        {tabs.map((tab) => {
+          const isHome = tab.type === "home";
+          const isActive = tab.id === activeTab?.id;
+          return (
+            <DropdownMenuItem
+              key={tab.id}
+              onSelect={() => onSelect(tab)}
+              className={cn("gap-2 py-2 pr-1", isActive && "bg-accent/60")}
+            >
+              <TabIcon tab={tab} />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-baseline gap-1.5">
+                  <span className="shrink-0 text-xs font-medium">
+                    {isHome ? "Home" : tab.label}
+                  </span>
+                  {!isHome && tab.repo && (
+                    <span className="min-w-0 truncate text-[10px] text-muted-foreground">
+                      {tab.owner}/{tab.repo}
+                    </span>
+                  )}
+                </span>
+                {!isHome && tab.title && (
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {tab.title}
+                  </span>
+                )}
+              </span>
+              {!isHome && (
+                <button
+                  type="button"
+                  aria-label={`Close ${tab.label}`}
+                  // Radix selects items from pointerup as well as click; stop
+                  // both so closing doesn't also switch tabs, and the menu
+                  // stays open to close several in a row.
+                  onPointerDown={(e) => e.stopPropagation()}
+                  onPointerUp={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    onClose(tab.id);
+                  }}
+                  className="shrink-0 p-2 rounded text-muted-foreground hover:text-foreground hover:bg-foreground/10"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </DropdownMenuItem>
+          );
+        })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+function TabIcon({ tab }: { tab: Tab }) {
+  if (tab.type === "home") return <HomeIcon className="w-3 h-3 shrink-0" />;
+  if (tab.status?.state === "merged") {
+    return <GitMerge className="w-3 h-3 shrink-0 text-purple-500" />;
+  }
+  return <TabStatusIndicator status={tab.status} />;
 }
 
 // ============================================================================

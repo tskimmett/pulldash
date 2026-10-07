@@ -308,7 +308,7 @@ export const CommandPalette = memo(function CommandPalette({
         />
 
         {/* Command Dialog */}
-        <div className="absolute left-1/2 top-[20%] -translate-x-1/2 w-full max-w-xl">
+        <div className="absolute left-1/2 top-2 sm:top-[20%] -translate-x-1/2 w-[calc(100%-1rem)] max-w-xl">
           <Command
             className="rounded-xl border border-border bg-card shadow-2xl overflow-hidden"
             shouldFilter={false}
@@ -338,7 +338,7 @@ export const CommandPalette = memo(function CommandPalette({
 
             <div
               ref={listRef}
-              className="max-h-[400px] overflow-y-auto p-2 themed-scrollbar"
+              className="max-h-[min(400px,50dvh)] overflow-y-auto p-2 themed-scrollbar"
             >
               {filteredFiles.length === 0 ? (
                 <div className="py-8 text-center text-sm text-muted-foreground">
@@ -378,7 +378,10 @@ export const CommandPalette = memo(function CommandPalette({
               )}
             </div>
 
-            <div className="border-t border-border px-4 py-2 flex items-center justify-between text-xs text-muted-foreground">
+            <div
+              data-keyboard-hint
+              className="border-t border-border px-4 py-2 hidden sm:flex items-center justify-between text-xs text-muted-foreground"
+            >
               <div className="flex items-center gap-4">
                 <span className="flex items-center gap-1.5">
                   <KeycapGroup keys={["up", "down"]} size="xs" />
@@ -439,7 +442,7 @@ const FileItem = memo(function FileItem({
         <HighlightedText
           text={fileName}
           className={cn(
-            "text-sm font-medium transition-colors",
+            "text-sm font-medium transition-colors truncate min-w-0",
             isViewed
               ? "text-muted-foreground group-data-[selected=true]:text-foreground"
               : "text-foreground"

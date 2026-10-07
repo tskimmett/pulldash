@@ -228,7 +228,7 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
         className="flex-1 min-h-0 overflow-auto diff-scrollbar"
       >
         <div
-          className="relative mx-4 my-4"
+          className="relative mx-2 my-2 md:mx-4 md:my-4"
           style={{ height: virtualizer.getTotalSize() }}
         >
           {virtualizer.getVirtualItems().map((item) => {
@@ -309,7 +309,9 @@ function FileBar({
         aria-label={`${isViewed ? "Unmark" : "Mark"} ${file.filename} as viewed`}
       >
         <Check className="w-3.5 h-3.5" />
-        {isViewed ? "Viewed" : "Mark as viewed"}
+        <span className="hidden sm:inline">
+          {isViewed ? "Viewed" : "Mark as viewed"}
+        </span>
       </button>
     </div>
   );
@@ -558,7 +560,7 @@ function AllFileLine({
       </span>
       <span
         data-find-code
-        className="flex-1 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-5 pr-6 pl-2"
+        className="flex-1 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-5 pr-6 pointer-coarse:pr-2 pl-2"
       >
         {html === undefined ? (
           line.content || " "
