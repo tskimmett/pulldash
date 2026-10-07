@@ -58,6 +58,7 @@ import { DiffRangeBanner, DiffRangeButton } from "./diff-range-button";
 import { SemanticLayerBar, SemanticSidebar } from "./semantic-panel";
 import { layerFilesInOrder } from "@/semantic/layer-files";
 import { FileTree } from "./file-tree";
+import { DiffStat } from "./file-tree-row";
 import {
   SidebarResizeHandle,
   useSidebarWidth,
@@ -606,10 +607,19 @@ const FilePanel = memo(function FilePanel({
   const hideTestFiles = usePRReviewSelector((s) => s.hideTestFiles);
   const showOverview = usePRReviewSelector((s) => s.showOverview);
 
-  const testFileCount = useMemo(
-    () => files.reduce((n, f) => n + (isTestFile(f.filename) ? 1 : 0), 0),
-    [files]
-  );
+  const testFileStats = useMemo(() => {
+    const stats = { count: 0, additions: 0, deletions: 0 };
+    for (const f of files) {
+      if (isTestFile(f.filename)) {
+        stats.count++;
+        continue;
+      }
+      stats.additions += f.additions ?? 0;
+      stats.deletions += f.deletions ?? 0;
+    }
+    return stats;
+  }, [files]);
+  const testFileCount = testFileStats.count;
   const visibleFiles = useMemo(
     () =>
       hideTestFiles && testFileCount > 0
@@ -738,8 +748,14 @@ const FilePanel = memo(function FilePanel({
       </div>
 
       {hideTestFiles && testFileCount > 0 && (
-        <div className="mx-2 mb-1 px-2 text-[11px] text-muted-foreground">
-          {testFileCount} test file{testFileCount === 1 ? "" : "s"} hidden
+        <div className="mx-2 mb-1 px-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+          <span>
+            {testFileCount} test file{testFileCount === 1 ? "" : "s"} hidden
+          </span>
+          <DiffStat
+            additions={testFileStats.additions}
+            deletions={testFileStats.deletions}
+          />
         </div>
       )}
 
