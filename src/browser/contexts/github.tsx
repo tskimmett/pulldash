@@ -466,6 +466,10 @@ function rowKey(item: PRSearchResult): string {
   return match ? stackKey(match[1], match[2], item.number) : String(item.id);
 }
 
+const nodeStackKey = (node: StackNode) =>
+  stackKey(node.owner, node.repo, node.number);
+const stackCacheKey = (key: string) => `stack:${key}`;
+
 // ============================================================================
 // Cache Keys
 // ============================================================================
@@ -2903,7 +2907,20 @@ function createGitHubStore() {
   // listed, so the list can show each stack whole.
   async function resolveListStacks(rows: PRSearchResult[]) {
     const seeds = rows.flatMap((r) => (r.stackNode ? [r.stackNode] : []));
-    const { nodes, placements } = await discoverStacks(seeds, probeStacks);
+    const discovery = await discoverStacks(seeds, probeStacks);
+    const { nodes, placements } = discovery;
+
+    // Opening a listed PR then shows its stack without another discovery
+    for (const key of new Set([
+      ...seeds.map(nodeStackKey),
+      ...placements.keys(),
+    ])) {
+      cache.set(
+        stackCacheKey(key),
+        { stack: stackFromDiscovery(discovery, key) },
+        true
+      );
+    }
 
     const listed = new Set(rows.map(rowKey));
     const missing = new Set<string>();
@@ -2939,11 +2956,12 @@ function createGitHubStore() {
   ): Promise<PRStack | null> {
     if (!gql) throw new Error("Not initialized");
     const key = stackKey(owner, repo, number);
-    const cacheKey = `stack:${key}`;
+    const cacheKey = stackCacheKey(key);
 
-    // Wrapped so "not stacked" is a cache hit too
-    const cached = cache.get<{ stack: PRStack | null }>(cacheKey);
-    if (cached) return cached.stack;
+    // Wrapped so "not stacked" is a cache hit too. getStale keeps the old
+    // entry in memory so getCachedPRStack can render it while this refetches.
+    const cached = cache.getStale<{ stack: PRStack | null }>(cacheKey);
+    if (cached && !cached.isStale) return cached.data.stack;
     const pending = cache.getPending<PRStack | null>(cacheKey);
     if (pending) return pending;
 
@@ -2961,12 +2979,32 @@ function createGitHubStore() {
         if (!pr) return null;
         const discovery = await discoverStacks([toStackNode(pr)], probeStacks);
         const stack = stackFromDiscovery(discovery, key);
-        cache.set(cacheKey, { stack });
+        cache.set(cacheKey, { stack }, true);
         return stack;
       });
 
     cache.setPending(cacheKey, promise);
     return promise;
+  }
+
+  /** Last known stack, however old: undefined when never resolved. */
+  function getCachedPRStack(
+    owner: string,
+    repo: string,
+    number: number
+  ): PRStack | null | undefined {
+    const key = stackCacheKey(stackKey(owner, repo, number));
+    return cache.getStale<{ stack: PRStack | null }>(key)?.data.stack;
+  }
+
+  /** Like getCachedPRStack, but also checks durable storage. */
+  async function peekPRStack(
+    owner: string,
+    repo: string,
+    number: number
+  ): Promise<PRStack | null | undefined> {
+    const key = stackCacheKey(stackKey(owner, repo, number));
+    return (await cache.peek<{ stack: PRStack | null }>(key))?.data.stack;
   }
 
   interface ReviewThreadsResult {
@@ -3468,6 +3506,8 @@ function createGitHubStore() {
     graphql,
     getPREnrichment,
     getPRStack,
+    getCachedPRStack,
+    peekPRStack,
     getReviewThreads,
     resolveThread,
     unresolveThread,
@@ -3623,28 +3663,42 @@ export function usePRStack(
 ): PRStack | null {
   const store = useGitHubStore();
   const ready = useGitHubSelector((s) => s.ready);
-  const [stack, setStack] = useState<{ key: string; stack: PRStack } | null>(
-    null
-  );
+  const [stack, setStack] = useState<{
+    key: string;
+    stack: PRStack | null;
+  } | null>(null);
   const key = stackKey(owner, repo, number);
 
   useEffect(() => {
-    if (!ready) return;
     let cancelled = false;
-    store
-      .getPRStack(owner, repo, number)
-      .then((result) => {
-        if (!cancelled) setStack(result ? { key, stack: result } : null);
-      })
-      .catch(() => {
-        // Stacks are a nicety; the PR works without them
+    let resolved = false;
+    // Durable copy from a previous session, shown until the fetch lands
+    if (store.getCachedPRStack(owner, repo, number) === undefined) {
+      void store.peekPRStack(owner, repo, number).then((cached) => {
+        if (!cancelled && !resolved && cached !== undefined) {
+          setStack({ key, stack: cached });
+        }
       });
+    }
+    if (ready) {
+      store
+        .getPRStack(owner, repo, number)
+        .then((result) => {
+          resolved = true;
+          if (!cancelled) setStack({ key, stack: result });
+        })
+        .catch(() => {
+          // Stacks are a nicety; the PR works without them
+        });
+    }
     return () => {
       cancelled = true;
     };
   }, [ready, store, owner, repo, number, key]);
 
-  return stack?.key === key ? stack.stack : null;
+  if (stack?.key === key) return stack.stack;
+  // Seeded by the PR list or an earlier visit: render without waiting
+  return store.getCachedPRStack(owner, repo, number) ?? null;
 }
 
 export type { PRStack };

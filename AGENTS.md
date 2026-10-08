@@ -15,7 +15,9 @@ _NEVER_ use browser tools - they will not work with this project.
 
 ## Changelog
 
-Any user-visible feature or change must add an entry (newest first) to `CHANGELOG` in `src/browser/lib/changelog.ts`. It powers the "What's new" dialog; users see a dot until they open it. Use a unique `id` like `YYYY-MM-DD-slug`.
+New user-visible features and notable behavior changes must add an entry (newest first) to `CHANGELOG` in `src/browser/lib/changelog.ts`. It powers the "What's new" dialog; users see a dot until they open it. Use a unique `id` like `YYYY-MM-DD-slug`.
+
+Skip it for performance fixes, bug fixes, and polish to existing features.
 
 ## Testing
 
