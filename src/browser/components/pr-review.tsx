@@ -3138,8 +3138,8 @@ const SkipBlockRow = memo(function SkipBlockRow({
       <div className="flex-1 flex items-center min-w-0">
         <span
           className={cn(
-            "pl-2 italic opacity-50 truncate",
-            isFocused && "opacity-70"
+            "pl-2 italic opacity-75 truncate",
+            isFocused && "opacity-90"
           )}
         >
           {sizeKnown
