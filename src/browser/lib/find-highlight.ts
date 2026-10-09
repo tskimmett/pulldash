@@ -44,17 +44,41 @@ export function useFindHighlights(
       frame = 0;
       const matchRanges: Range[] = [];
       const activeRanges: Range[] = [];
-      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        const parent = node.parentElement;
-        if (!parent?.closest("[data-find-code]")) continue;
-        const target = parent.closest("[data-find-active]")
+      for (const code of container.querySelectorAll("[data-find-code]")) {
+        if (code.parentElement?.closest("[data-find-code]")) continue;
+        const target = code.closest("[data-find-active]")
           ? activeRanges
           : matchRanges;
-        for (const at of findOccurrences(node.textContent ?? "", needle)) {
+        // Syntax highlighting splits a line into many text nodes, so match
+        // against the concatenated text and map offsets back to nodes.
+        const nodes: Text[] = [];
+        const starts: number[] = [];
+        let text = "";
+        const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          nodes.push(node as Text);
+          starts.push(text.length);
+          text += node.textContent ?? "";
+        }
+        let index = 0;
+        const locate = (offset: number, isEnd: boolean) => {
+          while (
+            index < nodes.length - 1 &&
+            (isEnd
+              ? offset > starts[index]! + nodes[index]!.length
+              : offset >= starts[index]! + nodes[index]!.length)
+          ) {
+            index++;
+          }
+          return [nodes[index]!, offset - starts[index]!] as const;
+        };
+        for (const at of findOccurrences(text, needle)) {
+          index = 0;
+          const [startNode, startOffset] = locate(at, false);
+          const [endNode, endOffset] = locate(at + needle.length, true);
           const range = new Range();
-          range.setStart(node, at);
-          range.setEnd(node, at + needle.length);
+          range.setStart(startNode, startOffset);
+          range.setEnd(endNode, endOffset);
           target.push(range);
         }
       }
