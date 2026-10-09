@@ -935,10 +935,33 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
 
   const github = useGitHubStore();
 
-  const handleClick = () => {
-    if (repoInfo) {
-      onSelect(repoInfo.owner, repoInfo.repo, pr.number, pr.title);
+  const handleClick = (e: React.MouseEvent) => {
+    if (!repoInfo) return;
+    if (e.metaKey || e.ctrlKey) {
+      openInBrowserTab();
+      return;
     }
+    onSelect(repoInfo.owner, repoInfo.repo, pr.number, pr.title);
+  };
+
+  const openInBrowserTab = () => {
+    if (!repoInfo) return;
+    window.open(
+      `/${repoInfo.owner}/${repoInfo.repo}/pull/${pr.number}`,
+      "_blank",
+      "noopener"
+    );
+  };
+
+  const handleAuxClick = (e: React.MouseEvent) => {
+    if (e.button !== 1) return;
+    e.preventDefault();
+    openInBrowserTab();
+  };
+
+  // Prevent middle-click autoscroll from taking over
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 1) e.preventDefault();
   };
 
   // Start loading the PR as soon as it's likely to be opened
@@ -1263,6 +1286,8 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
   return (
     <button
       onClick={handleClick}
+      onAuxClick={handleAuxClick}
+      onMouseDown={handleMouseDown}
       onMouseEnter={handlePrefetch}
       onFocus={handlePrefetch}
       className="w-full flex items-start gap-2 sm:gap-3 px-2 sm:px-4 py-3 hover:bg-muted/50 transition-colors text-left"
