@@ -835,7 +835,8 @@ export const PROverview = memo(function PROverview() {
   // Re-requested reviewers render as pending, so drop their older review here
   const sidebarReviews = getLatestReviewsByUser(
     reviews,
-    (pr.requested_reviewers ?? []).map((r) => r.login)
+    (pr.requested_reviewers ?? []).map((r) => r.login),
+    true
   );
   const hasRequestedReviewers = (pr.requested_reviewers?.length ?? 0) > 0;
   const canMergePR = canMerge(pr, checkStatus);

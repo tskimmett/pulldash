@@ -35,3 +35,16 @@ test("omits users with a pending re-request", () => {
     2,
   ]);
 });
+
+test("keeps dismissed reviewers listed when asked", () => {
+  const reviews = [
+    review(1, "dave", "APPROVED", 1),
+    review(2, "dave", "DISMISSED", 2),
+    review(3, "erin", "DISMISSED", 3),
+    review(4, "erin", "APPROVED", 4),
+  ];
+
+  expect(getLatestReviewsByUser(reviews, [], true).map((r) => r.id)).toEqual([
+    2, 4,
+  ]);
+});
