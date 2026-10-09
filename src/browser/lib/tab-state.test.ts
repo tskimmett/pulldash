@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   loadTabState,
   saveTabState,
+  withOpenedTab,
   withTabTitle,
   type TabState,
 } from "./tab-state";
@@ -81,4 +82,23 @@ test("invalid stored state falls back and unavailable storage does not prevent t
   const state = loadTabState(storage);
   expect(state.tabs.map((tab) => tab.id)).toEqual(["home"]);
   expect(() => saveTabState(state, storage)).not.toThrow();
+});
+
+test("opening a tab past the limit drops the oldest PR tab but keeps home", () => {
+  let state = loadTabState(createStorage());
+  for (let n = 1; n <= 6; n++) {
+    state = withOpenedTab(state, { ...prTab, id: `pr-${n}`, number: n });
+  }
+  expect(state.tabs.map((tab) => tab.id)).toEqual([
+    "home",
+    "pr-2",
+    "pr-3",
+    "pr-4",
+    "pr-5",
+    "pr-6",
+  ]);
+  expect(state.activeTabId).toBe("pr-6");
+  const reopened = withOpenedTab(state, { ...prTab, id: "pr-3", number: 3 });
+  expect(reopened.tabs).toBe(state.tabs);
+  expect(reopened.activeTabId).toBe("pr-3");
 });

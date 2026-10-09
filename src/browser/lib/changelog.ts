@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-10-09-tab-limit",
+    date: "2026-10-09",
+    title: "Tab limit",
+    description:
+      "Up to 5 PR tabs stay open. Opening another closes the oldest one.",
+  },
+  {
     id: "2026-10-06-pr-stack-nav",
     date: "2026-10-06",
     title: "PR stack navigation",

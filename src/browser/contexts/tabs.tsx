@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom";
 import {
   loadTabState,
   saveTabState,
+  withOpenedTab,
   withTabTitle,
   type Tab,
   type TabStatus,
@@ -73,17 +74,7 @@ export function TabProvider({ children }: TabProviderProps) {
       const id = tabInput.id || `tab-${Date.now()}`;
       const tab: Tab = { ...tabInput, id };
 
-      setState((prev) => {
-        // Check if tab already exists
-        const existing = prev.tabs.find((t) => t.id === id);
-        if (existing) {
-          return { ...prev, activeTabId: id };
-        }
-        return {
-          tabs: [...prev.tabs, tab],
-          activeTabId: id,
-        };
-      });
+      setState((prev) => withOpenedTab(prev, tab));
 
       return id;
     },

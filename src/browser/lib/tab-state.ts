@@ -27,6 +27,9 @@ export interface TabState {
 
 const STORAGE_KEY = "pulldash_tabs";
 
+// Opening a tab beyond this many closeable tabs drops the oldest one.
+export const MAX_OPEN_TABS = 5;
+
 const HOME_TAB: Tab = {
   id: "home",
   type: "home",
@@ -72,6 +75,22 @@ export function saveTabState(
   } catch {
     // Keep tabs usable when storage is unavailable or full.
   }
+}
+
+export function withOpenedTab(state: TabState, tab: Tab): TabState {
+  if (state.tabs.some((t) => t.id === tab.id)) {
+    return { ...state, activeTabId: tab.id };
+  }
+  const tabs = [...state.tabs, tab];
+  let closeable = tabs.filter((t) => t.id !== "home").length;
+  while (closeable > MAX_OPEN_TABS) {
+    tabs.splice(
+      tabs.findIndex((t) => t.id !== "home"),
+      1
+    );
+    closeable--;
+  }
+  return { tabs, activeTabId: tab.id };
 }
 
 export function withTabTitle(
