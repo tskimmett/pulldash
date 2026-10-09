@@ -74,7 +74,14 @@ import {
   type ReviewThread,
   type PullRequest,
   type AutoMergeState,
+  type UpdateBranchMethod,
 } from "../contexts/github";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "../ui/dropdown-menu";
 import { useCanWrite } from "../contexts/auth";
 import { StackNav } from "./pr-stack-nav";
 
@@ -276,9 +283,10 @@ export const PROverview = memo(function PROverview() {
     [handleAddComment]
   );
 
-  const handleUpdateBranch = useCallback(async () => {
-    await store.updateBranch();
-  }, [store]);
+  const handleUpdateBranch = useCallback(
+    (method: UpdateBranchMethod) => store.updateBranch(method),
+    [store]
+  );
 
   // Fetch collaborators when picker is opened
   const fetchCollaborators = useCallback(async () => {
@@ -3071,6 +3079,7 @@ function MergeSection({
     state: string;
     mergeable: boolean | null;
     mergeable_state?: string;
+    base: { ref: string };
     requested_reviewers?: Array<{ login: string; avatar_url: string }> | null;
   };
   checkStatus: "success" | "failure" | "pending" | "action_required";
@@ -3088,7 +3097,7 @@ function MergeSection({
   onSetAutoMerge: (enabled: boolean) => void;
   onSetMergeMethod: (method: "merge" | "squash" | "rebase") => void;
   onToggleMergeOptions: () => void;
-  onUpdateBranch: () => void;
+  onUpdateBranch: (method: UpdateBranchMethod) => Promise<void>;
   markingReady?: boolean;
   onMarkReadyForReview?: () => void;
   workflowRunsAwaitingApproval?: Array<{
@@ -3116,23 +3125,26 @@ function MergeSection({
   );
   const [updateBranchSuccess, setUpdateBranchSuccess] = useState(false);
 
-  const handleUpdateBranch = useCallback(async () => {
-    setUpdatingBranch(true);
-    setUpdateBranchError(null);
-    setUpdateBranchSuccess(false);
-    try {
-      await onUpdateBranch();
-      setUpdateBranchSuccess(true);
-      // Clear success message after 3 seconds
-      setTimeout(() => setUpdateBranchSuccess(false), 3000);
-    } catch (error) {
-      setUpdateBranchError(
-        error instanceof Error ? error.message : "Failed to update branch"
-      );
-    } finally {
-      setUpdatingBranch(false);
-    }
-  }, [onUpdateBranch]);
+  const handleUpdateBranch = useCallback(
+    async (method: UpdateBranchMethod) => {
+      setUpdatingBranch(true);
+      setUpdateBranchError(null);
+      setUpdateBranchSuccess(false);
+      try {
+        await onUpdateBranch(method);
+        setUpdateBranchSuccess(true);
+        // Clear success message after 3 seconds
+        setTimeout(() => setUpdateBranchSuccess(false), 3000);
+      } catch (error) {
+        setUpdateBranchError(
+          error instanceof Error ? error.message : "Failed to update branch"
+        );
+      } finally {
+        setUpdatingBranch(false);
+      }
+    },
+    [onUpdateBranch]
+  );
 
   const mergeDescriptions: Record<"merge" | "squash" | "rebase", string> = {
     merge:
@@ -3214,6 +3226,13 @@ function MergeSection({
       : pr.mergeable === null
         ? "pending"
         : "success";
+
+  // Required checks demand an up-to-date branch: GitHub reports "behind".
+  // Otherwise only viewerCanUpdateBranch reveals that the base moved on.
+  const behindBlocksMerge = pr.mergeable_state === "behind";
+  const branchBehind =
+    conflictStatus === "success" &&
+    (behindBlocksMerge || !!autoMerge?.canUpdateBranch);
 
   // Overall border color based on status
   const overallStatus =
@@ -3492,7 +3511,14 @@ function MergeSection({
       {/* Conflicts Section */}
       <div className="border-b border-border">
         <div className="flex flex-wrap items-center gap-3 p-4">
-          {conflictStatus === "success" ? (
+          {branchBehind ? (
+            <AlertCircle
+              className={cn(
+                "w-5 h-5 shrink-0",
+                behindBlocksMerge ? "text-yellow-500" : "text-muted-foreground"
+              )}
+            />
+          ) : conflictStatus === "success" ? (
             <CheckCircle2 className="w-5 h-5 text-green-500 shrink-0" />
           ) : conflictStatus === "failure" ? (
             <XCircle className="w-5 h-5 text-red-500 shrink-0" />
@@ -3501,11 +3527,13 @@ function MergeSection({
           )}
           <div className="flex-1 min-w-[180px]">
             <p className="font-medium text-sm">
-              {conflictStatus === "success"
-                ? "No conflicts with base branch"
-                : conflictStatus === "failure"
-                  ? "This branch has conflicts"
-                  : "Checking for conflicts..."}
+              {branchBehind
+                ? "This branch is out-of-date with the base branch"
+                : conflictStatus === "success"
+                  ? "No conflicts with base branch"
+                  : conflictStatus === "failure"
+                    ? "This branch has conflicts"
+                    : "Checking for conflicts..."}
             </p>
             <p className="text-xs text-muted-foreground">
               {updateBranchSuccess ? (
@@ -3514,6 +3542,12 @@ function MergeSection({
                 </span>
               ) : updateBranchError ? (
                 <span className="text-red-500">{updateBranchError}</span>
+              ) : branchBehind ? (
+                <>
+                  Merge the latest changes from{" "}
+                  <code className="font-mono">{pr.base.ref}</code> into this
+                  branch.
+                </>
               ) : conflictStatus === "success" ? (
                 "Merging can be performed automatically."
               ) : conflictStatus === "failure" ? (
@@ -3523,22 +3557,49 @@ function MergeSection({
               )}
             </p>
           </div>
-          {/* Only show Update branch when the branch is behind the base */}
-          {conflictStatus === "success" && pr.mergeable_state === "behind" && (
-            <button
-              onClick={handleUpdateBranch}
-              disabled={updatingBranch}
-              className="w-full flex items-center justify-center gap-1 px-3 py-1.5 border border-border rounded-md hover:bg-muted transition-colors text-sm font-medium disabled:opacity-50"
-            >
-              {updatingBranch ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                <>
-                  Update branch
+          {branchBehind && autoMerge?.canUpdateBranch && (
+            <div className="flex shrink-0 border border-border rounded-md text-sm font-medium">
+              <button
+                onClick={() => handleUpdateBranch("merge")}
+                disabled={updatingBranch}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-l-md hover:bg-muted transition-colors disabled:opacity-50"
+              >
+                {updatingBranch && <Loader2 className="w-4 h-4 animate-spin" />}
+                Update branch
+              </button>
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  disabled={updatingBranch}
+                  aria-label="Choose update method"
+                  className="px-1.5 border-l border-border rounded-r-md hover:bg-muted transition-colors disabled:opacity-50"
+                >
                   <ChevronDown className="w-4 h-4" />
-                </>
-              )}
-            </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-72">
+                  <DropdownMenuItem
+                    onSelect={() => handleUpdateBranch("merge")}
+                    className="flex-col items-start gap-0.5"
+                  >
+                    <span className="font-medium">
+                      Update with merge commit
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      Merge {pr.base.ref} into this branch.
+                    </span>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    onSelect={() => handleUpdateBranch("rebase")}
+                    className="flex-col items-start gap-0.5"
+                  >
+                    <span className="font-medium">Update with rebase</span>
+                    <span className="text-xs text-muted-foreground">
+                      Rebase this branch onto {pr.base.ref}. Rewrites its
+                      history.
+                    </span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           )}
         </div>
       </div>

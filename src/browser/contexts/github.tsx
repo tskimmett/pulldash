@@ -154,7 +154,11 @@ export interface AutoMergeState {
   canDisable: boolean;
   /** Set when auto-merge is currently scheduled. */
   request: { mergeMethod: MergeMethod; enabledBy: string | null } | null;
+  /** Head is behind the base and the viewer may merge or rebase it in. */
+  canUpdateBranch: boolean;
 }
+
+export type UpdateBranchMethod = "merge" | "rebase";
 
 export interface CheckStatus {
   checks: "pending" | "success" | "failure" | "none" | "action_required";
@@ -2006,6 +2010,7 @@ function createGitHubStore() {
           id: string;
           viewerCanEnableAutoMerge: boolean;
           viewerCanDisableAutoMerge: boolean;
+          viewerCanUpdateBranch: boolean;
           autoMergeRequest: {
             mergeMethod: "MERGE" | "SQUASH" | "REBASE";
             enabledBy: { login: string } | null;
@@ -2019,6 +2024,7 @@ function createGitHubStore() {
             id
             viewerCanEnableAutoMerge
             viewerCanDisableAutoMerge
+            viewerCanUpdateBranch
             autoMergeRequest {
               mergeMethod
               enabledBy { login }
@@ -2039,6 +2045,7 @@ function createGitHubStore() {
         mergeMethod: request.mergeMethod.toLowerCase() as MergeMethod,
         enabledBy: request.enabledBy?.login ?? null,
       },
+      canUpdateBranch: pr.viewerCanUpdateBranch,
     };
   }
 
@@ -2346,20 +2353,26 @@ function createGitHubStore() {
     cache.invalidate(`pr:${owner}/${repo}/${number}`);
   }
 
-  async function updateBranch(owner: string, repo: string, number: number) {
-    if (!octokit) throw new Error("Not initialized");
-
-    const { data } = await octokit.request(
-      "PUT /repos/{owner}/{repo}/pulls/{pull_number}/update-branch",
+  async function updateBranch(
+    owner: string,
+    repo: string,
+    number: number,
+    pullRequestId: string,
+    headSha: string,
+    method: UpdateBranchMethod
+  ): Promise<void> {
+    if (!gql) throw new Error("Not initialized");
+    await gql.query(
+      `mutation ($input: UpdatePullRequestBranchInput!) { updatePullRequestBranch(input: $input) { clientMutationId } }`,
       {
-        owner,
-        repo,
-        pull_number: number,
+        input: {
+          pullRequestId,
+          expectedHeadOid: headSha,
+          updateMethod: method.toUpperCase(),
+        },
       }
     );
-
     cache.invalidate(`pr:${owner}/${repo}/${number}`);
-    return data;
   }
 
   // Reaction types: +1, -1, laugh, hooray, confused, heart, rocket, eyes

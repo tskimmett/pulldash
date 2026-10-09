@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-10-09-update-branch",
+    date: "2026-10-09",
+    title: "Update branch",
+    description:
+      "When a PR falls behind its base branch, update it with a merge commit or a rebase from the merge box.",
+  },
+  {
     id: "2026-10-09-tab-limit",
     date: "2026-10-09",
     title: "Tab limit",

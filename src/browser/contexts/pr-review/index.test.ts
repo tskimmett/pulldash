@@ -164,6 +164,7 @@ test("setAutoMerge schedules with the selected method and stores the result", as
       canEnable: !request,
       canDisable: !!request,
       request,
+      canUpdateBranch: false,
     }),
     enableAutoMerge: async (id: string, method: string) => {
       calls.push(`enable:${id}:${method}`);
@@ -192,6 +193,45 @@ test("setAutoMerge schedules with the selected method and stores the result", as
   await store.setAutoMerge(false);
   expect(store.getSnapshot().autoMerge?.request).toBeNull();
   expect(calls).toEqual(["enable:PR_1:squash", "disable:PR_1"]);
+});
+
+test("updateBranch updates with the chosen method and clears the behind state", async () => {
+  const calls: string[] = [];
+  const github = {
+    ...createMockGitHubStore(),
+    getAutoMergeState: async () => ({
+      pullRequestId: "PR_1",
+      canEnable: false,
+      canDisable: false,
+      request: null,
+      canUpdateBranch: true,
+    }),
+    updateBranch: async (
+      _owner: string,
+      _repo: string,
+      _number: number,
+      id: string,
+      _headSha: string,
+      method: string
+    ) => {
+      calls.push(`${id}:${method}`);
+    },
+  } as unknown as GitHubStore;
+  const store = new PRReviewStore(github, {
+    pr: createMockPR(),
+    files: [],
+    comments: [],
+    owner: "test",
+    repo: "repo",
+    viewerPermission: "WRITE",
+  });
+
+  await store.loadPRData();
+  expect(store.getSnapshot().autoMerge?.canUpdateBranch).toBe(true);
+
+  await store.updateBranch("rebase");
+  expect(calls).toEqual(["PR_1:rebase"]);
+  expect(store.getSnapshot().autoMerge?.canUpdateBranch).toBe(false);
 });
 
 test("branch actions never run for fork PRs", async () => {

@@ -54,6 +54,7 @@ import {
   type TimelineEvent,
   type ReviewThread,
   type AutoMergeState,
+  type UpdateBranchMethod,
   type MergeMethod,
 } from "@/browser/contexts/github";
 
@@ -3724,26 +3725,29 @@ export class PRReviewStore {
   };
 
   /**
-   * Update the branch (merge base into head)
+   * Bring the head branch up to date with the base by merging or rebasing.
+   * Throws so the caller can show GitHub's reason on failure.
    */
-  updateBranch = async (): Promise<boolean> => {
-    const { owner, repo, pr } = this.state;
+  updateBranch = async (method: UpdateBranchMethod): Promise<void> => {
+    const { owner, repo, pr, autoMerge } = this.state;
+    if (!autoMerge) throw new Error("Pull request state not loaded");
 
-    try {
-      await this.github.updateBranch(owner, repo, pr.number);
+    await this.github.updateBranch(
+      owner,
+      repo,
+      pr.number,
+      autoMerge.pullRequestId,
+      pr.head.sha,
+      method
+    );
+    // GitHub applies the update asynchronously, so a re-read can still
+    // report the branch as behind; trust the mutation instead.
+    this.set({ autoMerge: { ...autoMerge, canUpdateBranch: false } });
 
-      // Invalidate cache BEFORE refetch so we get fresh data
-      this.github.invalidateCache(`pr:${owner}/${repo}/${pr.number}`);
-
-      // Refetch PR to get updated state (branch update changes many fields)
-      const updatedPR = await this.github.getPR(owner, repo, pr.number);
-      this.set({ pr: updatedPR });
-
-      return true;
-    } catch (e) {
-      console.error("Failed to update branch:", e);
-      return false;
-    }
+    const updatedPR = await this.github
+      .getPR(owner, repo, pr.number)
+      .catch(() => null);
+    if (updatedPR) this.set({ pr: updatedPR });
   };
 
   // ---------------------------------------------------------------------------
