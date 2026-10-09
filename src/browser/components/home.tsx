@@ -1322,6 +1322,14 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
           </span>
           <CIStatusBadge />
           <ReviewStatusBadge />
+          {pr.autoMerge && (
+            <span
+              className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 shrink-0"
+              title="Auto-merge is enabled"
+            >
+              AUTO-MERGE
+            </span>
+          )}
           {pr.hasNewChanges && (
             <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-blue-500/20 text-blue-400 border border-blue-500/30 shrink-0">
               NEW

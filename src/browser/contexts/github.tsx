@@ -128,6 +128,7 @@ export interface PRSearchResult {
   }>;
   // Review status
   reviewDecision?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  autoMerge?: boolean;
   latestReviews?: Array<{
     login: string;
     avatarUrl: string;
@@ -182,6 +183,7 @@ export interface PREnrichment {
   }>;
   // Review status
   reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  autoMerge: boolean;
   latestReviews: Array<{
     login: string;
     avatarUrl: string;
@@ -269,6 +271,9 @@ const ENRICHMENT_FIELDS = `
     additions
     deletions
     reviewDecision
+    autoMergeRequest {
+      enabledAt
+    }
     latestOpinionatedReviews(first: 10) {
       nodes {
         author {
@@ -326,6 +331,7 @@ type GqlEnrichedPR = GqlStackNode & {
   additions: number;
   deletions: number;
   reviewDecision: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | null;
+  autoMergeRequest: { enabledAt: string } | null;
   latestOpinionatedReviews: {
     nodes: Array<{
       author: { login: string; avatarUrl: string } | null;
@@ -440,6 +446,7 @@ function parseEnrichment(result: GqlEnrichedPR): PREnrichment {
     ciSummary,
     ciChecks,
     reviewDecision: result.reviewDecision,
+    autoMerge: !!result.autoMergeRequest,
     latestReviews,
     stackNode: toStackNode(result),
   };
