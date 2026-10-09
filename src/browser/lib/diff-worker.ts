@@ -9,6 +9,7 @@ import { computeHunkLines, type Line } from "./hunk-lines";
 import { generatePatch } from "./recover-patches";
 import { rebasedPatch, type RebaseResult } from "./rebase-range";
 import { refractor } from "refractor/all";
+import { gapLineOffsets } from "./gap-offsets";
 
 // ============================================================================
 // Types
@@ -101,6 +102,8 @@ export type WorkerRequest =
       filename: string;
       startLine: number;
       count: number;
+      /** New minus old line number across this range */
+      oldLineOffset?: number;
     };
 
 export type WorkerResponse =
@@ -371,7 +374,7 @@ const insertSkipBlocks = (hunks: Hunk[]): (Hunk | SkipBlock)[] => {
 // Main Functions
 // ============================================================================
 
-function parseDiffWithHighlighting(
+export function parseDiffWithHighlighting(
   patch: string,
   filename: string,
   previousFilename?: string,
@@ -403,6 +406,19 @@ ${patch}`;
   const newHighlightedLines = newContent
     ? highlightFileByLines(newContent, language)
     : null;
+  // A pre-highlighted line is only trusted when its text matches the patch,
+  // so content fetched at the wrong ref can't replace the real change.
+  const oldRawLines = oldContent?.split("\n");
+  const newRawLines = newContent?.split("\n");
+  const preHighlighted = (
+    highlighted: string[] | null,
+    raw: string[] | undefined,
+    lineNum: number,
+    value: string
+  ) =>
+    raw && sameLine(raw[lineNum - 1], value)
+      ? highlighted?.[lineNum - 1]
+      : undefined;
 
   const rawHunks = insertSkipBlocks(file.hunks.map((hunk) => parseHunk(hunk)));
 
@@ -444,31 +460,23 @@ ${patch}`;
             // Try to use pre-highlighted content for better context
             if (singleSegmentIsNormal) {
               // Use pre-highlighted line if available
-              if (
-                line.type === "delete" &&
-                oldHighlightedLines &&
-                oldNum !== undefined
-              ) {
+              if (line.type === "delete" && oldNum !== undefined) {
                 html =
-                  oldHighlightedLines[oldNum - 1] ??
-                  highlight(seg.value, prevLanguage);
-              } else if (
-                line.type === "insert" &&
-                newHighlightedLines &&
-                newNum !== undefined
-              ) {
-                html =
-                  newHighlightedLines[newNum - 1] ??
-                  highlight(seg.value, language);
-              } else if (
-                line.type === "normal" &&
-                newHighlightedLines &&
-                newNum !== undefined
-              ) {
+                  preHighlighted(
+                    oldHighlightedLines,
+                    oldRawLines,
+                    oldNum,
+                    seg.value
+                  ) ?? highlight(seg.value, prevLanguage);
+              } else if (line.type !== "delete" && newNum !== undefined) {
                 // For normal lines, prefer new file highlighting (same content in both)
                 html =
-                  newHighlightedLines[newNum - 1] ??
-                  highlight(seg.value, language);
+                  preHighlighted(
+                    newHighlightedLines,
+                    newRawLines,
+                    newNum,
+                    seg.value
+                  ) ?? highlight(seg.value, language);
               } else {
                 html = highlight(seg.value, language);
               }
@@ -499,6 +507,8 @@ ${patch}`;
         ? allNewLines.length - 1
         : allNewLines.length;
 
+    const offsets = gapLineOffsets(hunks);
+    let offset = 0;
     const makeLines = (start: number, count: number): DiffLine[] => {
       const lines: DiffLine[] = [];
       for (let i = 0; i < count; i++) {
@@ -506,7 +516,7 @@ ${patch}`;
         const value = allNewLines[lineNum - 1] ?? "";
         lines.push({
           type: "normal",
-          oldLineNumber: lineNum,
+          oldLineNumber: lineNum - offset,
           newLineNumber: lineNum,
           content: [
             {
@@ -531,6 +541,7 @@ ${patch}`;
       if (h.type === "skip") {
         const start = expectedNextLine;
         const count = h.count;
+        offset = offsets[skipIdx] ?? 0;
         if (!seenHunk) {
           // Top-of-file gap: only lines adjacent to the first change
           gapContext[skipIdx] =
@@ -571,6 +582,7 @@ ${patch}`;
     // End-of-file gap (index one past the last skip block)
     const trailingRemaining = totalNewLines - expectedNextLine + 1;
     if (seenHunk && trailingRemaining > 0) {
+      offset = offsets[skipIdx] ?? 0;
       gapContext[skipIdx] = {
         top: makeLines(
           expectedNextLine,
@@ -586,6 +598,14 @@ ${patch}`;
   return { hunks };
 }
 
+function sameLine(fileLine: string | undefined, patchLine: string) {
+  if (fileLine === undefined) return false;
+  return (
+    fileLine === patchLine ||
+    fileLine.replace(/\r$/, "") === patchLine.replace(/\r$/, "")
+  );
+}
+
 /** Lines revealed around each gap by default. */
 const DEFAULT_GAP_CONTEXT = 20;
 
@@ -593,7 +613,8 @@ function highlightFileLines(
   content: string,
   filename: string,
   startLine: number,
-  count: number
+  count: number,
+  oldLineOffset = 0
 ): DiffLine[] {
   const language = guessLang(filename);
   const allLines = content.split("\n");
@@ -612,7 +633,7 @@ function highlightFileLines(
 
     result.push({
       type: "normal",
-      oldLineNumber: lineNum,
+      oldLineNumber: lineNum - oldLineOffset,
       newLineNumber: lineNum,
       content: [{ value: lineContent, html: highlighted, type: "normal" }],
     });
@@ -672,7 +693,8 @@ self.onmessage = (event: MessageEvent<WorkerRequest>) => {
           request.content,
           request.filename,
           request.startLine,
-          request.count
+          request.count,
+          request.oldLineOffset
         );
         self.postMessage({
           type: "highlight-lines-result",

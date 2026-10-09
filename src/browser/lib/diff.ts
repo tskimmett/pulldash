@@ -150,7 +150,8 @@ class DiffWorkerPool {
     content: string,
     filename: string,
     startLine: number,
-    count: number
+    count: number,
+    oldLineOffset = 0
   ): Promise<DiffLine[]> {
     const id = this.generateId();
     const worker = this.getNextWorker();
@@ -165,6 +166,7 @@ class DiffWorkerPool {
         filename,
         startLine,
         count,
+        oldLineOffset,
       } as WorkerRequest);
     });
   }

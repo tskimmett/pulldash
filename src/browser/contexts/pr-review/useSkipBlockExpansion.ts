@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useGitHub } from "@/browser/contexts/github";
 import { diffService } from "@/browser/lib/diff";
+import { gapLineOffsets } from "@/browser/lib/gap-offsets";
 import {
   usePRReviewStore,
   usePRReviewSelector,
@@ -79,12 +80,19 @@ export function useSkipBlockExpansion() {
             : startLine;
         const edge = direction === "up" && !fetchAll ? "bottom" : "top";
 
+        // Gap lines come from the head file; shift them onto old numbering
+        const hunks = store.getSnapshot().loadedDiffs[selectedFile]?.hunks;
+        const oldLineOffset = hunks
+          ? (gapLineOffsets(hunks)[skipIndex] ?? 0)
+          : 0;
+
         // Get highlighted lines via WebWorker
         const expandedLines = await diffService.highlightLines(
           content,
           selectedFile,
           fetchStart,
-          fetchCount
+          fetchCount,
+          oldLineOffset
         );
 
         store.appendExpandedSkipBlock(key, edge, expandedLines);

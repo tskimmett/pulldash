@@ -1327,6 +1327,42 @@ function createGitHubStore() {
   }
 
   /**
+   * Commit GitHub diffs a PR against: where head branched from base. The
+   * base branch tip (`pr.base.sha`) moves on, so its file contents don't
+   * line up with the PR's patches.
+   */
+  async function getMergeBase(
+    owner: string,
+    repo: string,
+    baseSha: string,
+    headSha: string
+  ): Promise<string> {
+    if (!octokit) throw new Error("Not initialized");
+
+    const cacheKey = `merge-base:${owner}/${repo}/${baseSha}...${headSha}`;
+    const cached = cache.get<string>(cacheKey, Infinity);
+    if (cached) return cached;
+
+    const pending = cache.getPending<string>(cacheKey);
+    if (pending) return pending;
+
+    const promise = (async () => {
+      const stored = await cache.peek<string>(cacheKey);
+      if (stored) return stored.data;
+      const { data } = await octokit!.request(
+        "GET /repos/{owner}/{repo}/compare/{basehead}",
+        { owner, repo, basehead: `${baseSha}...${headSha}`, per_page: 1 }
+      );
+      const sha = data.merge_base_commit.sha;
+      cache.set(cacheKey, sha, true);
+      return sha;
+    })();
+
+    cache.setPending(cacheKey, promise);
+    return promise;
+  }
+
+  /**
    * Rebuild patches GitHub omitted (large diffs) from file contents at the
    * merge base and head. Runs after the PR renders; returns `files` itself
    * when nothing needed recovery.
@@ -1341,18 +1377,9 @@ function createGitHubStore() {
     if (!files.some((file) => !file.patch && file.changes > 0)) return files;
 
     try {
-      const { data } = await octokit.request(
-        "GET /repos/{owner}/{repo}/compare/{basehead}",
-        {
-          owner,
-          repo,
-          basehead: `${pr.base.sha}...${pr.head.sha}`,
-          per_page: 1,
-        }
-      );
       const recovered = await recoverPatches(
         files,
-        data.merge_base_commit.sha,
+        await getMergeBase(owner, repo, pr.base.sha, pr.head.sha),
         pr.head.sha,
         (path, ref) => getFileContent(owner, repo, path, ref, false),
         (oldContent, newContent) =>
@@ -3456,6 +3483,7 @@ function createGitHubStore() {
     getPR,
     getPRFiles,
     recoverPRFilePatches,
+    getMergeBase,
     prefetchPR,
     getCompareFiles,
     getPRComments,

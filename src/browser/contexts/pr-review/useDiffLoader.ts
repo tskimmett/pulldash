@@ -231,8 +231,13 @@ export function useDiffLoader() {
     }, 50);
 
     // Create file content getter for better syntax highlighting
+    // The PR's patches are against the merge base, not the base branch tip.
     const getFileContent: FileContentGetter = (path, ref) =>
-      github.getFileContent(owner, repo, path, ref);
+      !diffRange && ref === pr.base.sha
+        ? github
+            .getMergeBase(owner, repo, pr.base.sha, pr.head.sha)
+            .then((sha) => github.getFileContent(owner, repo, path, sha))
+        : github.getFileContent(owner, repo, path, ref);
 
     // Fetch immediately with full file content for better highlighting
     fetchParsedDiff(file, undefined, getFileContent, baseRef, headRef)
@@ -299,5 +304,8 @@ export function useDiffLoader() {
     repo,
     baseRef,
     headRef,
+    diffRange,
+    pr.base.sha,
+    pr.head.sha,
   ]);
 }
