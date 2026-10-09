@@ -4,6 +4,7 @@ import {
   extractRepoFromUrl,
   mergeSearchResults,
   parsePRQuery,
+  resolveBareNumberRepo,
 } from "./pr-query";
 import type { PRSearchResult } from "../contexts/github";
 
@@ -23,7 +24,19 @@ test("pr-query: parses URLs and shorthand, otherwise treats input as text", () =
     kind: "text",
     text: "login bug",
   });
-  expect(parsePRQuery("#12")).toEqual({ kind: "text", text: "#12" });
+  expect(parsePRQuery("#12")).toEqual({ kind: "number", number: 12 });
+  expect(parsePRQuery(" 12 ")).toEqual({ kind: "number", number: 12 });
+});
+
+test("pr-query: bare number resolves to the active repo, else a sole feed repo", () => {
+  const active = { owner: "acme", repo: "web" };
+  expect(resolveBareNumberRepo(active, ["x/y", "z/w"])).toEqual(active);
+  expect(resolveBareNumberRepo(null, ["x/y", "x/y"])).toEqual({
+    owner: "x",
+    repo: "y",
+  });
+  expect(resolveBareNumberRepo(null, ["x/y", "z/w"])).toBeNull();
+  expect(resolveBareNumberRepo(null, [])).toBeNull();
 });
 
 test("pr-query: text is appended to every feed query, never searched alone", () => {

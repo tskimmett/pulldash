@@ -8,7 +8,7 @@ import {
 } from "react";
 import { GitPullRequest, Loader2 } from "lucide-react";
 import { cn } from "../cn";
-import { useOpenPRReviewTab } from "../contexts/tabs";
+import { useOpenPRReviewTab, useTabContext } from "../contexts/tabs";
 import {
   useGitHubReady,
   useGitHubStore,
@@ -18,12 +18,14 @@ import {
   buildSearchQueries,
   buildSearchScopeQueries,
   getFilterConfig,
+  isAllReposFilter,
 } from "../lib/feed-filters";
 import {
   buildTextSearchQueries,
   extractRepoFromUrl,
   mergeSearchResults,
   parsePRQuery,
+  resolveBareNumberRepo,
 } from "../lib/pr-query";
 
 const MIN_CHARS = 2;
@@ -40,6 +42,7 @@ export function PRSearchInput({
   autoFocus?: boolean;
 } = {}) {
   const openPRReviewTab = useOpenPRReviewTab();
+  const { activeTab } = useTabContext();
   const store = useGitHubStore();
   const { ready } = useGitHubReady();
   const [value, setValue] = useState("");
@@ -155,6 +158,25 @@ export function PRSearchInput({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (parsed.kind === "number") {
+      const repo = resolveBareNumberRepo(
+        activeTab?.type === "pr-review" && activeTab.owner && activeTab.repo
+          ? { owner: activeTab.owner, repo: activeTab.repo }
+          : null,
+        getFilterConfig()
+          .repos.filter((r) => r.enabled !== false && !isAllReposFilter(r))
+          .map((r) => r.name)
+      );
+      if (repo) {
+        openPRReviewTab(repo.owner, repo.repo, parsed.number);
+        setValue("");
+        setOpen(false);
+      } else {
+        setError("Use owner/repo#number to open a PR");
+        setOpen(true);
+      }
+      return;
+    }
     if (parsed.kind === "pr") {
       openPRReviewTab(parsed.owner, parsed.repo, parsed.number);
       setValue("");
@@ -164,7 +186,8 @@ export function PRSearchInput({
     }
   };
 
-  const showDropdown = open && searchText.length > 0;
+  const showDropdown =
+    open && (searchText.length > 0 || (parsed.kind === "number" && !!error));
   const hasFeed = buildSearchScopeQueries(getFilterConfig()).length > 0;
   const feedCount = feedResults.length;
 
@@ -180,6 +203,7 @@ export function PRSearchInput({
             value={value}
             onChange={(e) => {
               setValue(e.target.value);
+              setError(null);
               setOpen(true);
             }}
             onFocus={() => setOpen(true)}

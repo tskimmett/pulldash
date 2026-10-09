@@ -2,9 +2,11 @@ import type { PRSearchResult } from "../contexts/github";
 
 export type ParsedPRQuery =
   | { kind: "pr"; owner: string; repo: string; number: number }
+  | { kind: "number"; number: number }
   | { kind: "text"; text: string };
 
 const URL_RE = /github\.com\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)/;
+const NUMBER_RE = /^#?(\d+)$/;
 const SHORTHAND_RE = /^([\w.-]+)\/([\w.-]+)(?:#|\/pull\/)(\d+)$/;
 
 // Distinguishes a pasted PR reference (URL or owner/repo#N) from free text
@@ -19,7 +21,22 @@ export function parsePRQuery(input: string): ParsedPRQuery {
       number: parseInt(match[3], 10),
     };
   }
+  const num = text.match(NUMBER_RE);
+  if (num) return { kind: "number", number: parseInt(num[1], 10) };
   return { kind: "text", text };
+}
+
+// A bare PR number has no repo: prefer the repo of the PR being viewed, then
+// the feed's only specific repo. Ambiguous or empty feeds resolve to null.
+export function resolveBareNumberRepo(
+  activeRepo: { owner: string; repo: string } | null,
+  feedRepoNames: string[]
+): { owner: string; repo: string } | null {
+  if (activeRepo) return activeRepo;
+  const names = [...new Set(feedRepoNames)];
+  if (names.length !== 1) return null;
+  const [owner, repo] = names[0].split("/");
+  return owner && repo ? { owner, repo } : null;
 }
 
 export function extractRepoFromUrl(
