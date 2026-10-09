@@ -104,3 +104,20 @@ export function withTabTitle(
   tabs[index] = { ...tabs[index], title };
   return { ...state, tabs };
 }
+
+export function withClosedTab(state: TabState, tabId: string): TabState {
+  // Can't close home tab
+  if (tabId === "home") return state;
+  const tabIndex = state.tabs.findIndex((t) => t.id === tabId);
+  if (tabIndex === -1) return state;
+
+  const tabs = state.tabs.filter((t) => t.id !== tabId);
+  let activeTabId = state.activeTabId;
+
+  // If closing active tab, switch to adjacent tab
+  if (activeTabId === tabId) {
+    activeTabId = tabs[Math.min(tabIndex, tabs.length - 1)].id;
+  }
+
+  return { tabs, activeTabId };
+}

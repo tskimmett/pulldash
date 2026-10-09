@@ -15,6 +15,7 @@ import {
   type Tab,
   type TabStatus,
 } from "../contexts/tabs";
+import { withClosedTab } from "../lib/tab-state";
 import { Home } from "./home";
 import { PRSearchInput } from "./pr-search-input";
 import { PRReviewContent } from "./pr-review";
@@ -106,6 +107,20 @@ export function AppShell() {
     [navigate]
   );
 
+  // The URL drives the active tab, so closing the active tab must navigate
+  // to whichever tab takes its place.
+  const handleTabClose = useCallback(
+    (tabId: string) => {
+      const next = withClosedTab({ tabs, activeTabId }, tabId);
+      closeTab(tabId);
+      if (next.activeTabId !== activeTabId) {
+        const nextTab = next.tabs.find((t) => t.id === next.activeTabId);
+        if (nextTab) handleTabSelect(nextTab);
+      }
+    },
+    [tabs, activeTabId, closeTab, handleTabSelect]
+  );
+
   // Handle keyboard shortcuts for tab switching
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -121,14 +136,14 @@ export function AppShell() {
       if ((e.metaKey || e.ctrlKey) && e.key === "w") {
         if (activeTabId !== "home") {
           e.preventDefault();
-          closeTab(activeTabId);
+          handleTabClose(activeTabId);
         }
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [tabs, activeTabId, handleTabSelect, closeTab]);
+  }, [tabs, activeTabId, handleTabSelect, handleTabClose]);
 
   return (
     <div className="h-dvh flex flex-col overflow-hidden bg-background">
@@ -170,7 +185,7 @@ export function AppShell() {
           tabs={tabs}
           activeTab={activeTab}
           onSelect={handleTabSelect}
-          onClose={closeTab}
+          onClose={handleTabClose}
         />
         <div className="h-full flex-1 min-w-0 hidden sm:flex items-center gap-0.5 overflow-x-auto hide-scrollbar [mask-image:linear-gradient(to_right,black_calc(100%-24px),transparent)]">
           {tabs.map((tab) => (
@@ -179,7 +194,7 @@ export function AppShell() {
               tab={tab}
               isActive={tab.id === activeTabId}
               onSelect={() => handleTabSelect(tab)}
-              onClose={() => closeTab(tab.id)}
+              onClose={() => handleTabClose(tab.id)}
             />
           ))}
         </div>

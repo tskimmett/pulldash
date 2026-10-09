@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import {
   loadTabState,
   saveTabState,
+  withClosedTab,
   withOpenedTab,
   withTabTitle,
   type TabState,
@@ -101,4 +102,22 @@ test("opening a tab past the limit drops the oldest PR tab but keeps home", () =
   const reopened = withOpenedTab(state, { ...prTab, id: "pr-3", number: 3 });
   expect(reopened.tabs).toBe(state.tabs);
   expect(reopened.activeTabId).toBe("pr-3");
+});
+
+test("closing the active tab activates the adjacent tab; home cannot close", () => {
+  let state = loadTabState(createStorage());
+  for (let n = 1; n <= 3; n++) {
+    state = withOpenedTab(state, { ...prTab, id: `pr-${n}`, number: n });
+  }
+  state = { ...state, activeTabId: "pr-2" };
+  const closedMiddle = withClosedTab(state, "pr-2");
+  expect(closedMiddle.tabs.map((tab) => tab.id)).toEqual([
+    "home",
+    "pr-1",
+    "pr-3",
+  ]);
+  expect(closedMiddle.activeTabId).toBe("pr-3");
+  expect(withClosedTab(closedMiddle, "pr-3").activeTabId).toBe("pr-1");
+  expect(withClosedTab(closedMiddle, "pr-1").activeTabId).toBe("pr-3");
+  expect(withClosedTab(closedMiddle, "home")).toBe(closedMiddle);
 });

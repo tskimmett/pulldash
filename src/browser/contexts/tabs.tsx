@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom";
 import {
   loadTabState,
   saveTabState,
+  withClosedTab,
   withOpenedTab,
   withTabTitle,
   type Tab,
@@ -82,24 +83,7 @@ export function TabProvider({ children }: TabProviderProps) {
   );
 
   const closeTab = useCallback((tabId: string) => {
-    // Can't close home tab
-    if (tabId === "home") return;
-
-    setState((prev) => {
-      const tabIndex = prev.tabs.findIndex((t) => t.id === tabId);
-      if (tabIndex === -1) return prev;
-
-      const newTabs = prev.tabs.filter((t) => t.id !== tabId);
-      let newActiveId = prev.activeTabId;
-
-      // If closing active tab, switch to adjacent tab
-      if (prev.activeTabId === tabId) {
-        const newIndex = Math.min(tabIndex, newTabs.length - 1);
-        newActiveId = newTabs[newIndex].id;
-      }
-
-      return { tabs: newTabs, activeTabId: newActiveId };
-    });
+    setState((prev) => withClosedTab(prev, tabId));
   }, []);
 
   const setActiveTab = useCallback((tabId: string) => {
