@@ -323,13 +323,13 @@ export function Home() {
         {/* Mobile: horizontal scroll, Desktop: wrap */}
         <div className="flex items-center gap-2 sm:gap-3 overflow-x-auto hide-scrollbar">
           {/* State Toggle */}
-          <div className="flex items-center gap-0.5 p-0.5 rounded-md bg-muted/50 shrink-0">
+          <div className="flex self-stretch gap-0.5 p-0.5 rounded-md bg-muted/50 shrink-0">
             {STATE_OPTIONS.map((option) => (
               <button
                 key={option.value}
                 onClick={() => handleStateChange(option.value)}
                 className={cn(
-                  "px-2 py-1 text-xs font-medium rounded transition-colors",
+                  "flex items-center px-2 py-1 text-xs font-medium rounded transition-colors",
                   config.state === option.value
                     ? "bg-background shadow-sm"
                     : "text-muted-foreground hover:text-foreground"
@@ -437,22 +437,19 @@ export function Home() {
                     />
                     <span
                       className={cn(
-                        isAllRepos ? "font-medium" : "font-mono",
+                        "flex flex-col items-start leading-tight",
                         !isEnabled && "line-through"
                       )}
                     >
-                      {isAllRepos ? modeOption.label : repo.name}
-                    </span>
-                    {repo.mode === "authored-by" && repo.authoredBy && (
-                      <span
-                        className={cn(
-                          "text-muted-foreground",
-                          !isEnabled && "line-through"
-                        )}
-                      >
-                        @{repo.authoredBy}
+                      <span className="font-medium">
+                        {repo.mode === "authored-by" && repo.authoredBy
+                          ? `Created by @${repo.authoredBy}`
+                          : modeOption.label}
                       </span>
-                    )}
+                      <span className="text-[10px] text-muted-foreground font-mono">
+                        {isAllRepos ? "All repos" : repo.name}
+                      </span>
+                    </span>
                     <ChevronDown className="w-3 h-3 text-muted-foreground" />
                     <button
                       onClick={(e) => {
