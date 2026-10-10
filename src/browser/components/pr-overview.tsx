@@ -5034,7 +5034,7 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
 // Skeleton Components
 // ============================================================================
 
-function PROverviewSkeleton() {
+export function PROverviewSkeleton() {
   return (
     <div className="flex-1 overflow-auto bg-background">
       {/* Tabs skeleton */}

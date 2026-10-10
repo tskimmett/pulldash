@@ -1447,12 +1447,12 @@ function HomeLoadingSkeleton() {
   return (
     <div className="h-full bg-background flex flex-col overflow-hidden">
       {/* Filter Bar Skeleton */}
-      <div className="border-b border-border px-4 py-2 shrink-0 flex items-center gap-3 bg-card/30">
-        <Skeleton className="h-7 w-24" />
-        <Skeleton className="h-6 w-48" />
+      <div className="border-b border-border px-2 sm:px-4 py-2 shrink-0 flex items-center gap-2 sm:gap-3 overflow-hidden bg-card/30">
+        <Skeleton className="h-7 w-24 shrink-0" />
+        <Skeleton className="h-6 w-48 shrink-0" />
         <div className="flex-1" />
-        <Skeleton className="h-7 w-24" />
-        <Skeleton className="h-7 w-[200px]" />
+        <Skeleton className="h-7 w-24 shrink-0 hidden sm:block" />
+        <Skeleton className="h-7 w-[200px] shrink-0 hidden sm:block" />
       </div>
 
       {/* Main Content */}
@@ -1484,7 +1484,7 @@ function PRListSkeleton({ count = 5 }: { count?: number }) {
 
 function PRListItemSkeleton() {
   return (
-    <div className="flex items-start gap-3 px-4 py-3">
+    <div className="flex items-start gap-2 sm:gap-3 px-2 sm:px-4 py-3">
       {/* PR Icon */}
       <Skeleton className="w-4 h-4 mt-0.5 rounded-full shrink-0" />
 
@@ -1492,13 +1492,13 @@ function PRListItemSkeleton() {
       <div className="flex-1 min-w-0 space-y-2">
         <div className="flex items-center gap-2">
           <Skeleton className="h-5 w-[60%]" />
-          <Skeleton className="h-4 w-12 rounded-full" />
+          <Skeleton className="h-4 w-12 shrink-0 rounded-full" />
         </div>
         <div className="flex items-center gap-1.5">
-          <Skeleton className="h-3 w-32" />
-          <Skeleton className="h-3 w-8" />
-          <Skeleton className="h-3 w-16" />
-          <Skeleton className="h-3 w-20" />
+          <Skeleton className="h-3 w-20 sm:w-32" />
+          <Skeleton className="h-3 w-8 hidden sm:block" />
+          <Skeleton className="h-3 w-16 hidden sm:block" />
+          <Skeleton className="h-3 w-20 hidden sm:block" />
         </div>
       </div>
     </div>

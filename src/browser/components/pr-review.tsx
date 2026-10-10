@@ -44,7 +44,7 @@ import {
 } from "lucide-react";
 import type { Reaction, ReactionContent } from "../contexts/github";
 import { Skeleton } from "../ui/skeleton";
-import { PROverview } from "./pr-overview";
+import { PROverview, PROverviewSkeleton } from "./pr-overview";
 import {
   Tooltip,
   TooltipContent,
@@ -4692,19 +4692,20 @@ function PRReviewSkeleton() {
     <div className="flex flex-col h-full">
       {/* Header skeleton - single row matching PRHeader */}
       <div className="shrink-0 border-b border-border bg-card/30 px-2 sm:px-4 py-2">
-        <div className="flex items-center gap-2 sm:gap-3">
-          <Skeleton className="h-6 w-16 rounded-full" />
-          <Skeleton className="h-4 w-24 hidden sm:block" />
-          <Skeleton className="h-5 flex-1 max-w-md" />
-          <Skeleton className="h-5 w-5 rounded-full" />
-          <Skeleton className="h-4 w-16 hidden sm:block" />
-          <Skeleton className="h-4 w-4" />
+        <div className="flex items-center gap-1.5 sm:gap-3">
+          <Skeleton className="h-7 w-7 shrink-0 md:hidden" />
+          <Skeleton className="h-6 w-8 xs:w-16 shrink-0 rounded-full" />
+          <Skeleton className="h-4 w-24 shrink-0 hidden sm:block" />
+          <Skeleton className="h-5 flex-1 min-w-0 max-w-md" />
+          <Skeleton className="h-5 w-5 shrink-0 rounded-full hidden md:block" />
+          <Skeleton className="h-4 w-16 shrink-0 hidden sm:block" />
+          <Skeleton className="h-4 w-4 shrink-0" />
         </div>
       </div>
 
       <div className="flex flex-1 overflow-hidden min-h-0">
-        {/* File panel skeleton */}
-        <aside className="w-64 border-r border-border flex flex-col overflow-hidden shrink-0">
+        {/* File panel skeleton - a closed drawer on mobile, like FilePanel */}
+        <aside className="w-64 border-r border-border flex-col overflow-hidden shrink-0 hidden md:flex">
           <div className="mx-2 my-2 flex items-center gap-1.5">
             <Skeleton className="flex-1 h-8" />
             <Skeleton className="w-8 h-8" />
@@ -4725,136 +4726,8 @@ function PRReviewSkeleton() {
 
         {/* Main content skeleton - show diff or overview based on URL hash */}
         <main className="flex-1 overflow-hidden flex flex-col">
-          {showFileSkeleton ? <DiffSkeleton /> : <OverviewPanelSkeleton />}
+          {showFileSkeleton ? <DiffSkeleton /> : <PROverviewSkeleton />}
         </main>
-      </div>
-    </div>
-  );
-}
-
-function OverviewPanelSkeleton() {
-  return (
-    <div className="flex-1 overflow-auto bg-background">
-      {/* Tabs skeleton */}
-      <div className="border-b border-border">
-        <div className="max-w-[1280px] mx-auto px-6">
-          <div className="flex items-center gap-4 py-2">
-            <Skeleton className="h-8 w-32" />
-            <Skeleton className="h-8 w-24" />
-            <Skeleton className="h-8 w-20" />
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content skeleton */}
-      <div className="max-w-[1280px] mx-auto px-6 py-6">
-        <div className="flex gap-6">
-          {/* Left Column */}
-          <div className="flex-1 min-w-0 space-y-4">
-            {/* PR Description skeleton */}
-            <div className="border border-border rounded-md overflow-hidden">
-              <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50">
-                <Skeleton className="w-5 h-5 rounded-full" />
-                <Skeleton className="h-4 w-24" />
-                <Skeleton className="h-3 w-20" />
-              </div>
-              <div className="p-4 space-y-2">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-[90%]" />
-                <Skeleton className="h-4 w-[75%]" />
-                <Skeleton className="h-4 w-[85%]" />
-                <Skeleton className="h-4 w-[60%]" />
-              </div>
-            </div>
-
-            {/* Timeline items skeleton */}
-            {Array.from({ length: 2 }).map((_, i) => (
-              <div
-                key={i}
-                className="border border-border rounded-md overflow-hidden"
-              >
-                <div className="flex items-center gap-2 px-4 py-2 border-b border-border bg-card/50">
-                  <Skeleton className="w-5 h-5 rounded-full" />
-                  <Skeleton className="h-4 w-24" />
-                  <Skeleton className="h-3 w-20" />
-                </div>
-                <div className="p-4 space-y-2">
-                  <Skeleton className="h-4 w-full" />
-                  <Skeleton className="h-4 w-[90%]" />
-                </div>
-              </div>
-            ))}
-
-            {/* Merge section skeleton */}
-            <div className="border border-border rounded-md overflow-hidden">
-              {Array.from({ length: 2 }).map((_, i) => (
-                <div
-                  key={i}
-                  className="flex items-center gap-3 p-4 border-b border-border last:border-b-0"
-                >
-                  <Skeleton className="w-5 h-5 rounded-full" />
-                  <div className="flex-1 space-y-1">
-                    <Skeleton className="h-4 w-48" />
-                    <Skeleton className="h-3 w-64" />
-                  </div>
-                </div>
-              ))}
-              <div className="p-4">
-                <Skeleton className="h-10 w-full" />
-              </div>
-            </div>
-          </div>
-
-          {/* Right Column - Sidebar skeleton */}
-          <div className="w-[296px] shrink-0 space-y-4 hidden lg:block">
-            {/* Reviewers */}
-            <div className="pb-3 border-b border-border">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-muted-foreground">
-                  Reviewers
-                </span>
-                <Skeleton className="w-4 h-4" />
-              </div>
-              <div className="space-y-2">
-                {Array.from({ length: 2 }).map((_, i) => (
-                  <div key={i} className="flex items-center gap-2">
-                    <Skeleton className="w-5 h-5 rounded-full" />
-                    <Skeleton className="h-4 w-24" />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Labels */}
-            <div className="pb-3 border-b border-border">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-muted-foreground">
-                  Labels
-                </span>
-                <Skeleton className="w-4 h-4" />
-              </div>
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <Skeleton key={i} className="h-5 w-16 rounded-full" />
-                ))}
-              </div>
-            </div>
-
-            {/* Participants */}
-            <div className="pb-3 border-b border-border">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-semibold text-muted-foreground">
-                  Participants
-                </span>
-              </div>
-              <div className="flex items-center gap-1">
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <Skeleton key={i} className="w-6 h-6 rounded-full" />
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </div>
   );
