@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-10-09-pwa",
+    date: "2026-10-09",
+    title: "Install as an app",
+    description:
+      "Add better pr to your phone's home screen (Share → Add to Home Screen on iOS, Install app on Android) and it opens full-screen like a native app.",
+  },
+  {
     id: "2026-10-09-update-branch",
     date: "2026-10-09",
     title: "Update branch",

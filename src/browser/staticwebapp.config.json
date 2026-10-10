@@ -1,7 +1,12 @@
 {
   "navigationFallback": {
     "rewrite": "/index.html",
-    "exclude": ["/*.{js,css,svg,map}", "/lib/*", "/api/*"]
+    "exclude": [
+      "/*.{js,css,svg,png,map,webmanifest}",
+      "/icons/*",
+      "/lib/*",
+      "/api/*"
+    ]
   },
   "routes": [
     {
@@ -11,6 +16,9 @@
       }
     }
   ],
+  "mimeTypes": {
+    ".webmanifest": "application/manifest+json"
+  },
   "globalHeaders": {
     "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' https:; font-src 'self' data:; connect-src 'self' https://api.github.com; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'",
     "X-Content-Type-Options": "nosniff",

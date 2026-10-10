@@ -24,6 +24,12 @@
     <meta name="theme-color" content="#408AC3" />
 
     <link rel="icon" type="image/svg+xml" href="./logo.svg" />
+    <!-- Installable PWA. Icons referenced from the manifest are copied to
+         /icons by scripts/build-browser.ts. -->
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="better pr" />
 
     <!-- Apply the persisted theme before first paint to avoid a flash of the
          wrong theme. Keep in sync with src/browser/lib/theme.ts -->

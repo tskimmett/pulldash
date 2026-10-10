@@ -79,6 +79,13 @@ async function build() {
     resolve(process.cwd(), "src", "browser", "logo.svg"),
     resolve(process.cwd(), "dist", "browser", "logo.svg")
   );
+  // PWA icons are referenced by absolute path from the manifest, which Bun
+  // copies without rewriting.
+  await cp(
+    resolve(process.cwd(), "src", "browser", "icons"),
+    resolve(process.cwd(), "dist", "browser", "icons"),
+    { recursive: true }
+  );
   // Azure Static Web Apps routing (SPA fallback, cache and security
   // headers). The local server also serves these headers.
   await writeStaticWebAppConfig(indexHtml);
