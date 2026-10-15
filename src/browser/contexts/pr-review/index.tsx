@@ -3421,6 +3421,28 @@ export class PRReviewStore {
   };
 
   /**
+   * GitHub computes mergeability in the background and reports `null` until
+   * it's done, so re-read the PR while it's still unknown. Returns whether
+   * it's still unknown (i.e. worth polling again).
+   */
+  refreshMergeability = async (): Promise<boolean> => {
+    const { owner, repo, pr } = this.state;
+    if (pr.state !== "open" || pr.merged || pr.mergeable !== null) return false;
+
+    const key = cacheKeys.pr(owner, repo, pr.number);
+    this.github.invalidateCache((k) => k === key);
+    const updatedPR = await this.github
+      .getPR(owner, repo, pr.number)
+      .catch(() => null);
+    // Navigated to another PR (or it changed underneath us) meanwhile
+    if (!updatedPR || this.state.pr.number !== pr.number) return false;
+    this.set({ pr: updatedPR });
+    // e.g. after "Update branch": checks and commits belong to the old head
+    if (updatedPR.head.sha !== pr.head.sha) void this.loadPRData();
+    return updatedPR.mergeable === null;
+  };
+
+  /**
    * Re-read auto-merge state. A scheduled request that disappears means
    * GitHub merged the PR (or dropped the request), so reload the PR too.
    */

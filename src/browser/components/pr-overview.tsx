@@ -245,6 +245,31 @@ export const PROverview = memo(function PROverview() {
     return () => clearInterval(interval);
   }, [store, pr.state, pr.merged]);
 
+  // Poll while GitHub is still computing mergeability, backing off up to ~1 min
+  const mergeabilityUnknown =
+    pr.state === "open" && !pr.merged && pr.mergeable === null;
+  useEffect(() => {
+    if (!mergeabilityUnknown) return;
+
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = (attempt: number) => {
+      timer = setTimeout(
+        async () => {
+          const stillUnknown = await store.refreshMergeability();
+          if (!cancelled && stillUnknown && attempt < 10) poll(attempt + 1);
+        },
+        Math.min(1500 * 2 ** attempt, 10_000)
+      );
+    };
+    poll(0);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [store, mergeabilityUnknown, pr.number]);
+
   const handleMerge = useCallback(async () => {
     await store.mergePR();
   }, [store]);

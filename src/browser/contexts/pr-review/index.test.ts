@@ -195,6 +195,34 @@ test("setAutoMerge schedules with the selected method and stores the result", as
   expect(calls).toEqual(["enable:PR_1:squash", "disable:PR_1"]);
 });
 
+test("refreshMergeability bypasses the cache until GitHub reports mergeability", async () => {
+  const responses = [null, true];
+  const invalidated: string[] = [];
+  const github = {
+    ...createMockGitHubStore(),
+    invalidateCache: (match: (key: string) => boolean) => {
+      if (match("pr:test/repo/1")) invalidated.push("pr");
+      if (match("pr:test/repo/1:files")) invalidated.push("files");
+    },
+    getPR: async () => createMockPR({ mergeable: responses.shift() }),
+  } as unknown as GitHubStore;
+  const store = new PRReviewStore(github, {
+    pr: createMockPR({ mergeable: null }),
+    files: [],
+    comments: [],
+    owner: "test",
+    repo: "repo",
+    viewerPermission: "WRITE",
+  });
+
+  expect(await store.refreshMergeability()).toBe(true);
+  expect(await store.refreshMergeability()).toBe(false);
+  expect(store.getSnapshot().pr.mergeable).toBe(true);
+  // Known now, so no further requests
+  expect(await store.refreshMergeability()).toBe(false);
+  expect(invalidated).toEqual(["pr", "pr"]);
+});
+
 test("updateBranch updates with the chosen method and clears the behind state", async () => {
   const calls: string[] = [];
   const github = {

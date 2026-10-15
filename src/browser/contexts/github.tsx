@@ -485,6 +485,10 @@ const stackCacheKey = (key: string) => `stack:${key}`;
 // Cache Keys
 // ============================================================================
 
+/** Skip the browser's HTTP cache: revalidate via ETag (a free 304 if unchanged). */
+const revalidatingFetch = (input: RequestInfo | URL, init?: RequestInit) =>
+  fetch(input, { ...init, cache: "no-cache" });
+
 type PRKey = (owner: string, repo: string, number: number) => string;
 const prKey: PRKey = (owner, repo, number) => `pr:${owner}/${repo}/${number}`;
 const prSubKey =
@@ -1284,6 +1288,9 @@ function createGitHubStore() {
           // Request full media type to get both body and body_html with signed attachment URLs
           accept: "application/vnd.github.full+json",
         },
+        // GitHub marks this max-age=60, so the browser would otherwise replay
+        // a stale copy (e.g. mergeable: null) after we invalidate or mutate.
+        request: { fetch: revalidatingFetch },
       })
       .then((res) => {
         cache.set(cacheKey, res.data as PullRequest, true);
