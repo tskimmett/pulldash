@@ -597,10 +597,18 @@ const FilePanel = memo(function FilePanel({
   const showOverview = usePRReviewSelector((s) => s.showOverview);
 
   const testFileStats = useMemo(() => {
-    const stats = { count: 0, additions: 0, deletions: 0 };
+    const stats = {
+      count: 0,
+      additions: 0,
+      deletions: 0,
+      testAdditions: 0,
+      testDeletions: 0,
+    };
     for (const f of files) {
       if (isTestFile(f.filename)) {
         stats.count++;
+        stats.testAdditions += f.additions ?? 0;
+        stats.testDeletions += f.deletions ?? 0;
         continue;
       }
       stats.additions += f.additions ?? 0;
@@ -609,12 +617,11 @@ const FilePanel = memo(function FilePanel({
     return stats;
   }, [files]);
   const testFileCount = testFileStats.count;
+  const testFilesHidden = hideTestFiles && testFileCount > 0;
   const visibleFiles = useMemo(
     () =>
-      hideTestFiles && testFileCount > 0
-        ? files.filter((f) => !isTestFile(f.filename))
-        : files,
-    [files, hideTestFiles, testFileCount]
+      testFilesHidden ? files.filter((f) => !isTestFile(f.filename)) : files,
+    [files, testFilesHidden]
   );
 
   const sidebarWidth = useSidebarWidth();
@@ -736,17 +743,23 @@ const FilePanel = memo(function FilePanel({
         </TooltipProvider>
       </div>
 
-      {hideTestFiles && testFileCount > 0 && (
-        <div className="mx-2 mb-1 px-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-          <span>
-            {testFileCount} test file{testFileCount === 1 ? "" : "s"} hidden
-          </span>
-          <DiffStat
-            additions={testFileStats.additions}
-            deletions={testFileStats.deletions}
-          />
-        </div>
-      )}
+      <div className="mx-2 mb-1 px-2 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        <span>
+          {testFilesHidden
+            ? `${testFileCount} test file${testFileCount === 1 ? "" : "s"} hidden`
+            : `${files.length} file${files.length === 1 ? "" : "s"}`}
+        </span>
+        <DiffStat
+          additions={
+            testFileStats.additions +
+            (testFilesHidden ? 0 : testFileStats.testAdditions)
+          }
+          deletions={
+            testFileStats.deletions +
+            (testFilesHidden ? 0 : testFileStats.testDeletions)
+          }
+        />
+      </div>
 
       <div className="border-t border-border/50" />
 
