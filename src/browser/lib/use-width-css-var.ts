@@ -7,12 +7,11 @@ import { useLayoutEffect, type RefObject } from "react";
  */
 export function useWidthCssVar(
   ref: RefObject<HTMLElement | null>,
-  name: string,
-  enabled: boolean
+  name: string
 ) {
   useLayoutEffect(() => {
     const el = ref.current;
-    if (!enabled || !el) return;
+    if (!el) return;
     const update = () => el.style.setProperty(name, `${el.clientWidth}px`);
     update();
     const observer = new ResizeObserver(update);
@@ -21,5 +20,5 @@ export function useWidthCssVar(
       observer.disconnect();
       el.style.removeProperty(name);
     };
-  }, [ref, name, enabled]);
+  }, [ref, name]);
 }

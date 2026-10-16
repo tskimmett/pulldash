@@ -882,11 +882,7 @@ const DiffPanel = memo(function DiffPanel() {
           {/* Scrollable diff content - DiffViewer handles its own virtualized scroll */}
           <div className="flex-1 min-h-0 flex flex-col">
             {parsedDiff && parsedDiff.hunks.length > 0 ? (
-              <DiffViewer
-                diff={parsedDiff}
-                viewMode={diffViewMode}
-                wrapLines={!isNarrow}
-              />
+              <DiffViewer diff={parsedDiff} viewMode={diffViewMode} />
             ) : isLoading || (currentFile.patch && !parsedDiff) ? (
               // Show skeleton if loading OR if file has patch but diff isn't ready yet
               <DiffSkeleton />
@@ -1362,14 +1358,11 @@ function rowRulerKinds(row: VirtualRowType): RulerMarkKind[] | null {
 interface DiffViewerProps {
   diff: ParsedDiff;
   viewMode: DiffViewMode;
-  /** When false, long lines scroll horizontally instead of wrapping. */
-  wrapLines?: boolean;
 }
 
 const DiffViewer = memo(function DiffViewer({
   diff,
   viewMode,
-  wrapLines = true,
 }: DiffViewerProps) {
   const hunks = diff?.hunks ?? [];
   const store = usePRReviewStore();
@@ -2246,21 +2239,30 @@ const DiffViewer = memo(function DiffViewer({
   // Combined scroll + selection effect using RAF to prevent jitter
   const containerRef = useRef<HTMLDivElement>(null);
   const hScrollRef = useRef<HTMLDivElement>(null);
-  useWidthCssVar(hScrollRef, "--diff-visible-w", !wrapLines);
+  useWidthCssVar(hScrollRef, "--diff-visible-w");
 
   // Rows are absolutely positioned and virtualized, so the scroll width can't
-  // come from layout; size the container to the widest line up front.
+  // come from layout; size the container to the widest line up front. Split
+  // sides are equal halves, so they need twice the widest side.
   const maxLineWidth = useMemo(() => {
-    if (wrapLines) return 0;
+    const lineWidth = (line: DiffLine | null) => {
+      let width = 0;
+      if (line)
+        for (const seg of line.content) width += htmlLineWidth(seg.html);
+      return width;
+    };
     let max = 0;
     for (const row of virtualRows) {
-      if (row.type !== "line") continue;
-      let width = 0;
-      for (const seg of row.line.content) width += htmlLineWidth(seg.html);
+      const width =
+        row.type === "line"
+          ? lineWidth(row.line)
+          : row.type === "split-line"
+            ? 2 * Math.max(lineWidth(row.pair.left), lineWidth(row.pair.right))
+            : 0;
       if (width > max) max = width;
     }
     return max;
-  }, [wrapLines, virtualRows]);
+  }, [virtualRows]);
   useFindHighlights(containerRef, findQuery, findOpen);
   const rafIdRef = useRef<number | null>(null);
 
@@ -2437,29 +2439,23 @@ const DiffViewer = memo(function DiffViewer({
           tabIndex={-1}
           className="flex-1 overflow-auto diff-scrollbar"
         >
-          <div className={wrapLines ? "p-4" : "p-2"}>
+          <div className="p-2">
             <div
               ref={hScrollRef}
               className={cn(
-                "border border-border rounded-lg",
-                wrapLines
-                  ? "overflow-hidden"
-                  : "overflow-x-auto overflow-y-hidden"
+                "border border-border rounded-lg overflow-x-auto overflow-y-hidden"
               )}
             >
               <div
                 ref={containerRef}
                 className={cn(
                   "relative w-full font-mono text-[0.75rem] [--code-added:theme(colors.green.500)] [--code-removed:theme(colors.orange.600)] diff-line-container",
-                  !wrapLines &&
-                    "[&_.diff-line-row]:whitespace-pre [&_[data-find-code]]:whitespace-pre [&_[data-find-code]]:[overflow-wrap:normal]"
+                  "[&_.diff-line-row]:whitespace-pre [&_.split-diff-line-row]:whitespace-pre [&_[data-find-code]]:whitespace-pre [&_[data-find-code]]:[overflow-wrap:normal]"
                 )}
                 style={{
                   height: `${totalSize}px`,
                   // Gutters + code padding are ~120px beside the code itself.
-                  minWidth: wrapLines
-                    ? undefined
-                    : `calc(${maxLineWidth}ch + 120px)`,
+                  minWidth: `calc(${maxLineWidth}ch + 120px)`,
                 }}
               >
                 {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -2480,7 +2476,9 @@ const DiffViewer = memo(function DiffViewer({
                       ref={virtualizer.measureElement}
                     >
                       <PinToVisibleWidth
-                        pinned={!wrapLines && row.type !== "line"}
+                        pinned={
+                          row.type !== "line" && row.type !== "split-line"
+                        }
                       >
                         <VirtualRowRenderer
                           row={row}
@@ -2511,8 +2509,8 @@ const DiffViewer = memo(function DiffViewer({
 // ============================================================================
 
 /**
- * In unwrapped mode, comments and expand rows stay pinned to the visible
- * width instead of stretching to the widest code line and scrolling away.
+ * Comments and expand rows stay pinned to the visible width instead of
+ * stretching to the widest code line and scrolling away.
  * Requires --diff-visible-w on the horizontal scroller (useWidthCssVar).
  */
 export function PinToVisibleWidth({
