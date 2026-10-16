@@ -3421,9 +3421,14 @@ export const CommentThread = memo(function CommentThread({
     );
   const collapsed = isCollapsed && !forceExpanded;
 
+  // Toggle from what's on screen, not the stored state: a focused thread is
+  // force-expanded, so collapsing it has to release keyboard focus too.
   const toggleCollapsed = useCallback(() => {
-    store.toggleThreadCollapsed(threadKey, isResolved);
-  }, [store, threadKey, isResolved]);
+    if (!collapsed && comments.some((c) => c.id === focusedCommentId)) {
+      store.setFocusedCommentId(null);
+    }
+    store.setThreadCollapsed(threadKey, !collapsed, isResolved);
+  }, [store, threadKey, isResolved, collapsed, comments, focusedCommentId]);
 
   // One-line preview shown while collapsed so context isn't lost.
   const summary = useMemo(
