@@ -295,6 +295,41 @@ test("branch actions never run for fork PRs", async () => {
   expect(calls).toEqual([]);
 });
 
+test("updateTitle trims, skips no-ops, and rolls back on failure", async () => {
+  const calls: string[] = [];
+  let fail = false;
+  const github = {
+    ...createMockGitHubStore(),
+    updatePRTitle: async (
+      _owner: string,
+      _repo: string,
+      _number: number,
+      title: string
+    ) => {
+      calls.push(title);
+      if (fail) throw new Error("nope");
+    },
+  } as unknown as GitHubStore;
+  const store = new PRReviewStore(github, {
+    pr: createMockPR(),
+    files: [],
+    comments: [],
+    owner: "test",
+    repo: "repo",
+    viewerPermission: "WRITE",
+  });
+
+  expect(await store.updateTitle("  Renamed  ")).toBe(true);
+  expect(store.getSnapshot().pr.title).toBe("Renamed");
+  expect(await store.updateTitle("Renamed")).toBe(true);
+  expect(await store.updateTitle("   ")).toBe(true);
+  expect(calls).toEqual(["Renamed"]);
+
+  fail = true;
+  expect(await store.updateTitle("Rejected")).toBe(false);
+  expect(store.getSnapshot().pr.title).toBe("Renamed");
+});
+
 // ============================================================================
 // sortFilesLikeTree
 // ============================================================================

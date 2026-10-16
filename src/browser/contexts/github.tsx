@@ -2617,6 +2617,28 @@ function createGitHubStore() {
     cache.invalidate(`reactions:review-comment:${owner}/${repo}/${commentId}`);
   }
 
+  async function updatePRTitle(
+    owner: string,
+    repo: string,
+    number: number,
+    title: string
+  ) {
+    if (!octokit) throw new Error("Not initialized");
+
+    const { data } = await octokit.request(
+      "PATCH /repos/{owner}/{repo}/pulls/{pull_number}",
+      {
+        owner,
+        repo,
+        pull_number: number,
+        title,
+      }
+    );
+
+    cache.invalidate(`pr:${owner}/${repo}/${number}`);
+    return data;
+  }
+
   async function closePR(owner: string, repo: string, number: number) {
     if (!octokit) throw new Error("Not initialized");
 
@@ -3542,6 +3564,7 @@ function createGitHubStore() {
     convertToDraft,
     markReadyForReview,
     updateBranch,
+    updatePRTitle,
     closePR,
     reopenPR,
     deleteBranch,

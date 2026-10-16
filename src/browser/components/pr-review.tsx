@@ -470,6 +470,16 @@ function PRReviewLayout() {
   const fileLayoutMode = usePRReviewSelector((s) => s.fileLayoutMode);
 
   const canWrite = useCanWrite();
+  const currentUser = useCurrentUser();
+  const viewerPermission = usePRReviewSelector((s) => s.viewerPermission);
+  // Authors can rename their own PRs; otherwise GitHub requires write access.
+  const canEditTitle =
+    canWrite &&
+    (currentUser?.login === pr.user.login ||
+      viewerPermission === "ADMIN" ||
+      viewerPermission === "MAINTAIN" ||
+      viewerPermission === "WRITE" ||
+      pr.base?.repo?.permissions?.push === true);
   // Primitive selectors: useSyncExternalStore needs a stable snapshot, so
   // don't build an object inside the selector.
   const rangeActive = usePRReviewSelector((s) => s.diffRange !== null);
@@ -494,6 +504,7 @@ function PRReviewLayout() {
         owner={owner}
         repo={repo}
         stats={rangeStats}
+        onUpdateTitle={canEditTitle ? store.updateTitle : undefined}
         onToggleSidebar={() => setMobileSidebarOpen(!mobileSidebarOpen)}
         rightContent={
           <>

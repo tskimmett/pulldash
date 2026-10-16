@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-10-16-edit-title",
+    date: "2026-10-16",
+    title: "Edit PR title",
+    description:
+      "Rename a pull request right from the header: click the pencil next to the title (or double-click it), then press Enter to save or Escape to cancel.",
+  },
+  {
     id: "2026-10-09-pwa",
     date: "2026-10-09",
     title: "Install as an app",

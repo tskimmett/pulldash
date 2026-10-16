@@ -3497,6 +3497,37 @@ export class PRReviewStore {
   };
 
   /**
+   * Rename the PR. Optimistic: the new title shows immediately and is
+   * rolled back if GitHub rejects it.
+   */
+  updateTitle = async (title: string): Promise<boolean> => {
+    const { owner, repo, pr } = this.state;
+    const next = title.trim();
+    if (!next || next === pr.title) return true;
+
+    this.set({ pr: { ...pr, title: next } });
+
+    try {
+      await this.github.updatePRTitle(owner, repo, pr.number, next);
+      this.invalidatePRCaches(owner, repo, pr.number);
+
+      // Renaming creates a timeline event
+      this.github
+        .getPRTimeline(owner, repo, pr.number)
+        .then((timeline) => this.set({ timeline }))
+        .catch(() => {});
+
+      return true;
+    } catch (e) {
+      console.error("Failed to update PR title:", e);
+      if (this.state.pr.title === next) {
+        this.set({ pr: { ...this.state.pr, title: pr.title } });
+      }
+      return false;
+    }
+  };
+
+  /**
    * Close the PR
    */
   closePR = async (): Promise<boolean> => {

@@ -5,8 +5,16 @@ import {
   Copy,
   Check,
   Menu,
+  Pencil,
 } from "lucide-react";
-import { memo, useState, useCallback, type ReactNode } from "react";
+import {
+  memo,
+  useState,
+  useCallback,
+  useRef,
+  useEffect,
+  type ReactNode,
+} from "react";
 import { cn } from "../cn";
 import { UserHoverCard } from "../ui/user-hover-card";
 import type { PullRequest } from "@/api/types";
@@ -19,6 +27,8 @@ interface PRHeaderProps {
   rightContent?: ReactNode;
   /** Override the line stats (e.g. when only a commit range is shown). */
   stats?: { additions: number; deletions: number };
+  /** Renames the PR. Omit when the viewer can't edit the title. */
+  onUpdateTitle?: (title: string) => Promise<boolean>;
 }
 
 export const PRHeader = memo(function PRHeader({
@@ -28,6 +38,7 @@ export const PRHeader = memo(function PRHeader({
   onToggleSidebar,
   rightContent,
   stats,
+  onUpdateTitle,
 }: PRHeaderProps) {
   const additions = stats?.additions ?? pr.additions;
   const deletions = stats?.deletions ?? pr.deletions;
@@ -92,10 +103,18 @@ export const PRHeader = memo(function PRHeader({
 
         {/* Title with author and branches inline */}
         <h1 className="text-sm font-medium truncate flex-1 min-w-0 flex items-center gap-2">
-          <span className="truncate">
-            <span>{pr.title}</span>
-            <span className="text-muted-foreground ml-1.5">#{pr.number}</span>
-          </span>
+          {onUpdateTitle ? (
+            <EditableTitle
+              title={pr.title}
+              number={pr.number}
+              onSave={onUpdateTitle}
+            />
+          ) : (
+            <span className="truncate">
+              <span>{pr.title}</span>
+              <span className="text-muted-foreground ml-1.5">#{pr.number}</span>
+            </span>
+          )}
           {/* External Link - moved here next to title */}
           <a
             href={`https://github.com/${owner}/${repo}/pull/${pr.number}`}
@@ -150,6 +169,83 @@ export const PRHeader = memo(function PRHeader({
     </header>
   );
 });
+
+// ============================================================================
+// Editable Title
+// ============================================================================
+
+function EditableTitle({
+  title,
+  number,
+  onSave,
+}: {
+  title: string;
+  number: number;
+  onSave: (title: string) => Promise<boolean>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(title);
+  const inputRef = useRef<HTMLInputElement>(null);
+  // Enter/Escape unmount the input, which can fire a trailing blur.
+  const doneRef = useRef(false);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const startEditing = () => {
+    setDraft(title);
+    doneRef.current = false;
+    setEditing(true);
+  };
+
+  const commit = () => {
+    if (doneRef.current) return;
+    doneRef.current = true;
+    setEditing(false);
+    void onSave(draft);
+  };
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          e.stopPropagation();
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            doneRef.current = true;
+            setEditing(false);
+          }
+        }}
+        aria-label="Pull request title"
+        className="flex-1 min-w-0 px-1.5 py-0.5 -my-0.5 text-sm font-medium bg-background border border-border rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+      />
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-1 min-w-0 group">
+      <span className="truncate" onDoubleClick={startEditing}>
+        <span>{title}</span>
+        <span className="text-muted-foreground ml-1.5">#{number}</span>
+      </span>
+      <button
+        onClick={startEditing}
+        className="p-0.5 rounded text-muted-foreground hover:text-blue-400 transition-colors shrink-0 md:opacity-0 md:group-hover:opacity-100 focus-visible:opacity-100"
+        title="Edit title"
+      >
+        <Pencil className="w-3.5 h-3.5" />
+      </button>
+    </span>
+  );
+}
 
 // ============================================================================
 // Branch Badge with Copy Button
