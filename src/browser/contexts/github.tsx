@@ -1995,17 +1995,45 @@ function createGitHubStore() {
   ) {
     if (!octokit) throw new Error("Not initialized");
 
+    const params = {
+      owner,
+      repo,
+      pull_number: number,
+      merge_method: options?.merge_method ?? "squash",
+      commit_title: options?.commit_title,
+      commit_message: options?.commit_message,
+    };
+
+    try {
+      const { data } = await octokit.request(
+        "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge",
+        params
+      );
+      cache.invalidate(`pr:${owner}/${repo}/${number}`);
+      return data;
+    } catch (e) {
+      // Stacked PRs can only be merged through the asynchronous endpoint.
+      if (!/stacked/i.test(e instanceof Error ? e.message : "")) throw e;
+    }
+
     const { data } = await octokit.request(
-      "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge",
-      {
-        owner,
-        repo,
-        pull_number: number,
-        merge_method: options?.merge_method ?? "squash",
-        commit_title: options?.commit_title,
-        commit_message: options?.commit_message,
-      }
+      "PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge-async",
+      params
     );
+    if (data.status === "failed") {
+      throw new Error(data.details?.message ?? "Failed to merge");
+    }
+
+    // 202: the merge runs in the background; wait for it so callers see the
+    // merged PR when they refetch.
+    for (let i = 0; i < 20 && data.status === "pending"; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      const { data: pr } = await octokit.request(
+        "GET /repos/{owner}/{repo}/pulls/{pull_number}",
+        { owner, repo, pull_number: number }
+      );
+      if (pr.merged) break;
+    }
 
     cache.invalidate(`pr:${owner}/${repo}/${number}`);
     return data;
