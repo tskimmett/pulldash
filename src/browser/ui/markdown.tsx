@@ -815,9 +815,20 @@ export const MarkdownEditor = memo(function MarkdownEditor({
   const suggestedUsers = mentionContext?.suggestedUsers ?? [];
 
   useEffect(() => {
-    if (autoFocus && textareaRef.current) {
-      textareaRef.current.focus();
+    if (!autoFocus || !textareaRef.current) return;
+    // Virtualized rows remount editors as they scroll back into view (e.g.
+    // find-in-diff jumping to a match); don't steal focus from another field.
+    const active = document.activeElement;
+    if (
+      active instanceof HTMLElement &&
+      active !== textareaRef.current &&
+      (active.tagName === "INPUT" ||
+        active.tagName === "TEXTAREA" ||
+        active.isContentEditable)
+    ) {
+      return;
     }
+    textareaRef.current.focus();
   }, [autoFocus]);
 
   // Track if user has manually resized the textarea
