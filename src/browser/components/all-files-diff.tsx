@@ -55,15 +55,26 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
   const [findQuery, setFindQuery] = useState("");
   const [findIndex, setFindIndex] = useState(0);
 
+  const closeFind = () => {
+    setFindOpen(false);
+    setFindQuery("");
+  };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f")
-        return;
       const target = event.target as HTMLElement;
       if (
         target !== findInputRef.current &&
         target.closest("input, textarea, [contenteditable='true']")
       )
+        return;
+      if (event.key === "Escape") {
+        if (!findOpen || event.defaultPrevented) return;
+        event.preventDefault();
+        closeFind();
+        return;
+      }
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "f")
         return;
       event.preventDefault();
       setFindOpen(true);
@@ -71,7 +82,7 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [findOpen]);
 
   const searchableLines = useMemo(
     () =>
@@ -182,8 +193,7 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
                 stepFind(event.shiftKey ? -1 : 1);
               } else if (event.key === "Escape") {
                 event.preventDefault();
-                setFindOpen(false);
-                setFindQuery("");
+                closeFind();
                 scrollRef.current?.focus();
               }
             }}
@@ -214,10 +224,7 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
           <button
             type="button"
             aria-label="Close find"
-            onClick={() => {
-              setFindOpen(false);
-              setFindQuery("");
-            }}
+            onClick={closeFind}
             className="p-1"
           >
             <X className="h-4 w-4" />
