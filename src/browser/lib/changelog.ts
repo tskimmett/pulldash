@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-10-22-timeline-commits",
+    date: "2026-10-22",
+    title: "Open commits from the timeline",
+    description:
+      "Clicking a commit in the PR timeline or Commits tab now shows that commit's changes here instead of opening GitHub. Cmd/Ctrl-click still opens it on GitHub.",
+  },
+  {
     id: "2026-10-16-edit-title",
     date: "2026-10-16",
     title: "Edit PR title",

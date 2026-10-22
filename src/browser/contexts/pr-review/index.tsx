@@ -22,6 +22,7 @@ import { enrichCommentsWithThreads } from "@/browser/lib/review-threads";
 import {
   findLastReviewedSha,
   isRangeAvailable,
+  selectionToRange,
   type DiffRange,
 } from "@/browser/lib/review-range";
 import {
@@ -1217,6 +1218,33 @@ export class PRReviewStore {
   };
 
   clearDiffRange = () => this.setDiffRange(null);
+
+  /** The range showing just `sha`; undefined when it can't be shown here. */
+  private commitRange(sha: string) {
+    const { commits } = this.state;
+    const index = commits.findIndex((c) => c.sha === sha);
+    return index === -1 ? undefined : selectionToRange(commits, index, index);
+  }
+
+  /** Whether showCommit can display `sha` (it's in the PR, parent known). */
+  canShowCommit = (sha: string): boolean => this.commitRange(sha) !== undefined;
+
+  /** Show a single commit's changes and leave the overview for its first file. */
+  showCommit = async (
+    sha: string,
+    fetchFiles?: Parameters<PRReviewStore["setDiffRange"]>[1]
+  ): Promise<void> => {
+    const range = this.commitRange(sha);
+    if (range === undefined) return;
+    await this.setDiffRange(
+      range && { ...range, source: "manual" },
+      fetchFiles
+    );
+    const { diffRangeError, files, showOverview } = this.state;
+    if (!diffRangeError && showOverview && files.length > 0) {
+      this.selectFile(files[0].filename);
+    }
+  };
 
   /**
    * Swap the visible file set. Parsed diffs are keyed by filename, so they

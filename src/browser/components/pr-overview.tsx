@@ -3830,14 +3830,13 @@ function CommitsTab({
             className="w-6 h-6 rounded-full"
           />
           <div className="flex-1 min-w-0">
-            <a
+            <CommitLink
+              sha={commit.sha}
               href={`https://github.com/${owner}/${repo}/commit/${commit.sha}`}
-              target="_blank"
-              rel="noopener noreferrer"
               className="text-sm font-medium truncate block hover:text-blue-400"
             >
               {commit.commit.message.split("\n")[0]}
-            </a>
+            </CommitLink>
             <p className="text-xs text-muted-foreground">
               {commit.commit.author?.name} committed{" "}
               {commit.commit.author?.date &&
@@ -3846,14 +3845,13 @@ function CommitsTab({
           </div>
           <div className="flex items-center gap-2">
             <Check className="w-4 h-4 text-green-500" />
-            <a
+            <CommitLink
+              sha={commit.sha}
               href={`https://github.com/${owner}/${repo}/commit/${commit.sha}`}
-              target="_blank"
-              rel="noopener noreferrer"
               className="text-xs font-mono text-muted-foreground hover:text-blue-400"
             >
               {commit.sha.slice(0, 7)}
-            </a>
+            </CommitLink>
             <button
               onClick={() => navigator.clipboard.writeText(commit.sha)}
               className="p-1 text-muted-foreground hover:text-foreground rounded hover:bg-muted"
@@ -4329,6 +4327,51 @@ type CommittedEvent = Extract<
   { sha: string; author: { date: string } }
 >;
 
+/**
+ * Opens the commit's diff in the app. Modified clicks (and commits that
+ * aren't part of the PR anymore) still go to GitHub.
+ */
+function CommitLink({
+  sha,
+  href,
+  className,
+  title,
+  children,
+}: {
+  sha: string;
+  href: string;
+  className?: string;
+  title?: string;
+  children: React.ReactNode;
+}) {
+  const store = usePRReviewStore();
+  const onClick = (event: React.MouseEvent<HTMLAnchorElement>) => {
+    if (
+      event.button !== 0 ||
+      event.metaKey ||
+      event.ctrlKey ||
+      event.shiftKey ||
+      event.altKey
+    )
+      return;
+    if (!store.canShowCommit(sha)) return;
+    event.preventDefault();
+    void store.showCommit(sha);
+  };
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      onClick={onClick}
+      className={className}
+      title={title}
+    >
+      {children}
+    </a>
+  );
+}
+
 interface CommitGroupProps {
   commits: CommittedEvent[];
   prCommits: PRCommit[];
@@ -4407,23 +4450,21 @@ function CommitGroup({ commits, prCommits, owner, repo }: CommitGroupProps) {
           </div>
           <div className="flex-1 min-w-0 flex items-center gap-2">
             {renderAuthor(commit)}
-            <a
+            <CommitLink
+              sha={commit.sha}
               href={commit.html_url}
-              target="_blank"
-              rel="noopener noreferrer"
               className="flex-1 min-w-0 truncate hover:text-blue-400"
               title={commit.message}
             >
               {commit.message.split("\n")[0]}
-            </a>
-            <a
+            </CommitLink>
+            <CommitLink
+              sha={commit.sha}
               href={commit.html_url}
-              target="_blank"
-              rel="noopener noreferrer"
               className="font-mono text-xs hover:text-blue-400 shrink-0"
             >
               {commit.sha.slice(0, 7)}
-            </a>
+            </CommitLink>
             <span className="shrink-0">
               {getTimeAgo(new Date(commit.author.date))}
             </span>
@@ -4825,14 +4866,13 @@ function TimelineItem({ event, pr }: TimelineItemProps) {
                   {" "}
                   to{" "}
                   {commitUrl ? (
-                    <a
+                    <CommitLink
+                      sha={forcePush.commit_id}
                       href={commitUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
                       className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono hover:text-blue-400 hover:underline"
                     >
                       {forcePush.commit_id.slice(0, 7)}
-                    </a>
+                    </CommitLink>
                   ) : (
                     <code className="px-1.5 py-0.5 bg-muted rounded text-xs font-mono">
                       {forcePush.commit_id.slice(0, 7)}

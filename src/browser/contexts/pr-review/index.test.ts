@@ -1388,6 +1388,38 @@ test("setDiffRange compares through a selected end commit and can extend to head
   expect(requested).toEqual(["c1...c2", "c1...abc123"]);
 });
 
+test("showCommit narrows to one commit and leaves the overview", async () => {
+  const store = createRangeStore();
+  await store.loadPRData();
+  store.selectOverview();
+  const requested: string[] = [];
+  const fetchFiles = async (start: string, end: string) => {
+    requested.push(`${start}...${end}`);
+    return [createMockFile("src/utils.ts")];
+  };
+
+  expect(store.canShowCommit("c1")).toBe(false); // parent unknown
+  expect(store.canShowCommit("elsewhere")).toBe(false);
+  await store.showCommit("c2", fetchFiles);
+  const state = store.getSnapshot();
+  expect(requested).toEqual(["c1...c2"]);
+  expect(state.diffRange).toEqual({
+    startSha: "c1",
+    endSha: "c2",
+    source: "manual",
+  });
+  expect(state.showOverview).toBe(false);
+  expect(state.selectedFile).toBe("src/utils.ts");
+
+  store.selectOverview();
+  await store.showCommit("abc123", fetchFiles);
+  expect(requested).toEqual(["c1...c2", "c2...abc123"]);
+  expect(store.getSnapshot().diffRange).toEqual({
+    startSha: "c2",
+    source: "manual",
+  });
+});
+
 test("setDiffRange keeps the latest range when compare requests finish out of order", async () => {
   const store = createRangeStore();
   await store.loadPRData();
