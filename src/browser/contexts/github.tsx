@@ -212,6 +212,7 @@ export interface ReviewThread {
       line: number | null;
       originalLine: number | null;
       startLine: number | null;
+      originalStartLine: number | null;
       diffHunk: string | null;
       author: { login: string; avatarUrl: string } | null;
       createdAt: string;
@@ -3163,6 +3164,7 @@ function createGitHubStore() {
           line: number | null;
           originalLine: number | null;
           startLine: number | null;
+          originalStartLine: number | null;
           diffHunk: string | null;
           author: { login: string; avatarUrl: string } | null;
           createdAt: string;
@@ -3198,6 +3200,7 @@ function createGitHubStore() {
                     line
                     originalLine
                     startLine
+                    originalStartLine
                     diffHunk
                     author { login avatarUrl }
                     createdAt

@@ -59,6 +59,7 @@ import {
   isForkPR,
 } from "../contexts/pr-review";
 import { parseDiffCached, type ParsedDiff } from "../lib/diff";
+import { commentContextLines } from "../lib/comment-context";
 import { getLatestReviewsByUser } from "../lib/latest-reviews";
 import {
   useGitHub,
@@ -2710,37 +2711,14 @@ function ReviewThreadBox({
       .catch(console.error);
   }, [diffHunk, filePath]);
 
-  // Get diff lines from parsed diff (first hunk), filtered to show only relevant lines
-  // GitHub's UI shows ~10 lines of context around the comment, not the entire diff hunk
+  // GitHub's diffHunk spans from the top of the hunk to the commented line;
+  // show only the commented range plus a few lines of context, like GitHub
   const diffHunkData = useMemo(() => {
     const hunk = parsedDiff?.hunks.find((h) => h.type === "hunk");
     if (!hunk || hunk.type !== "hunk" || !firstComment) return null;
-
-    const commentLine = firstComment.line;
-    const commentStartLine = firstComment.startLine;
-
-    // If no line info, show all (fallback)
-    if (!commentLine) return hunk;
-
-    // Filter lines to show only those around the comment range
-    // Show ~4 lines of context before the comment start
-    const CONTEXT_LINES = 4;
-    const rangeStart = (commentStartLine ?? commentLine) - CONTEXT_LINES;
-    const rangeEnd = commentLine;
-
-    const filteredLines = hunk.lines.filter((line) => {
-      // Use newLineNumber for additions, oldLineNumber for deletions/context
-      const lineNum = line.newLineNumber ?? line.oldLineNumber;
-      if (!lineNum) return false;
-      return lineNum >= rangeStart && lineNum <= rangeEnd;
-    });
-
-    // If filter is too aggressive and removes everything, show original
-    if (filteredLines.length === 0) return hunk;
-
     return {
       ...hunk,
-      lines: filteredLines,
+      lines: commentContextLines(hunk.lines, firstComment.originalStartLine),
     };
   }, [parsedDiff, firstComment]);
 
