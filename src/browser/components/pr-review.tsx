@@ -2266,27 +2266,73 @@ const DiffViewer = memo(function DiffViewer({
   useWidthCssVar(hScrollRef, "--diff-visible-w");
 
   // Rows are absolutely positioned and virtualized, so the scroll width can't
-  // come from layout; size the container to the widest line up front. Split
-  // sides are equal halves, so they need twice the widest side.
-  const maxLineWidth = useMemo(() => {
+  // come from layout; size the scroller to the widest line up front. Split
+  // sides scroll independently, so each side tracks its own widest line.
+  const lineWidths = useMemo(() => {
     const lineWidth = (line: DiffLine | null) => {
       let width = 0;
       if (line)
         for (const seg of line.content) width += htmlLineWidth(seg.html);
       return width;
     };
-    let max = 0;
+    let unified = 0;
+    let old = 0;
+    let next = 0;
     for (const row of virtualRows) {
-      const width =
-        row.type === "line"
-          ? lineWidth(row.line)
-          : row.type === "split-line"
-            ? 2 * Math.max(lineWidth(row.pair.left), lineWidth(row.pair.right))
-            : 0;
-      if (width > max) max = width;
+      if (row.type === "line") {
+        unified = Math.max(unified, lineWidth(row.line));
+      } else if (row.type === "split-line") {
+        old = Math.max(old, lineWidth(row.pair.left));
+        next = Math.max(next, lineWidth(row.pair.right));
+      }
     }
-    return max;
+    return { unified, old, new: next };
   }, [virtualRows]);
+
+  // Split sides clip their code and translate it by --split-{side}-x, driven
+  // by a native scrollbar per side. CSS vars keep scrolling off React.
+  const oldBarRef = useRef<HTMLDivElement>(null);
+  const newBarRef = useRef<HTMLDivElement>(null);
+  const syncSplitScroll = (side: "old" | "new") => {
+    const bar = (side === "old" ? oldBarRef : newBarRef).current;
+    containerRef.current?.style.setProperty(
+      `--split-${side}-x`,
+      `${bar?.scrollLeft ?? 0}px`
+    );
+  };
+
+  useEffect(() => {
+    for (const bar of [oldBarRef.current, newBarRef.current])
+      if (bar) bar.scrollLeft = 0;
+    const container = containerRef.current;
+    container?.style.removeProperty("--split-old-x");
+    container?.style.removeProperty("--split-new-x");
+  }, [diff, viewMode]);
+
+  // Horizontal wheel/trackpad input scrolls the side under the pointer.
+  useEffect(() => {
+    const scrollEl = parentRef.current;
+    if (!scrollEl || viewMode !== "split") return;
+    const onWheel = (e: WheelEvent) => {
+      let dx = e.deltaX;
+      if (!dx && e.shiftKey) dx = e.deltaY;
+      if (!dx || (!e.shiftKey && Math.abs(dx) < Math.abs(e.deltaY))) return;
+      const container = containerRef.current;
+      const target = e.target as Element;
+      if (!container?.contains(target) || target.closest("textarea")) return;
+      const rect = container.getBoundingClientRect();
+      const bar =
+        e.clientX < rect.left + rect.width / 2
+          ? oldBarRef.current
+          : newBarRef.current;
+      if (!bar || bar.scrollWidth <= bar.clientWidth) return;
+      e.preventDefault();
+      bar.scrollLeft +=
+        e.deltaMode === WheelEvent.DOM_DELTA_LINE ? dx * 16 : dx;
+    };
+    scrollEl.addEventListener("wheel", onWheel, { passive: false });
+    return () => scrollEl.removeEventListener("wheel", onWheel);
+  }, [viewMode]);
   useFindHighlights(containerRef, findQuery, findOpen);
   const rafIdRef = useRef<number | null>(null);
 
@@ -2479,7 +2525,10 @@ const DiffViewer = memo(function DiffViewer({
                 style={{
                   height: `${totalSize}px`,
                   // Gutters + code padding are ~120px beside the code itself.
-                  minWidth: `calc(${maxLineWidth}ch + 120px)`,
+                  minWidth:
+                    viewMode === "split"
+                      ? undefined
+                      : `calc(${lineWidths.unified}ch + 120px)`,
                 }}
               >
                 {virtualizer.getVirtualItems().map((virtualRow) => {
@@ -2523,6 +2572,24 @@ const DiffViewer = memo(function DiffViewer({
             </div>
           </div>
         </div>
+        {viewMode === "split" && (
+          <div className="flex shrink-0 px-2 font-mono text-[0.75rem]">
+            {(["old", "new"] as const).map((side) => (
+              <div
+                key={side}
+                ref={side === "old" ? oldBarRef : newBarRef}
+                className="flex-1 min-w-0 overflow-x-auto overflow-y-hidden"
+                onScroll={() => syncSplitScroll(side)}
+              >
+                {/* Gutter + code padding are ~60px beside the code itself. */}
+                <div
+                  className="h-px"
+                  style={{ width: `calc(${lineWidths[side]}ch + 60px)` }}
+                />
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </LineDragContext.Provider>
   );
@@ -2858,6 +2925,13 @@ interface SplitDiffLineRowProps {
   pair: SplitLinePair;
 }
 
+const OLD_SIDE_SHIFT: React.CSSProperties = {
+  transform: "translateX(calc(-1 * var(--split-old-x, 0px)))",
+};
+const NEW_SIDE_SHIFT: React.CSSProperties = {
+  transform: "translateX(calc(-1 * var(--split-new-x, 0px)))",
+};
+
 const SplitDiffLineRow = memo(function SplitDiffLineRow({
   pair,
 }: SplitDiffLineRowProps) {
@@ -2998,14 +3072,18 @@ const SplitDiffLineRow = memo(function SplitDiffLineRow({
         >
           {lineNumber || ""}
         </div>
-        {/* Code content */}
+        {/* Code content: clipped (not a scroll container, so scrollIntoView
+            can't desync it) and shifted by its side's scrollbar. */}
         <div
           data-find-code
-          className="flex-1 min-w-0 whitespace-pre-wrap [overflow-wrap:anywhere] leading-5 pr-2 pl-2 cursor-text"
+          className="flex-1 min-w-0 overflow-clip leading-5 cursor-text"
           onMouseDown={handleContentMouseDown}
           onClick={handleContentClick}
         >
-          <Tag className="no-underline">
+          <Tag
+            className="block w-max px-2 no-underline"
+            style={side === "old" ? OLD_SIDE_SHIFT : NEW_SIDE_SHIFT}
+          >
             {line.content.map((seg, i) => {
               // In split view, only show relevant segment types per side
               // Left (old) side: only highlight deletes, not inserts
