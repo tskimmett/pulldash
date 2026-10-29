@@ -163,6 +163,16 @@ export interface CommentingOnLine {
   startLine?: number;
   /** GitHub diff side: LEFT for deleted lines, RIGHT for added/context. */
   side: CommentSide;
+  /** Reopened from a draft on returning to the file; don't steal focus. */
+  restored?: boolean;
+}
+
+/** Draft-map key for a new inline comment form. */
+export function newCommentDraftKey(
+  path: string | null | undefined,
+  { line, startLine, side }: Omit<CommentingOnLine, "path">
+): string {
+  return `new:${path}:${side}:${startLine ?? line}-${line}`;
 }
 
 export function toCommentSide(
@@ -680,6 +690,7 @@ export class PRReviewStore {
       return;
     }
     if (this.state.showOverview && !scrollTarget) return;
+    this.parkCommenting();
     this.set({
       showOverview: true,
       overviewScrollTarget: scrollTarget ?? null,
@@ -721,6 +732,7 @@ export class PRReviewStore {
     }
     // Track for shift+click range selection
     this.lastSelectedFile = filename;
+    this.parkCommenting();
     this.set({
       selectedFile: filename,
       ...(layerKey ? { selectedLayerId: layerKey } : {}),
@@ -731,7 +743,7 @@ export class PRReviewStore {
       focusedLineSide: null,
       selectionAnchor: null,
       selectionAnchorSide: null,
-      commentingOnLine: null,
+      commentingOnLine: this.unparkCommenting(filename),
       gotoLineMode: false,
       gotoLineInput: "",
       focusedCommentId: null,
@@ -2642,6 +2654,30 @@ export class PRReviewStore {
   clearDraft = (key: string) => {
     this.drafts.delete(key);
   };
+
+  // Open comment forms with unsubmitted text, keyed by file, so leaving a
+  // file and coming back reopens the form instead of hiding the draft.
+  private parkedCommenting = new Map<string, CommentingOnLine>();
+
+  private draftKeyFor(c: CommentingOnLine): string {
+    return newCommentDraftKey(c.path ?? this.state.selectedFile, c);
+  }
+
+  private parkCommenting() {
+    const c = this.state.commentingOnLine;
+    const file = c?.path ?? this.state.selectedFile;
+    if (c && file && this.drafts.has(this.draftKeyFor(c))) {
+      this.parkedCommenting.set(file, c);
+    }
+  }
+
+  private unparkCommenting(filename: string): CommentingOnLine | null {
+    const c = this.parkedCommenting.get(filename);
+    if (!c) return null;
+    this.parkedCommenting.delete(filename);
+    const key = newCommentDraftKey(c.path ?? filename, c);
+    return this.drafts.has(key) ? { ...c, restored: true } : null;
+  }
 
   enterGotoMode = () => {
     this.set({ gotoLineMode: true, gotoLineInput: "" });

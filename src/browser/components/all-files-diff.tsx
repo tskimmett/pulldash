@@ -510,6 +510,7 @@ const AllFileSection = memo(function AllFileSection({
                           line={commenting.line}
                           startLine={commenting.startLine}
                           side={commenting.side}
+                          restored={commenting.restored}
                         />
                       </PinToVisibleWidth>
                     )}

@@ -113,6 +113,7 @@ import {
   isThreadCollapsed,
   type LocalPendingComment,
   type CommentSide,
+  newCommentDraftKey,
   type ParsedDiff,
   type DiffLine,
   type DiffHunk,
@@ -1196,6 +1197,7 @@ type VirtualRowType =
       lineNum: number;
       startLine?: number;
       side: CommentSide;
+      restored?: boolean;
       index: number;
     }
   | { type: "pending-comment"; comment: LocalPendingComment; index: number }
@@ -1797,6 +1799,7 @@ const DiffViewer = memo(function DiffViewer({
           lineNum: targetLine,
           startLine: commentingOnLine.startLine,
           side: commentingOnLine.side,
+          restored: commentingOnLine.restored,
           index: newIndex++,
         });
       }
@@ -2676,6 +2679,7 @@ const VirtualRowRenderer = memo(function VirtualRowRenderer({
           line={row.lineNum}
           startLine={row.startLine}
           side={row.side}
+          restored={row.restored}
         />
       );
     case "pending-comment":
@@ -3308,6 +3312,8 @@ interface InlineCommentFormProps {
   line: number;
   startLine?: number;
   side: CommentSide;
+  /** Reopened from a saved draft; don't steal focus. */
+  restored?: boolean;
 }
 
 export const InlineCommentForm = memo(function InlineCommentForm({
@@ -3315,13 +3321,14 @@ export const InlineCommentForm = memo(function InlineCommentForm({
   line,
   startLine,
   side,
+  restored,
 }: InlineCommentFormProps) {
   const store = usePRReviewStore();
   const currentUser = useCurrentUser();
   const { addPendingComment } = useCommentActions();
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
   const [text, setText, clearText] = useCommentDraft(
-    `new:${path ?? selectedFile}:${side}:${startLine ?? line}-${line}`
+    newCommentDraftKey(path ?? selectedFile, { line, startLine, side })
   );
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -3409,7 +3416,7 @@ export const InlineCommentForm = memo(function InlineCommentForm({
           onKeyDown={handleKeyDown}
           placeholder="Leave a comment..."
           minHeight="100px"
-          autoFocus
+          autoFocus={!restored}
         />
         {error && (
           <div className="mt-2 flex items-start gap-2 text-xs text-destructive">

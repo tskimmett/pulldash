@@ -1,6 +1,7 @@
 import { test, expect, beforeEach } from "bun:test";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import {
+  newCommentDraftKey,
   PRReviewStore,
   isForkPR,
   commentThreadKey,
@@ -691,6 +692,35 @@ test("comment drafts persist until cleared or emptied", () => {
   store.setDraft("reply:1", "thanks");
   store.clearDraft("reply:1");
   expect(store.getDraft("reply:1")).toBeUndefined();
+});
+
+test("comment form with a draft reopens unfocused when returning to its file", () => {
+  const store = createStore();
+  store.selectFile("src/index.ts");
+  store.startCommenting(42);
+  store.setDraft(
+    newCommentDraftKey("src/index.ts", { line: 42, side: "RIGHT" }),
+    "half-written"
+  );
+
+  store.selectFile("src/other.ts");
+  expect(store.getSnapshot().commentingOnLine).toBeNull();
+
+  store.selectFile("src/index.ts");
+  expect(store.getSnapshot().commentingOnLine).toEqual({
+    line: 42,
+    startLine: undefined,
+    side: "RIGHT",
+    path: undefined,
+    restored: true,
+  });
+
+  // A form with no text isn't worth restoring.
+  store.cancelCommenting();
+  store.startCommenting(10);
+  store.selectFile("src/other.ts");
+  store.selectFile("src/index.ts");
+  expect(store.getSnapshot().commentingOnLine).toBeNull();
 });
 
 test("addPendingComment adds comment and clears selection", () => {
