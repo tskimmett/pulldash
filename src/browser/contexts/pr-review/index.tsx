@@ -3390,7 +3390,8 @@ export class PRReviewStore {
         workflowRunsAwaitingApproval: awaitingApproval,
         loadingChecks: false,
       });
-      if (this.state.autoMerge?.request) await this.refreshAutoMerge();
+      // canEnable flips once the last requirement is met, so re-read it too
+      if (this.state.autoMerge) await this.refreshAutoMerge();
     } catch (error) {
       console.error("Failed to refresh checks:", error);
       this.set({ loadingChecks: false });
