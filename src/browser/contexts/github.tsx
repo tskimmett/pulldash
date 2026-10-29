@@ -1900,6 +1900,7 @@ function createGitHubStore() {
         owner,
         repo,
         ref: sha,
+        per_page: 100,
       }),
       octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/status", {
         owner,

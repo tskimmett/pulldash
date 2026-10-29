@@ -3397,6 +3397,30 @@ export class PRReviewStore {
     }
   };
 
+  /**
+   * Review-triggered workflows (e.g. an approval gate) start a few seconds
+   * after the review lands, so re-read checks past the cache until they've
+   * appeared and settled.
+   */
+  refreshChecksAfterReview = async (): Promise<void> => {
+    const { owner, repo, pr } = this.state;
+    const sha = pr.head.sha;
+    for (let attempt = 0; attempt < 8; attempt++) {
+      this.github.invalidateCache(
+        (k) =>
+          k === cacheKeys.checks(owner, repo, sha) ||
+          k === cacheKeys.workflowRuns(owner, repo, sha)
+      );
+      await this.refreshChecks();
+      // Navigated to another PR meanwhile
+      if (this.state.pr.number !== pr.number) return;
+      const { checks } = this.state;
+      if (attempt >= 2 && (!checks || checksRollupState(checks) !== "PENDING"))
+        return;
+      await new Promise((resolve) => setTimeout(resolve, 4000));
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // PR Mutations
   // ---------------------------------------------------------------------------

@@ -82,6 +82,7 @@ export function useReviewActions() {
       }
 
       store.clearReviewState();
+      void store.refreshChecksAfterReview();
 
       // Navigate to overview page and scroll to the new review
       store.selectOverview(scrollTarget);
