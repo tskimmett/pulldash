@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-02-check-details",
+    date: "2026-11-02",
+    title: "Check details and re-run",
+    description:
+      "Expand a check on the Checks tab to see its summary and annotations, or re-run it. Details on the overview card now opens that check here.",
+  },
+  {
     id: "2026-11-02-description-modal",
     date: "2026-11-02",
     title: "PR description in a modal",

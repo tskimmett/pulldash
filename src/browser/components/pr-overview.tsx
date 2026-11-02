@@ -85,6 +85,8 @@ import {
 } from "../ui/dropdown-menu";
 import { useCanWrite } from "../contexts/auth";
 import { StackNav } from "./pr-stack-nav";
+import { CheckRunItem, StatusItem } from "./check-details";
+import { checkRunKey, commitStatusKey } from "../lib/check-rerun";
 import { PRDescription } from "./pr-description";
 
 // ============================================================================
@@ -151,6 +153,38 @@ export const PROverview = memo(function PROverview() {
 
   // Local UI state (not in store)
   const [activeTab, setActiveTab] = useState<TabType>("conversation");
+  const [expandedChecks, setExpandedChecks] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [scrollToCheck, setScrollToCheck] = useState<string | null>(null);
+
+  const handleToggleCheck = useCallback((key: string) => {
+    setExpandedChecks((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(key)) next.add(key);
+      return next;
+    });
+  }, []);
+
+  // Details on the overview card lands on the Checks tab with that row open.
+  const handleOpenCheck = useCallback((key: string) => {
+    setActiveTab("checks");
+    setExpandedChecks((prev) => new Set(prev).add(key));
+    setScrollToCheck(key);
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== "checks" || !scrollToCheck) return;
+    document
+      .querySelector(`[data-check-key="${CSS.escape(scrollToCheck)}"]`)
+      ?.scrollIntoView({ block: "nearest" });
+    setScrollToCheck(null);
+  }, [activeTab, scrollToCheck]);
+
+  const handleRerunCheck = useCallback(
+    (check: CheckRun) => store.rerunCheck(check),
+    [store]
+  );
   const [showMergeOptions, setShowMergeOptions] = useState(false);
   const [commentText, setCommentText] = useState("");
   const [submittingComment, setSubmittingComment] = useState(false);
@@ -1387,6 +1421,9 @@ export const PROverview = memo(function PROverview() {
                 lastUpdated={checksLastUpdated}
                 onRefresh={handleRefreshChecks}
                 refreshing={refreshingChecks}
+                expanded={expandedChecks}
+                onToggle={handleToggleCheck}
+                onRerun={canWrite ? handleRerunCheck : undefined}
               />
             )}
           </div>
@@ -1824,6 +1861,7 @@ export const PROverview = memo(function PROverview() {
                   pr={pr}
                   checkStatus={checkStatus}
                   checks={checks}
+                  onOpenCheck={handleOpenCheck}
                   canMerge={canMergePR}
                   canMergeRepo={canMergeRepo}
                   merging={merging}
@@ -2994,6 +3032,7 @@ function MergeSection({
   pr,
   checkStatus,
   checks,
+  onOpenCheck,
   canMerge: canMergePR,
   canMergeRepo,
   merging,
@@ -3025,6 +3064,7 @@ function MergeSection({
   };
   checkStatus: "success" | "failure" | "pending" | "action_required";
   checks: { checkRuns: CheckRun[]; status: CombinedStatus } | null;
+  onOpenCheck: (key: string) => void;
   canMerge: boolean;
   canMergeRepo: boolean;
   merging: boolean;
@@ -3402,16 +3442,13 @@ function MergeSection({
                         ? "Skipped"
                         : ""}
                 </span>
-                {check.html_url && (
-                  <a
-                    href={check.html_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-400 hover:underline shrink-0"
-                  >
-                    Details
-                  </a>
-                )}
+                <button
+                  type="button"
+                  onClick={() => onOpenCheck(checkRunKey(check.id))}
+                  className="text-xs text-blue-400 hover:underline shrink-0"
+                >
+                  Details
+                </button>
               </div>
             ))}
             {checks.status.statuses.map((status) => (
@@ -3433,16 +3470,13 @@ function MergeSection({
                     Pending
                   </span>
                 )}
-                {status.target_url && (
-                  <a
-                    href={status.target_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-blue-400 hover:underline shrink-0"
-                  >
-                    Details
-                  </a>
-                )}
+                <button
+                  type="button"
+                  onClick={() => onOpenCheck(commitStatusKey(status.context))}
+                  className="text-xs text-blue-400 hover:underline shrink-0"
+                >
+                  Details
+                </button>
               </div>
             ))}
           </div>
@@ -3812,11 +3846,17 @@ function ChecksTab({
   lastUpdated,
   onRefresh,
   refreshing,
+  expanded,
+  onToggle,
+  onRerun,
 }: {
   checks: { checkRuns: CheckRun[]; status: CombinedStatus } | null;
   lastUpdated: Date | null;
   onRefresh: () => void;
   refreshing: boolean;
+  expanded: Set<string>;
+  onToggle: (key: string) => void;
+  onRerun?: (check: CheckRun) => Promise<void>;
 }) {
   if (
     !checks ||
@@ -3859,10 +3899,21 @@ function ChecksTab({
       {/* Checks list */}
       <div className="border border-border rounded-md overflow-hidden divide-y divide-border">
         {checks.checkRuns.map((check) => (
-          <CheckRunItem key={check.id} check={check} />
+          <CheckRunItem
+            key={check.id}
+            check={check}
+            expanded={expanded.has(checkRunKey(check.id))}
+            onToggle={onToggle}
+            onRerun={onRerun}
+          />
         ))}
-        {checks.status.statuses.map((status, idx) => (
-          <StatusItem key={idx} status={status} />
+        {checks.status.statuses.map((status) => (
+          <StatusItem
+            key={status.context}
+            status={status}
+            expanded={expanded.has(commitStatusKey(status.context))}
+            onToggle={onToggle}
+          />
         ))}
       </div>
     </div>
@@ -3872,86 +3923,6 @@ function ChecksTab({
 // ============================================================================
 // Helper Components
 // ============================================================================
-
-function CheckRunItem({ check }: { check: CheckRun }) {
-  const getIcon = () => {
-    if (check.status !== "completed") {
-      return <Clock className="w-4 h-4 text-yellow-500 animate-pulse" />;
-    }
-    switch (check.conclusion) {
-      case "success":
-        return <CheckCircle2 className="w-4 h-4 text-green-500" />;
-      case "failure":
-        return <XCircle className="w-4 h-4 text-red-500" />;
-      default:
-        return <MinusCircle className="w-4 h-4 text-muted-foreground" />;
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-3 p-3 hover:bg-card/30">
-      {getIcon()}
-      <span className="flex-1 min-w-0 text-sm wrap-anywhere">{check.name}</span>
-      {check.html_url && (
-        <a
-          href={check.html_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm text-blue-400 hover:underline shrink-0"
-        >
-          Details
-        </a>
-      )}
-    </div>
-  );
-}
-
-function StatusItem({
-  status,
-}: {
-  status: {
-    state: string;
-    context: string;
-    description: string | null;
-    target_url: string | null;
-  };
-}) {
-  const getIcon = () => {
-    switch (status.state) {
-      case "success":
-        return <CheckCircle2 className="w-4 h-4 text-green-500" />;
-      case "failure":
-      case "error":
-        return <XCircle className="w-4 h-4 text-red-500" />;
-      default:
-        return <Clock className="w-4 h-4 text-yellow-500 animate-pulse" />;
-    }
-  };
-
-  return (
-    <div className="flex items-center gap-3 p-3 hover:bg-card/30">
-      {getIcon()}
-      <div className="flex-1 min-w-0">
-        <span className="text-sm wrap-anywhere">{status.context}</span>
-        {status.description && (
-          <p className="text-xs text-muted-foreground truncate">
-            {status.description}
-          </p>
-        )}
-      </div>
-      {status.target_url && (
-        <a
-          href={status.target_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-sm text-blue-400 hover:underline shrink-0"
-        >
-          Details
-        </a>
-      )}
-    </div>
-  );
-}
 
 function CheckStatusIcon({
   status,

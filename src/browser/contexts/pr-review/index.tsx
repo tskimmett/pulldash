@@ -40,6 +40,7 @@ import type {
   SemanticReview,
 } from "@/semantic/schema";
 import { layerFilesInOrder } from "@/semantic/layer-files";
+import { hasCheckRestarted } from "@/browser/lib/check-rerun";
 import {
   checksRollupState,
   fingerprintMatchesPR,
@@ -3455,6 +3456,29 @@ export class PRReviewStore {
       if (attempt >= 2 && (!checks || checksRollupState(checks) !== "PENDING"))
         return;
       await new Promise((resolve) => setTimeout(resolve, 4000));
+    }
+  };
+
+  /**
+   * Re-run a finished check. Resolves once the re-read checks show it has
+   * restarted (or after ~a minute, so a stuck provider can't spin forever).
+   */
+  rerunCheck = async (check: CheckRun): Promise<void> => {
+    const { owner, repo, pr } = this.state;
+    const sha = pr.head.sha;
+    await this.github.rerunCheckRun(owner, repo, check);
+    for (let attempt = 0; attempt < 20; attempt++) {
+      this.github.invalidateCache(
+        (k) =>
+          k === cacheKeys.checks(owner, repo, sha) ||
+          k === cacheKeys.workflowRuns(owner, repo, sha)
+      );
+      await this.refreshChecks();
+      // Navigated to another PR meanwhile
+      if (this.state.pr.number !== pr.number) return;
+      const { checks } = this.state;
+      if (checks && hasCheckRestarted(check, checks.checkRuns)) return;
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     }
   };
 

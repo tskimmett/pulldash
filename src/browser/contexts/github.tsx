@@ -26,6 +26,7 @@ import {
   type Tree,
 } from "../lib/rebase-range";
 import { fetchAllPages } from "../lib/fetch-all-pages";
+import { rerunTarget } from "../lib/check-rerun";
 import { openPersistentStore } from "../lib/persistent-cache";
 import { RequestCache } from "../lib/request-cache";
 import {
@@ -67,6 +68,7 @@ export type Review = components["schemas"]["pull-request-review"] & {
   body_html?: string;
 };
 export type CheckRun = components["schemas"]["check-run"];
+export type CheckAnnotation = components["schemas"]["check-annotation"];
 export type CombinedStatus = components["schemas"]["combined-commit-status"];
 // Extended IssueComment with body_html from GitHub's HTML media type
 export type IssueComment = components["schemas"]["issue-comment"] & {
@@ -1985,6 +1987,42 @@ function createGitHubStore() {
     cache.invalidate(`workflow-runs:${owner}/${repo}`);
   }
 
+  async function rerunCheckRun(owner: string, repo: string, check: CheckRun) {
+    if (!octokit) throw new Error("Not initialized");
+
+    const target = rerunTarget(check);
+    if (target.kind === "actions-job") {
+      await octokit.request(
+        "POST /repos/{owner}/{repo}/actions/jobs/{job_id}/rerun",
+        { owner, repo, job_id: target.jobId }
+      );
+    } else {
+      await octokit.request(
+        "POST /repos/{owner}/{repo}/check-runs/{check_run_id}/rerequest",
+        { owner, repo, check_run_id: target.checkRunId }
+      );
+    }
+  }
+
+  async function getCheckRunAnnotations(
+    owner: string,
+    repo: string,
+    checkRunId: number
+  ): Promise<CheckAnnotation[]> {
+    if (!octokit) throw new Error("Not initialized");
+
+    return fetchAllPages(
+      (page) =>
+        octokit!
+          .request(
+            "GET /repos/{owner}/{repo}/check-runs/{check_run_id}/annotations",
+            { owner, repo, check_run_id: checkRunId, per_page: 100, page }
+          )
+          .then((res) => res.data),
+      100
+    );
+  }
+
   async function mergePR(
     owner: string,
     repo: string,
@@ -3576,6 +3614,8 @@ function createGitHubStore() {
     getPRChecks: getPRChecksForSha,
     getWorkflowRuns: getWorkflowRunsForSha,
     approveWorkflowRun,
+    rerunCheckRun,
+    getCheckRunAnnotations,
     mergePR,
     getAutoMergeState,
     enableAutoMerge,
