@@ -85,6 +85,7 @@ import {
 } from "../ui/dropdown-menu";
 import { useCanWrite } from "../contexts/auth";
 import { StackNav } from "./pr-stack-nav";
+import { PRDescription } from "./pr-description";
 
 // ============================================================================
 // Types
@@ -641,23 +642,6 @@ export const PROverview = memo(function PROverview() {
     new Set()
   );
 
-  // Fetch PR body reactions
-  useEffect(() => {
-    const fetchPRReactions = async () => {
-      try {
-        const prReactions = await github.getIssueReactions(
-          owner,
-          repo,
-          pr.number
-        );
-        setReactions((prev) => ({ ...prev, issue: prReactions }));
-      } catch (error) {
-        console.error("Failed to fetch PR reactions:", error);
-      }
-    };
-    fetchPRReactions();
-  }, [github, owner, repo, pr.number]);
-
   // Fetch comment reactions when conversation loads
   useEffect(() => {
     const fetchCommentReactions = async () => {
@@ -684,41 +668,6 @@ export const PROverview = memo(function PROverview() {
       fetchCommentReactions();
     }
   }, [github, owner, repo, conversation]);
-
-  const handleAddPRReaction = useCallback(
-    async (content: ReactionContent) => {
-      try {
-        const newReaction = await github.addIssueReaction(
-          owner,
-          repo,
-          pr.number,
-          content
-        );
-        setReactions((prev) => ({
-          ...prev,
-          issue: [...(prev.issue || []), newReaction],
-        }));
-      } catch (error) {
-        console.error("Failed to add reaction:", error);
-      }
-    },
-    [github, owner, repo, pr.number]
-  );
-
-  const handleRemovePRReaction = useCallback(
-    async (reactionId: number) => {
-      try {
-        await github.deleteIssueReaction(owner, repo, pr.number, reactionId);
-        setReactions((prev) => ({
-          ...prev,
-          issue: (prev.issue || []).filter((r) => r.id !== reactionId),
-        }));
-      } catch (error) {
-        console.error("Failed to remove reaction:", error);
-      }
-    },
-    [github, owner, repo, pr.number]
-  );
 
   const handleAddCommentReaction = useCallback(
     async (commentId: number, content: ReactionContent) => {
@@ -1107,19 +1056,7 @@ export const PROverview = memo(function PROverview() {
             {activeTab === "conversation" && (
               <>
                 {/* PR Description */}
-                <CommentBox
-                  id="pr-description"
-                  user={pr.user}
-                  createdAt={pr.created_at}
-                  body={pr.body}
-                  bodyHtml={pr.body_html}
-                  isAuthor
-                  reactions={reactions.issue}
-                  onAddReaction={canWrite ? handleAddPRReaction : undefined}
-                  onRemoveReaction={
-                    canWrite ? handleRemovePRReaction : undefined
-                  }
-                  currentUser={currentUser}
+                <PRDescription
                   isFocused={focusedOverviewItemId === "pr-description"}
                 />
 
@@ -2336,7 +2273,7 @@ function LabelsSection({
 // Comment Box Component
 // ============================================================================
 
-function CommentBox({
+export function CommentBox({
   id,
   user,
   createdAt,

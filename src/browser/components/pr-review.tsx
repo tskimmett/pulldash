@@ -36,6 +36,7 @@ import {
   Search,
   ExternalLink,
   BookOpen,
+  FileText,
   Smile,
   FlaskConical,
   FlaskConicalOff,
@@ -53,6 +54,7 @@ import {
 } from "../ui/tooltip";
 import { cn } from "../cn";
 import { PRHeader } from "./pr-header";
+import { PRDescriptionDialog } from "./pr-description";
 import { SemanticReviewButton } from "./semantic-review-button";
 import { DiffRangeBanner, DiffRangeButton } from "./diff-range-button";
 import { SemanticLayerBar, SemanticSidebar } from "./semantic-panel";
@@ -378,6 +380,18 @@ function PRReviewLayout() {
   const { open: commandPaletteOpen, setOpen: setCommandPaletteOpen } =
     useCommandPalette();
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [descriptionOpen, setDescriptionOpen] = useState(false);
+
+  // `i` key (see useKeyboardNavigation) toggles the description modal
+  useEffect(() => {
+    // The overview already shows the description inline.
+    const toggle = () => {
+      if (!store.getSnapshot().showOverview) setDescriptionOpen((o) => !o);
+    };
+    window.addEventListener("pr-review:toggle-description", toggle);
+    return () =>
+      window.removeEventListener("pr-review:toggle-description", toggle);
+  }, [store]);
 
   // Expose for button click
   const openCommandPalette = useCallback(
@@ -391,6 +405,7 @@ function PRReviewLayout() {
   }, []);
 
   const viewMode = usePRReviewSelector((s) => s.viewMode);
+  const showOverview = usePRReviewSelector((s) => s.showOverview);
 
   // Initialize hooks that load data
   useKeyboardNavigation();
@@ -531,6 +546,16 @@ function PRReviewLayout() {
               <List className="w-3.5 h-3.5" />
               <span className="hidden md:inline">All files</span>
             </button>
+            {!showOverview && (
+              <button
+                onClick={() => setDescriptionOpen(true)}
+                title="View PR description (i)"
+                className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium rounded-md transition-colors bg-muted text-muted-foreground hover:bg-muted/70"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span className="hidden md:inline">Description</span>
+              </button>
+            )}
             <DiffRangeButton />
             <SemanticReviewButton />
             {canWrite && <SubmitReviewDropdown />}
@@ -562,6 +587,11 @@ function PRReviewLayout() {
         )}
         <DiffPanel />
       </div>
+
+      <PRDescriptionDialog
+        open={descriptionOpen}
+        onOpenChange={setDescriptionOpen}
+      />
 
       <CommandPalette
         open={commandPaletteOpen}

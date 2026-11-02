@@ -10,7 +10,9 @@ export function useKeyboardNavigation() {
       if (
         target.tagName === "INPUT" ||
         target.tagName === "TEXTAREA" ||
-        target.isContentEditable
+        target.isContentEditable ||
+        // Modals (e.g. the PR description) own the keyboard while open.
+        target.closest?.('[role="dialog"]')
       ) {
         return;
       }
@@ -137,6 +139,10 @@ export function useKeyboardNavigation() {
         case "o":
           e.preventDefault();
           store.selectOverview();
+          break;
+        case "i":
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("pr-review:toggle-description"));
           break;
         case "c":
           e.preventDefault();
