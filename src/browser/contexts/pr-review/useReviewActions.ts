@@ -57,8 +57,16 @@ export function useReviewActions() {
       submittedReviewId ??= newReview?.id ?? null;
       const { updatedPR, newComments, reviews, timeline, threadsResult } =
         await refreshUntilReviewVisible(submittedReviewId);
-      // Reviewing removes you from requested reviewers
-      if (updatedPR) store.setPr(updatedPR);
+      // Reviewing removes you from requested reviewers, but GitHub's PR
+      // payload can lag behind, so drop yourself rather than show "pending"
+      if (updatedPR) {
+        store.setPr({
+          ...updatedPR,
+          requested_reviewers: updatedPR.requested_reviewers?.filter(
+            (r) => r.login !== state.currentUser
+          ),
+        });
+      }
       // Threads first so setComments can stamp resolved state onto comments
       if (threadsResult) store.setReviewThreads(threadsResult.threads);
       store.setComments(newComments as ReviewComment[]);
@@ -120,6 +128,9 @@ export function useReviewActions() {
             (e) =>
               (e as { event?: string; id?: number }).event === "reviewed" &&
               (e as { id?: number }).id === reviewId
+          ) &&
+          !updatedPR?.requested_reviewers?.some(
+            (r) => r.login === store.getSnapshot().currentUser
           ));
       if (visible || attempt >= 3) {
         return { updatedPR, newComments, reviews, timeline, threadsResult };
