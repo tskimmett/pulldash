@@ -12,6 +12,12 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-04-w-close-tab",
+    date: "2026-11-04",
+    title: "Press w to close a tab",
+    description: "Press w to close the current PR tab.",
+  },
+  {
     id: "2026-11-02-check-details",
     date: "2026-11-02",
     title: "Check details and re-run",

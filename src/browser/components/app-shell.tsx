@@ -139,6 +139,29 @@ export function AppShell() {
           handleTabClose(activeTabId);
         }
       }
+      // Bare W also closes the current tab, unless typing or in a modal.
+      // Ignore key repeat so holding it doesn't close a run of tabs.
+      if (
+        e.key === "w" &&
+        !e.metaKey &&
+        !e.ctrlKey &&
+        !e.altKey &&
+        !e.repeat &&
+        activeTabId !== "home"
+      ) {
+        const target = e.target as HTMLElement;
+        if (
+          target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.tagName === "SELECT" ||
+          target.isContentEditable ||
+          target.closest?.('[role="dialog"]')
+        ) {
+          return;
+        }
+        e.preventDefault();
+        handleTabClose(activeTabId);
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
