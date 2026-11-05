@@ -230,7 +230,7 @@ function ImagePreviewProvider({
       {children}
       <Dialog open={!!previewImage} onOpenChange={() => closePreview()}>
         <DialogContent
-          className="!max-w-[90vw] max-h-[90vh] w-auto h-auto p-0 bg-black/95 border-border/50 overflow-hidden flex flex-col gap-0 sm:!max-w-[90vw]"
+          className="!max-w-[90vw] w-[90vw] h-[90vh] p-0 bg-black/95 border-border/50 overflow-hidden flex flex-col gap-0 sm:!max-w-[90vw]"
           showCloseButton={false}
         >
           <DialogTitle className="sr-only">
@@ -322,7 +322,7 @@ function ImagePreviewProvider({
                     src={previewImage.src}
                     alt={previewImage.alt || "Preview"}
                     className={cn(
-                      "max-w-[85vw] max-h-[80vh] object-contain transition-transform duration-150 select-none",
+                      "max-w-[calc(90vw-2rem)] max-h-[calc(90vh-6rem)] object-contain transition-transform duration-150 select-none",
                       zoom > 1 && "pointer-events-none"
                     )}
                     style={{
