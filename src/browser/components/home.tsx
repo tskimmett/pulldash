@@ -1290,7 +1290,7 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
     const label =
       requested.length === 1
         ? requested[0]!.isTeam
-          ? `@${requested[0]!.name}`
+          ? "Team"
           : requested[0]!.name
         : `${requested.length}`;
     return (
@@ -1310,9 +1310,9 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
               <span>Review requested</span>
             </div>
             <div className="space-y-1.5">
-              {requested.map((r) => (
+              {requested.map((r, i) => (
                 <div
-                  key={`${r.isTeam ? "team" : "user"}:${r.name}`}
+                  key={r.isTeam ? `team:${i}` : r.name}
                   className="flex items-center gap-2 text-[11px]"
                 >
                   {r.avatarUrl ? (
@@ -1325,7 +1325,7 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
                     <Users className="w-4 h-4 text-muted-foreground" />
                   )}
                   <span className="truncate">
-                    {r.isTeam ? `@${r.name}` : r.name}
+                    {r.isTeam ? "A team" : r.name}
                   </span>
                 </div>
               ))}

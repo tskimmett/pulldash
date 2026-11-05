@@ -145,7 +145,7 @@ export interface PRSearchResult {
 }
 
 export interface RequestedReviewer {
-  /** User login, or team slug for teams. */
+  /** User login; empty for teams (their names need read:org). */
   name: string;
   avatarUrl: string;
   isTeam: boolean;
@@ -302,7 +302,6 @@ const ENRICHMENT_FIELDS = `
           ... on User { login avatarUrl }
           ... on Bot { login avatarUrl }
           ... on Mannequin { login avatarUrl }
-          ... on Team { slug avatarUrl }
         }
       }
     }
@@ -363,10 +362,13 @@ type GqlEnrichedPR = GqlStackNode & {
   };
   reviewRequests: {
     nodes: Array<{
-      requestedReviewer:
-        | { __typename: "Team"; slug: string; avatarUrl: string | null }
-        | { __typename: string; login: string; avatarUrl: string }
-        | null;
+      // Team fields need read:org, which the app doesn't request, so teams
+      // come back with only __typename
+      requestedReviewer: {
+        __typename: string;
+        login?: string;
+        avatarUrl?: string;
+      } | null;
     }>;
   } | null;
   commits: {
@@ -469,18 +471,14 @@ function parseEnrichment(result: GqlEnrichedPR): PREnrichment {
   const requestedReviewers: RequestedReviewer[] = [];
   for (const { requestedReviewer: r } of result.reviewRequests?.nodes || []) {
     if (!r) continue;
-    if ("slug" in r) {
-      requestedReviewers.push({
-        name: r.slug,
-        avatarUrl: r.avatarUrl ?? "",
-        isTeam: true,
-      });
-    } else {
+    if (r.login) {
       requestedReviewers.push({
         name: r.login,
-        avatarUrl: r.avatarUrl,
+        avatarUrl: r.avatarUrl ?? "",
         isTeam: false,
       });
+    } else if (r.__typename === "Team") {
+      requestedReviewers.push({ name: "", avatarUrl: "", isTeam: true });
     }
   }
 
