@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-05-image-viewer-paging",
+    date: "2026-11-05",
+    title: "Page through screenshots",
+    description:
+      "In the image viewer, use ← and → (or the side arrows) to move between images in the same description or comment.",
+  },
+  {
     id: "2026-11-05-requested-reviewers-pill",
     date: "2026-11-05",
     title: "Requested reviewers on the dashboard",

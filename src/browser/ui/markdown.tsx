@@ -34,6 +34,8 @@ import {
   Heading2,
   Smile,
   X,
+  ChevronLeft,
+  ChevronRight,
   ZoomIn,
   ZoomOut,
   RotateCcw,
@@ -65,8 +67,39 @@ const MENTION_REGEX = /@([a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38})/g;
 // Image Preview Context & Modal
 // ============================================================================
 
+interface PreviewImage {
+  src: string;
+  alt?: string;
+}
+
 interface ImagePreviewContextValue {
-  openPreview: (src: string, alt?: string) => void;
+  openPreview: (index: number) => void;
+}
+
+/**
+ * Collect previewable images in document order, keyed by node so the
+ * renderer can tell the viewer which one was clicked.
+ */
+export function collectPreviewImages(nodes: HtmlNode[]): {
+  images: PreviewImage[];
+  indexByNode: Map<HtmlNode, number>;
+} {
+  const images: PreviewImage[] = [];
+  const indexByNode = new Map<HtmlNode, number>();
+  const walk = (list: HtmlNode[]) => {
+    for (const node of list) {
+      if (node.type !== "element") continue;
+      const src = node.tag === "img" ? node.attributes?.src : undefined;
+      if (src) {
+        indexByNode.set(node, images.length);
+        images.push({ src, alt: node.attributes?.alt });
+      } else if (node.children) {
+        walk(node.children);
+      }
+    }
+  };
+  walk(nodes);
+  return { images, indexByNode };
 }
 
 const ImagePreviewContext = createContext<ImagePreviewContextValue | null>(
@@ -77,26 +110,43 @@ function useImagePreview() {
   return useContext(ImagePreviewContext);
 }
 
-function ImagePreviewProvider({ children }: { children: ReactNode }) {
-  const [previewImage, setPreviewImage] = useState<{
-    src: string;
-    alt?: string;
-  } | null>(null);
+function ImagePreviewProvider({
+  images,
+  children,
+}: {
+  images: PreviewImage[];
+  children: ReactNode;
+}) {
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const previewImage =
+    previewIndex === null ? null : (images[previewIndex] ?? null);
+  const hasMultiple = images.length > 1;
   const [zoom, setZoom] = useState(1);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
   const [scrollStart, setScrollStart] = useState({ x: 0, y: 0 });
 
-  const openPreview = useCallback((src: string, alt?: string) => {
-    setPreviewImage({ src, alt });
+  const openPreview = useCallback((index: number) => {
+    setPreviewIndex(index);
     setZoom(1);
   }, []);
 
   const closePreview = useCallback(() => {
-    setPreviewImage(null);
+    setPreviewIndex(null);
     setZoom(1);
   }, []);
+
+  const step = useCallback(
+    (delta: number) => {
+      if (images.length < 2) return;
+      setPreviewIndex((i) =>
+        i === null ? i : (i + delta + images.length) % images.length
+      );
+      setZoom(1);
+    },
+    [images.length]
+  );
 
   // Pan/drag handlers
   const handleMouseDown = useCallback(
@@ -153,6 +203,12 @@ function ImagePreviewProvider({ children }: { children: ReactNode }) {
         handleZoomOut();
       } else if (e.key === "0") {
         handleResetZoom();
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        step(-1);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        step(1);
       }
     };
 
@@ -164,6 +220,7 @@ function ImagePreviewProvider({ children }: { children: ReactNode }) {
     handleZoomIn,
     handleZoomOut,
     handleResetZoom,
+    step,
   ]);
 
   const contextValue = useMemo(() => ({ openPreview }), [openPreview]);
@@ -209,11 +266,18 @@ function ImagePreviewProvider({ children }: { children: ReactNode }) {
                     <RotateCcw className="w-4 h-4" />
                   </button>
                 </div>
-                {previewImage.alt && (
-                  <span className="text-xs text-white/60 truncate max-w-[40%] px-2">
-                    {previewImage.alt}
-                  </span>
-                )}
+                <div className="flex items-center gap-2 min-w-0 max-w-[50%]">
+                  {hasMultiple && (
+                    <span className="text-xs text-white/70 font-mono shrink-0">
+                      {previewIndex! + 1} / {images.length}
+                    </span>
+                  )}
+                  {previewImage.alt && (
+                    <span className="text-xs text-white/60 truncate">
+                      {previewImage.alt}
+                    </span>
+                  )}
+                </div>
                 <button
                   onClick={closePreview}
                   className="p-1.5 rounded bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition-colors"
@@ -224,30 +288,50 @@ function ImagePreviewProvider({ children }: { children: ReactNode }) {
               </div>
 
               {/* Image container */}
-              <div
-                ref={containerRef}
-                className={cn(
-                  "overflow-auto flex-1 flex items-center justify-center p-4 min-h-0",
-                  zoom > 1 && (isDragging ? "cursor-grabbing" : "cursor-grab")
+              <div className="relative flex-1 flex min-h-0">
+                {hasMultiple && (
+                  <>
+                    <button
+                      onClick={() => step(-1)}
+                      className="absolute left-2 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white/80 hover:text-white transition-colors"
+                      title="Previous image (←)"
+                    >
+                      <ChevronLeft className="w-5 h-5" />
+                    </button>
+                    <button
+                      onClick={() => step(1)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 z-10 p-2 rounded-full bg-black/60 hover:bg-black/80 text-white/80 hover:text-white transition-colors"
+                      title="Next image (→)"
+                    >
+                      <ChevronRight className="w-5 h-5" />
+                    </button>
+                  </>
                 )}
-                onMouseDown={handleMouseDown}
-                onMouseMove={handleMouseMove}
-                onMouseUp={handleMouseUp}
-                onMouseLeave={handleMouseUp}
-              >
-                <img
-                  src={previewImage.src}
-                  alt={previewImage.alt || "Preview"}
+                <div
+                  ref={containerRef}
                   className={cn(
-                    "max-w-[85vw] max-h-[80vh] object-contain transition-transform duration-150 select-none",
-                    zoom > 1 && "pointer-events-none"
+                    "overflow-auto flex-1 flex items-center justify-center p-4 min-h-0",
+                    zoom > 1 && (isDragging ? "cursor-grabbing" : "cursor-grab")
                   )}
-                  style={{
-                    transform: `scale(${zoom})`,
-                    transformOrigin: "center center",
-                  }}
-                  draggable={false}
-                />
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
+                >
+                  <img
+                    src={previewImage.src}
+                    alt={previewImage.alt || "Preview"}
+                    className={cn(
+                      "max-w-[85vw] max-h-[80vh] object-contain transition-transform duration-150 select-none",
+                      zoom > 1 && "pointer-events-none"
+                    )}
+                    style={{
+                      transform: `scale(${zoom})`,
+                      transformOrigin: "center center",
+                    }}
+                    draggable={false}
+                  />
+                </div>
               </div>
             </>
           )}
@@ -353,19 +437,42 @@ function parseNode(node: Node): HtmlNode | null {
 
 function HtmlWithMentions({ html }: { html: string }) {
   const nodes = useMemo(() => parseHtmlToNodes(html), [html]);
-  const imagePreview = useImagePreview();
-
-  const rendered = useMemo(
-    () => renderNodes(nodes, imagePreview?.openPreview),
-    [nodes, imagePreview]
+  const { images, indexByNode } = useMemo(
+    () => collectPreviewImages(nodes),
+    [nodes]
   );
 
+  return (
+    <ImagePreviewProvider images={images}>
+      <HtmlNodes nodes={nodes} indexByNode={indexByNode} />
+    </ImagePreviewProvider>
+  );
+}
+
+function HtmlNodes({
+  nodes,
+  indexByNode,
+}: {
+  nodes: HtmlNode[];
+  indexByNode: Map<HtmlNode, number>;
+}) {
+  const imagePreview = useImagePreview();
+  const rendered = useMemo(
+    () =>
+      renderNodes(nodes, (node) => {
+        const index = indexByNode.get(node);
+        if (index !== undefined) imagePreview?.openPreview(index);
+      }),
+    [nodes, indexByNode, imagePreview]
+  );
   return <>{rendered}</>;
 }
 
+type OpenNodePreview = (node: HtmlNode) => void;
+
 function renderNodes(
   nodes: HtmlNode[],
-  openPreview?: (src: string, alt?: string) => void
+  openPreview?: OpenNodePreview
 ): React.ReactNode {
   return nodes.map((node, index) => renderNode(node, index, openPreview));
 }
@@ -373,7 +480,7 @@ function renderNodes(
 function renderNode(
   node: HtmlNode,
   key: number,
-  openPreview?: (src: string, alt?: string) => void
+  openPreview?: OpenNodePreview
 ): React.ReactNode {
   if (node.type === "text") {
     return node.content;
@@ -442,7 +549,6 @@ function renderNode(
     // Special handling for images - make them clickable for preview
     if (node.tag === "img" && openPreview) {
       const src = node.attributes?.src;
-      const alt = node.attributes?.alt;
       if (src) {
         return (
           <img
@@ -455,7 +561,7 @@ function renderNode(
             onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
-              openPreview(src, alt);
+              openPreview(node);
             }}
           />
         );
@@ -497,7 +603,7 @@ export const Markdown = memo(function Markdown({
   // If pre-rendered HTML is provided (from GitHub's API with signed attachment URLs), use it
   if (html) {
     return (
-      <ImagePreviewProvider>
+      <>
         {isEmpty && emptyState}
         <div
           ref={containerRef}
@@ -505,7 +611,7 @@ export const Markdown = memo(function Markdown({
         >
           <HtmlWithMentions html={html} />
         </div>
-      </ImagePreviewProvider>
+      </>
     );
   }
   // Parse the content to find @mentions and wrap them
