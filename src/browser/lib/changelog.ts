@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-05-requested-reviewers-pill",
+    date: "2026-11-05",
+    title: "Requested reviewers on the dashboard",
+    description:
+      "PR rows show a pill when reviews are pending from requested reviewers. Hover it to see who.",
+  },
+  {
     id: "2026-11-04-w-close-tab",
     date: "2026-11-04",
     title: "Press w to close a tab",

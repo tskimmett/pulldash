@@ -136,11 +136,19 @@ export interface PRSearchResult {
     avatarUrl: string;
     state: "APPROVED" | "CHANGES_REQUESTED";
   }>;
+  requestedReviewers?: RequestedReviewer[];
   // Stacks
   stackNode?: StackNode;
   stack?: StackSlot;
   /** Listed only because a stack-mate matches the list's filters. */
   stackOnly?: boolean;
+}
+
+export interface RequestedReviewer {
+  /** User login, or team slug for teams. */
+  name: string;
+  avatarUrl: string;
+  isTeam: boolean;
 }
 
 export interface WorkflowRunAwaitingApproval {
@@ -191,6 +199,7 @@ export interface PREnrichment {
     avatarUrl: string;
     state: "APPROVED" | "CHANGES_REQUESTED";
   }>;
+  requestedReviewers: RequestedReviewer[];
   stackNode: StackNode;
 }
 
@@ -286,6 +295,17 @@ const ENRICHMENT_FIELDS = `
         state
       }
     }
+    reviewRequests(first: 10) {
+      nodes {
+        requestedReviewer {
+          __typename
+          ... on User { login avatarUrl }
+          ... on Bot { login avatarUrl }
+          ... on Mannequin { login avatarUrl }
+          ... on Team { slug avatarUrl }
+        }
+      }
+    }
     commits(last: 1) {
       nodes {
         commit {
@@ -341,6 +361,14 @@ type GqlEnrichedPR = GqlStackNode & {
       state: "APPROVED" | "CHANGES_REQUESTED";
     }>;
   };
+  reviewRequests: {
+    nodes: Array<{
+      requestedReviewer:
+        | { __typename: "Team"; slug: string; avatarUrl: string | null }
+        | { __typename: string; login: string; avatarUrl: string }
+        | null;
+    }>;
+  } | null;
   commits: {
     nodes: Array<{
       commit: {
@@ -438,6 +466,24 @@ function parseEnrichment(result: GqlEnrichedPR): PREnrichment {
   }
   const latestReviews = Array.from(reviewsByUser.values());
 
+  const requestedReviewers: RequestedReviewer[] = [];
+  for (const { requestedReviewer: r } of result.reviewRequests?.nodes || []) {
+    if (!r) continue;
+    if ("slug" in r) {
+      requestedReviewers.push({
+        name: r.slug,
+        avatarUrl: r.avatarUrl ?? "",
+        isTeam: true,
+      });
+    } else {
+      requestedReviewers.push({
+        name: r.login,
+        avatarUrl: r.avatarUrl,
+        isTeam: false,
+      });
+    }
+  }
+
   return {
     changedFiles: result.changedFiles,
     additions: result.additions,
@@ -451,6 +497,7 @@ function parseEnrichment(result: GqlEnrichedPR): PREnrichment {
     reviewDecision: result.reviewDecision,
     autoMerge: !!result.autoMergeRequest,
     latestReviews,
+    requestedReviewers,
     stackNode: toStackNode(result),
   };
 }

@@ -23,6 +23,7 @@ import {
   MessageSquare,
   Clock,
   Layers,
+  UserPlus,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "../cn";
@@ -1283,6 +1284,58 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
     return null;
   };
 
+  const RequestedReviewersBadge = () => {
+    const requested = pr.requestedReviewers;
+    if (isMerged || isClosed || !requested?.length) return null;
+    const label =
+      requested.length === 1
+        ? requested[0]!.isTeam
+          ? `@${requested[0]!.name}`
+          : requested[0]!.name
+        : `${requested.length}`;
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="shrink-0 inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded border cursor-default bg-sky-500/15 text-sky-500 border-sky-500/30">
+            <UserPlus className="w-3 h-3" />
+            <span className="hidden sm:inline max-w-[120px] truncate">
+              {label}
+            </span>
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" align="start">
+          <div className="min-w-[150px] max-w-[250px]">
+            <div className="font-medium text-xs mb-2 pb-1.5 border-b border-border flex items-center gap-2">
+              <UserPlus className="w-3.5 h-3.5 text-sky-500" />
+              <span>Review requested</span>
+            </div>
+            <div className="space-y-1.5">
+              {requested.map((r) => (
+                <div
+                  key={`${r.isTeam ? "team" : "user"}:${r.name}`}
+                  className="flex items-center gap-2 text-[11px]"
+                >
+                  {r.avatarUrl ? (
+                    <img
+                      src={r.avatarUrl}
+                      alt={r.name}
+                      className="w-4 h-4 rounded-full"
+                    />
+                  ) : (
+                    <Users className="w-4 h-4 text-muted-foreground" />
+                  )}
+                  <span className="truncate">
+                    {r.isTeam ? `@${r.name}` : r.name}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    );
+  };
+
   return (
     <button
       onClick={handleClick}
@@ -1322,6 +1375,7 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
           </span>
           <CIStatusBadge />
           <ReviewStatusBadge />
+          <RequestedReviewersBadge />
           {pr.autoMerge && (
             <span
               className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-purple-500/20 text-purple-400 border border-purple-500/30 shrink-0"
