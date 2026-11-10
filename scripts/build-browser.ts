@@ -29,6 +29,7 @@ async function writeStaticWebAppConfig(indexHtml: string) {
 }
 
 async function build() {
+  const start = performance.now();
   // With code splitting, chunk hash assignments reshuffle between builds;
   // stale chunks from a previous build can shadow current ones. Always
   // start from a clean output directory.
@@ -136,6 +137,14 @@ if (typeof document === 'undefined') {
 
   const allOutputs = [...mainResult.outputs, ...workerResult.outputs];
 
+  if (isWatch) {
+    // Keep watch output to one line so the dev server URL stays on screen.
+    console.log(
+      `Bundled ${allOutputs.length} files in ${Math.round(performance.now() - start)}ms → ${devUrl}`
+    );
+    return true;
+  }
+
   console.log(`Bundled ${allOutputs.length} files`);
   for (const output of allOutputs) {
     console.log(`  ${output.path}`);
@@ -143,17 +152,19 @@ if (typeof document === 'undefined') {
   return true;
 }
 
+// Matches the port src/node/main.ts listens on.
+const devUrl = `http://localhost:${Number(process.env.PORT) || 3002}`;
+
 await build();
 
 if (isWatch) {
-  console.log("\nWatching for changes...");
   const srcDir = resolve(import.meta.dir, "..", "src", "browser");
 
   let debounce: Timer | null = null;
   watch(srcDir, { recursive: true }, (_event, filename) => {
     if (debounce) clearTimeout(debounce);
     debounce = setTimeout(async () => {
-      console.log(`\nFile changed: ${filename}`);
+      process.stdout.write(`${filename} changed. `);
       await build();
     }, 100);
   });
