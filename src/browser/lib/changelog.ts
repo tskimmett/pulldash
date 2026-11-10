@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-10-conversation-filter",
+    date: "2026-11-10",
+    title: "Filter the conversation",
+    description:
+      "An All / Unresolved / Mine toggle above the Conversation timeline narrows it to open review threads, or to your own comments, reviews, and threads you joined.",
+  },
+  {
     id: "2026-11-10-changed-since-viewed",
     date: "2026-11-10",
     title: "Viewed files reset when they change",
