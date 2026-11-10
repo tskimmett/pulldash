@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-10-changed-since-viewed",
+    date: "2026-11-10",
+    title: "Viewed files reset when they change",
+    description:
+      'If a push changes a file you marked viewed, it goes back to unviewed and is marked "Changed since viewed". Click that label to see only what changed since you viewed it.',
+  },
+  {
     id: "2026-11-10-multi-reviewer-picker",
     date: "2026-11-10",
     title: "Request several reviewers at once",

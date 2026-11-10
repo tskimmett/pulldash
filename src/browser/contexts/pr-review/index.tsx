@@ -26,6 +26,12 @@ import {
   type DiffRange,
 } from "@/browser/lib/review-range";
 import {
+  deriveViewed,
+  parseViewedRecords,
+  recordView,
+  type ViewedRecords,
+} from "@/browser/lib/viewed-files";
+import {
   cancelSemanticJob,
   fetchCachedSemanticReview,
   fetchSemanticProviders,
@@ -283,8 +289,10 @@ interface PRReviewState {
   // Overview scroll target (GitHub-style hash: pullrequestreview-{id}, issuecomment-{id}, etc.)
   overviewScrollTarget: string | null;
 
-  // Viewed files
+  // Viewed files (derived from fingerprinted records against allFiles)
   viewedFiles: Set<string>;
+  /** Viewed at an older version -> PR head sha it was viewed at */
+  changedSinceViewed: Map<string, string | undefined>;
   hideViewed: boolean;
   hideTestFiles: boolean;
 
@@ -496,6 +504,7 @@ export class PRReviewStore {
   private semanticJobId: string | null = null;
   private semanticUnsubscribe: (() => void) | null = null;
   private diffRangeRequestId = 0;
+  private viewedRecords: ViewedRecords = {};
 
   constructor(
     github: GitHubStore,
@@ -511,17 +520,14 @@ export class PRReviewStore {
     this.github = github;
     this.storageKey = `pr-${initialState.owner}-${initialState.repo}-${initialState.pr.number}`;
 
-    // Load viewed files from localStorage
-    let viewedFiles = new Set<string>();
     let pendingComments: LocalPendingComment[] = [];
     let reviewBody = "";
     const diffViewMode = getStoredDiffViewMode();
 
     try {
-      const stored = localStorage.getItem(`${this.storageKey}-viewed`);
-      if (stored) {
-        viewedFiles = new Set(JSON.parse(stored));
-      }
+      this.viewedRecords = parseViewedRecords(
+        localStorage.getItem(`${this.storageKey}-viewed`)
+      );
     } catch {}
 
     // Load pending comments from localStorage
@@ -551,6 +557,10 @@ export class PRReviewStore {
 
     // Sort files to match file tree order (folders first, then alphabetically)
     const sortedFiles = sortFilesLikeTree(initialState.files);
+    const { viewedFiles, changedSinceViewed } = deriveViewed(
+      this.viewedRecords,
+      sortedFiles
+    );
 
     this.state = {
       ...initialState,
@@ -598,6 +608,7 @@ export class PRReviewStore {
       showOverview: true,
       overviewScrollTarget: null,
       viewedFiles,
+      changedSinceViewed,
       hideViewed: true,
       hideTestFiles: getStoredHideTestFiles(),
       diffViewMode,
@@ -858,13 +869,37 @@ export class PRReviewStore {
   // Viewed Files Actions
   // ---------------------------------------------------------------------------
 
-  private persistViewedFiles(viewedFiles: Set<string>) {
+  /**
+   * Mark files viewed (fingerprinting the PR's full-diff version, even while
+   * a narrowed range is showing) or unviewed, then persist and re-derive.
+   */
+  private setViewed(
+    filenames: string[],
+    viewed: boolean,
+    extra?: Partial<PRReviewState>
+  ) {
+    const records = { ...this.viewedRecords };
+    const byName = viewed
+      ? new Map(this.state.allFiles.map((f) => [f.filename, f]))
+      : null;
+    for (const filename of filenames) {
+      if (byName) {
+        records[filename] = recordView(
+          byName.get(filename),
+          this.state.pr.head.sha
+        );
+      } else {
+        delete records[filename];
+      }
+    }
+    this.viewedRecords = records;
     try {
       localStorage.setItem(
         `${this.storageKey}-viewed`,
-        JSON.stringify([...viewedFiles])
+        JSON.stringify(records)
       );
     } catch {}
+    this.set({ ...deriveViewed(records, this.state.allFiles), ...extra });
   }
 
   private persistPendingComments(pendingComments: LocalPendingComment[]) {
@@ -894,15 +929,8 @@ export class PRReviewStore {
   }
 
   toggleViewed = (filename: string) => {
-    const next = new Set(this.state.viewedFiles);
-    const wasViewed = next.has(filename);
-    if (wasViewed) {
-      next.delete(filename);
-    } else {
-      next.add(filename);
-    }
-    this.persistViewedFiles(next);
-    this.set({ viewedFiles: next });
+    const wasViewed = this.state.viewedFiles.has(filename);
+    this.setViewed([filename], !wasViewed);
 
     // When marking a file as viewed, skip ahead to the next unviewed file
     if (
@@ -915,18 +943,9 @@ export class PRReviewStore {
   };
 
   toggleViewedMultiple = (filenames: string[]) => {
-    const next = new Set(this.state.viewedFiles);
-    const allViewed = filenames.every((f) => next.has(f));
-
-    for (const filename of filenames) {
-      if (allViewed) {
-        next.delete(filename);
-      } else {
-        next.add(filename);
-      }
-    }
-    this.persistViewedFiles(next);
-    this.set({ viewedFiles: next, selectedFiles: new Set() });
+    const { viewedFiles } = this.state;
+    const allViewed = filenames.every((f) => viewedFiles.has(f));
+    this.setViewed(filenames, !allViewed, { selectedFiles: new Set() });
   };
 
   markFolderViewed = (
@@ -934,16 +953,7 @@ export class PRReviewStore {
     filenames: string[],
     markAsViewed: boolean
   ) => {
-    const next = new Set(this.state.viewedFiles);
-    for (const filename of filenames) {
-      if (markAsViewed) {
-        next.add(filename);
-      } else {
-        next.delete(filename);
-      }
-    }
-    this.persistViewedFiles(next);
-    this.set({ viewedFiles: next });
+    this.setViewed(filenames, markAsViewed);
   };
 
   toggleHideViewed = () => {
@@ -1232,6 +1242,27 @@ export class PRReviewStore {
 
   clearDiffRange = () => this.setDiffRange(null);
 
+  /** Head sha a file was viewed at, if it changed since and that's showable. */
+  changedSinceViewedSha = (filename: string): string | null => {
+    const { changedSinceViewed, commits, pr } = this.state;
+    const sha = changedSinceViewed.get(filename);
+    return sha && isRangeAvailable(commits, sha, pr.head.sha) ? sha : null;
+  };
+
+  /** Narrow to everything pushed since `filename` was viewed and open it. */
+  showChangesSinceViewed = async (
+    filename: string,
+    fetchFiles?: Parameters<PRReviewStore["setDiffRange"]>[1]
+  ): Promise<void> => {
+    const sha = this.changedSinceViewedSha(filename);
+    if (!sha) return;
+    await this.setDiffRange({ startSha: sha, source: "manual" }, fetchFiles);
+    const { diffRangeError, files } = this.state;
+    if (!diffRangeError && files.some((f) => f.filename === filename)) {
+      this.selectFile(filename);
+    }
+  };
+
   /** The range showing just `sha`; undefined when it can't be shown here. */
   private commitRange(sha: string) {
     const { commits } = this.state;
@@ -1309,9 +1340,12 @@ export class PRReviewStore {
     }
     if (changed.size === 0) return;
 
+    // A push may have changed files the viewer already viewed.
+    const viewed = deriveViewed(this.viewedRecords, sorted);
+
     // A narrowed range shows its own file set; keep it until it's cleared.
     if (this.state.diffRange) {
-      this.set({ allFiles: sorted });
+      this.set({ allFiles: sorted, ...viewed });
       return;
     }
 
@@ -1325,6 +1359,7 @@ export class PRReviewStore {
       )
     );
     this.set({
+      ...viewed,
       files: sorted,
       allFiles: sorted,
       loadedDiffs: keep(this.state.loadedDiffs),
@@ -1521,8 +1556,8 @@ export class PRReviewStore {
         }
       }
     }
-    const viewed = new Set(this.state.viewedFiles);
-    let changed = false;
+    const viewed = this.state.viewedFiles;
+    const toMark: string[] = [];
     for (const [file, keys] of layersByFile) {
       if (viewed.has(file)) continue;
       let all = true;
@@ -1532,15 +1567,9 @@ export class PRReviewStore {
           break;
         }
       }
-      if (all) {
-        viewed.add(file);
-        changed = true;
-      }
+      if (all) toMark.push(file);
     }
-    if (changed) {
-      this.persistViewedFiles(viewed);
-      this.set({ viewedFiles: viewed });
-    }
+    if (toMark.length > 0) this.setViewed(toMark, true);
   }
 
   // ---------------------------------------------------------------------------

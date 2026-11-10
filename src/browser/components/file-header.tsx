@@ -73,6 +73,17 @@ export const FileHeader = memo(function FileHeader({
   const isFullyExpanded = usePRReviewSelector((s) =>
     s.fullyExpandedFiles.has(file.filename)
   );
+  const changedSinceViewed = usePRReviewSelector((s) =>
+    s.changedSinceViewed.has(file.filename)
+  );
+  // Offer the narrowed diff only from the full view, when the viewed-at
+  // commit is still part of the PR (not lost to a force-push).
+  const canShowChangesSinceViewed = usePRReviewSelector(
+    (s) =>
+      !s.diffRange &&
+      s.changedSinceViewed.has(file.filename) &&
+      store.changedSinceViewedSha(file.filename) !== null
+  );
 
   const fileStatusBadge = (() => {
     switch (file.status) {
@@ -121,6 +132,23 @@ export const FileHeader = memo(function FileHeader({
           <span className="truncate shrink-0 max-w-full">{basename}</span>
         </span>
         {fileStatusBadge}
+        {changedSinceViewed &&
+          (canShowChangesSinceViewed ? (
+            <button
+              onClick={() => void store.showChangesSinceViewed(file.filename)}
+              title="Show only what changed since you marked this file viewed"
+              className="shrink-0 px-1.5 py-0.5 text-xs rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 font-medium hover:bg-amber-500/30 transition-colors"
+            >
+              Changed since viewed · Show changes
+            </button>
+          ) : (
+            <span
+              title="This file changed after you marked it viewed"
+              className="shrink-0 px-1.5 py-0.5 text-xs rounded bg-amber-500/20 text-amber-600 dark:text-amber-400 font-medium"
+            >
+              Changed since viewed
+            </span>
+          ))}
         <span className="text-xs text-muted-foreground shrink-0">
           <span className="text-green-500">+{file.additions}</span>{" "}
           <span className="text-red-500">−{file.deletions}</span>

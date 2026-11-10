@@ -458,7 +458,42 @@ test("toggleViewed persists to localStorage", () => {
 
   const stored = storage.get("pr-test-repo-1-viewed");
   expect(stored).toBeDefined();
-  expect(JSON.parse(stored!)).toContain("src/index.ts");
+  expect(Object.keys(JSON.parse(stored!))).toContain("src/index.ts");
+});
+
+test("a push that changes a viewed file un-views it until it's viewed again", () => {
+  storage.set("pr-test-repo-1-viewed", JSON.stringify(["README.md"]));
+  const store = createStore();
+  // Legacy entries have no fingerprint and stay viewed
+  expect(store.getSnapshot().viewedFiles.has("README.md")).toBe(true);
+  store.toggleViewed("src/index.ts");
+  store.toggleViewed("src/utils.ts");
+
+  store.replaceFiles([
+    {
+      ...createMockFile("src/index.ts"),
+      sha: "new",
+      patch: "@@ -1 +1 @@\n-a\n+b",
+    },
+    // Rebased: new blob, same change
+    { ...createMockFile("src/utils.ts"), sha: "rebased" },
+    {
+      ...createMockFile("README.md"),
+      sha: "new",
+      patch: "@@ -1 +1 @@\n-x\n+y",
+    },
+  ]);
+
+  let state = store.getSnapshot();
+  expect(state.viewedFiles.has("src/index.ts")).toBe(false);
+  expect(state.changedSinceViewed.get("src/index.ts")).toBe("abc123");
+  expect(state.viewedFiles.has("src/utils.ts")).toBe(true);
+  expect(state.viewedFiles.has("README.md")).toBe(true);
+
+  store.toggleViewed("src/index.ts");
+  state = store.getSnapshot();
+  expect(state.viewedFiles.has("src/index.ts")).toBe(true);
+  expect(state.changedSinceViewed.has("src/index.ts")).toBe(false);
 });
 
 test("toggleViewed unmarks viewed file", () => {
@@ -1350,6 +1385,36 @@ function createRangeStore() {
   store.setCurrentUser("me");
   return store;
 }
+
+test("showChangesSinceViewed narrows to commits after the file was viewed", async () => {
+  const store = createRangeStore();
+  await store.loadPRData();
+  const pr = store.getSnapshot().pr;
+  store.setPr({ ...pr, head: { ...pr.head, sha: "c1" } });
+  store.toggleViewed("src/utils.ts");
+  store.setPr(pr);
+  store.replaceFiles([
+    createMockFile("src/index.ts"),
+    {
+      ...createMockFile("src/utils.ts"),
+      sha: "new",
+      patch: "@@ -1 +1 @@\n-a\n+b",
+    },
+    createMockFile("README.md"),
+  ]);
+  expect(store.changedSinceViewedSha("src/utils.ts")).toBe("c1");
+
+  const requested: string[] = [];
+  await store.showChangesSinceViewed("src/utils.ts", async (s, h) => {
+    requested.push(`${s}...${h}`);
+    return [createMockFile("src/utils.ts")];
+  });
+
+  const state = store.getSnapshot();
+  expect(requested).toEqual(["c1...abc123"]);
+  expect(state.diffRange?.startSha).toBe("c1");
+  expect(state.selectedFile).toBe("src/utils.ts");
+});
 
 test("setDiffRange narrows files, drops parsed diffs, and restores on clear", async () => {
   const store = createRangeStore();

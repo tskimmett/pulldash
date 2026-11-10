@@ -23,6 +23,7 @@ import {
 import { DiffStat, FileRow, FILE_TREE_ROW_HEIGHT } from "./file-tree-row";
 import { folderPathsUnder } from "../lib/folder-paths";
 import type { PullRequestFile } from "@/api/types";
+import { usePRReviewSelector } from "../contexts/pr-review";
 
 interface FileTreeProps {
   files: PullRequestFile[];
@@ -192,6 +193,7 @@ export function FileTree({
   onCopyMainVersion,
 }: FileTreeProps) {
   const parentRef = useRef<HTMLDivElement>(null);
+  const changedSinceViewed = usePRReviewSelector((s) => s.changedSinceViewed);
 
   const tree = useMemo(() => buildTree(files), [files]);
   const filteredTree = useMemo(
@@ -437,6 +439,14 @@ export function FileTree({
                 isSelected={isSelected}
                 isMultiSelected={selectedFiles.has(node.path)}
                 isViewed={viewedFiles.has(node.path)}
+                trailing={
+                  changedSinceViewed.has(node.path) ? (
+                    <span
+                      className="w-1.5 h-1.5 rounded-full bg-amber-500"
+                      title="Changed since you viewed it"
+                    />
+                  ) : undefined
+                }
                 commentCount={commentCounts[node.path] || 0}
                 pendingCount={pendingCommentCounts[node.path] || 0}
                 onClick={(e) => handleItemClick(item, e)}
