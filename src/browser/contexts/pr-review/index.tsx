@@ -288,6 +288,8 @@ interface PRReviewState {
   showOverview: boolean;
   // Overview scroll target (GitHub-style hash: pullrequestreview-{id}, issuecomment-{id}, etc.)
   overviewScrollTarget: string | null;
+  /** Flash the overview target in place without scrolling to it */
+  overviewTargetHighlightOnly: boolean;
 
   // Viewed files (derived from fingerprinted records against allFiles)
   viewedFiles: Set<string>;
@@ -607,6 +609,7 @@ export class PRReviewStore {
       selectedFiles: new Set(),
       showOverview: true,
       overviewScrollTarget: null,
+      overviewTargetHighlightOnly: false,
       viewedFiles,
       changedSinceViewed,
       hideViewed: true,
@@ -695,10 +698,16 @@ export class PRReviewStore {
   // File Navigation Actions
   // ---------------------------------------------------------------------------
 
-  selectOverview = (scrollTarget?: string) => {
+  selectOverview = (
+    scrollTarget?: string,
+    { highlightOnly = false }: { highlightOnly?: boolean } = {}
+  ) => {
     // If already on overview and just updating scroll target
     if (this.state.showOverview && scrollTarget) {
-      this.set({ overviewScrollTarget: scrollTarget });
+      this.set({
+        overviewScrollTarget: scrollTarget,
+        overviewTargetHighlightOnly: highlightOnly,
+      });
       return;
     }
     if (this.state.showOverview && !scrollTarget) return;
@@ -706,6 +715,7 @@ export class PRReviewStore {
     this.set({
       showOverview: true,
       overviewScrollTarget: scrollTarget ?? null,
+      overviewTargetHighlightOnly: highlightOnly,
       selectedFile: null,
       selectedFiles: new Set(),
       focusedLine: null,

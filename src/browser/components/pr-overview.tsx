@@ -261,6 +261,9 @@ export const PROverview = memo(function PROverview() {
   const overviewScrollTarget = usePRReviewSelector(
     (s) => s.overviewScrollTarget
   );
+  const overviewTargetHighlightOnly = usePRReviewSelector(
+    (s) => s.overviewTargetHighlightOnly
+  );
   useEffect(() => {
     if (!overviewScrollTarget) return;
 
@@ -268,7 +271,9 @@ export const PROverview = memo(function PROverview() {
     const timer = setTimeout(() => {
       const element = document.getElementById(overviewScrollTarget);
       if (element) {
-        element.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (!overviewTargetHighlightOnly) {
+          element.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
         // Flash highlight effect
         element.classList.add("ring-2", "ring-blue-500/50");
         setTimeout(() => {
@@ -280,7 +285,7 @@ export const PROverview = memo(function PROverview() {
     }, 100);
 
     return () => clearTimeout(timer);
-  }, [overviewScrollTarget, store]);
+  }, [overviewScrollTarget, overviewTargetHighlightOnly, store]);
 
   // Manual refresh handler
   const handleRefreshChecks = useCallback(async () => {

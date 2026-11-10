@@ -73,7 +73,7 @@ export function useReviewActions() {
       store.setReviews(reviews);
       store.setTimeline(timeline);
 
-      // Scroll to the submitted review, or the latest one if its ID is unknown
+      // Highlight the submitted review, or the latest one if its ID is unknown
       let scrollTarget: string | undefined;
       if (submittedReviewId) {
         scrollTarget = `pullrequestreview-${submittedReviewId}`;
@@ -92,8 +92,8 @@ export function useReviewActions() {
       store.clearReviewState();
       void store.refreshChecksAfterReview();
 
-      // Navigate to overview page and scroll to the new review
-      store.selectOverview(scrollTarget);
+      // Navigate to overview and flash the new review without scrolling to it
+      store.selectOverview(scrollTarget, { highlightOnly: true });
     } finally {
       store.setSubmittingReview(false);
     }

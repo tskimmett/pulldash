@@ -1099,6 +1099,15 @@ test("getHashFromState returns overview scroll target when on overview", () => {
   expect(hash).toBe("pullrequestreview-12345");
 });
 
+test("selectOverview records whether the target is highlight-only", () => {
+  const store = createStore();
+  store.selectOverview("pullrequestreview-1", { highlightOnly: true });
+  expect(store.getSnapshot().overviewTargetHighlightOnly).toBe(true);
+
+  store.selectOverview("issuecomment-2");
+  expect(store.getSnapshot().overviewTargetHighlightOnly).toBe(false);
+});
+
 test("clearOverviewScrollTarget clears the target", () => {
   const store = createStore();
   store.selectOverview("pullrequestreview-12345");
