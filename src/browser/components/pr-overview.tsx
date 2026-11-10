@@ -62,6 +62,11 @@ import { parseDiffCached, type ParsedDiff } from "../lib/diff";
 import { commentContextLines } from "../lib/comment-context";
 import { getLatestReviewsByUser } from "../lib/latest-reviews";
 import {
+  buildReviewerOptions,
+  diffReviewerSelection,
+  type ReviewerOption,
+} from "../lib/reviewer-selection";
+import {
   useGitHub,
   useCurrentUser,
   type Review as GitHubReview,
@@ -228,6 +233,13 @@ export const PROverview = memo(function PROverview() {
   });
   const [loadingCollaborators, setLoadingCollaborators] = useState(false);
   const [reviewerSearchQuery, setReviewerSearchQuery] = useState("");
+  // Picker edits are staged here and applied in one batch when it closes
+  const [reviewerSelection, setReviewerSelection] = useState<Set<string>>(
+    () => new Set()
+  );
+  const [reviewerPickerInitial, setReviewerPickerInitial] = useState<
+    ReviewerOption[]
+  >([]);
   const [assigneeSearchQuery, setAssigneeSearchQuery] = useState("");
   const reviewersButtonRef = useRef<HTMLButtonElement>(null);
   const assigneesButtonRef = useRef<HTMLButtonElement>(null);
@@ -368,22 +380,6 @@ export const PROverview = memo(function PROverview() {
     }
   }, [github, owner, repo, collaborators.length]);
 
-  const handleToggleReviewersPicker = useCallback(() => {
-    if (!showReviewersPicker && reviewersButtonRef.current) {
-      const rect = reviewersButtonRef.current.getBoundingClientRect();
-      setReviewersPickerPosition({
-        top: rect.bottom + 4,
-        left: Math.max(8, Math.min(rect.left, window.innerWidth - 280)),
-      });
-      fetchCollaborators();
-      setReviewerSearchQuery("");
-      // Focus the search input after a short delay to allow the picker to render
-      setTimeout(() => reviewerSearchInputRef.current?.focus(), 50);
-    }
-    setShowReviewersPicker(!showReviewersPicker);
-    setShowAssigneesPicker(false);
-  }, [showReviewersPicker, fetchCollaborators]);
-
   const handleToggleAssigneesPicker = useCallback(() => {
     if (!showAssigneesPicker && assigneesButtonRef.current) {
       const rect = assigneesButtonRef.current.getBoundingClientRect();
@@ -397,7 +393,6 @@ export const PROverview = memo(function PROverview() {
       setTimeout(() => assigneeSearchInputRef.current?.focus(), 50);
     }
     setShowAssigneesPicker(!showAssigneesPicker);
-    setShowReviewersPicker(false);
   }, [showAssigneesPicker, fetchCollaborators]);
 
   // Helper to refetch PR and update store
@@ -550,6 +545,122 @@ export const PROverview = memo(function PROverview() {
       }
     },
     [github, owner, repo, pr, store, refetchTimeline]
+  );
+
+  const applyReviewerChanges = useCallback(
+    async (add: string[], remove: string[], known: ReviewerOption[]) => {
+      if (add.length === 0 && remove.length === 0) return;
+      const avatars = new Map(known.map((u) => [u.login, u.avatar_url]));
+      const removed = new Set(remove);
+      const kept = (pr.requested_reviewers ?? []).filter(
+        (r) => !removed.has(r.login)
+      );
+      const added = add.map((login) => ({
+        login,
+        avatar_url: avatars.get(login) ?? "",
+        id: 0,
+        node_id: "",
+        gravatar_id: "",
+        url: "",
+        html_url: "",
+        followers_url: "",
+        following_url: "",
+        gists_url: "",
+        starred_url: "",
+        subscriptions_url: "",
+        organizations_url: "",
+        repos_url: "",
+        events_url: "",
+        received_events_url: "",
+        type: "User" as const,
+        site_admin: false,
+        user_view_type: "public" as const,
+      }));
+      // Optimistic: show the new set right away, reconcile on failure
+      store.setPr({ ...pr, requested_reviewers: [...kept, ...added] });
+      try {
+        await Promise.all([
+          add.length > 0
+            ? github.requestReviewers(owner, repo, pr.number, add)
+            : null,
+          remove.length > 0
+            ? github.removeReviewers(owner, repo, pr.number, remove)
+            : null,
+        ]);
+      } catch (error) {
+        console.error("Failed to update reviewers:", error);
+        refetchPR();
+      }
+      github.invalidateCache(`pr:${owner}/${repo}/${pr.number}`);
+      refetchTimeline();
+    },
+    [github, owner, repo, pr, store, refetchPR, refetchTimeline]
+  );
+
+  const closeReviewersPicker = useCallback(() => {
+    setShowReviewersPicker(false);
+    const { add, remove } = diffReviewerSelection(
+      reviewerPickerInitial.map((r) => r.login),
+      reviewerSelection
+    );
+    applyReviewerChanges(add, remove, [
+      ...reviewerPickerInitial,
+      ...collaborators,
+    ]);
+  }, [
+    reviewerPickerInitial,
+    reviewerSelection,
+    collaborators,
+    applyReviewerChanges,
+  ]);
+
+  const handleToggleReviewersPicker = useCallback(() => {
+    if (showReviewersPicker) {
+      closeReviewersPicker();
+      return;
+    }
+    if (!reviewersButtonRef.current) return;
+    const rect = reviewersButtonRef.current.getBoundingClientRect();
+    setReviewersPickerPosition({
+      top: rect.bottom + 4,
+      left: Math.max(8, Math.min(rect.left, window.innerWidth - 280)),
+    });
+    const requested = (pr.requested_reviewers ?? []).map((r) => ({
+      login: r.login,
+      avatar_url: r.avatar_url,
+    }));
+    setReviewerPickerInitial(requested);
+    setReviewerSelection(new Set(requested.map((r) => r.login)));
+    fetchCollaborators();
+    setReviewerSearchQuery("");
+    setShowAssigneesPicker(false);
+    setShowReviewersPicker(true);
+    // Focus the search input after a short delay to allow the picker to render
+    setTimeout(() => reviewerSearchInputRef.current?.focus(), 50);
+  }, [
+    showReviewersPicker,
+    closeReviewersPicker,
+    pr.requested_reviewers,
+    fetchCollaborators,
+  ]);
+
+  const toggleReviewerSelection = useCallback((login: string) => {
+    setReviewerSelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(login)) next.delete(login);
+      else next.add(login);
+      return next;
+    });
+  }, []);
+
+  const reviewerOptions = useMemo(
+    () =>
+      buildReviewerOptions(
+        reviewerPickerInitial,
+        collaborators,
+        pr.user?.login
+      ),
+    [reviewerPickerInitial, collaborators, pr.user?.login]
   );
 
   const handleAddAssignee = useCallback(
@@ -1579,13 +1690,20 @@ export const PROverview = memo(function PROverview() {
               <>
                 <div
                   className="fixed inset-0 z-[100]"
-                  onClick={() => setShowReviewersPicker(false)}
+                  onClick={closeReviewersPicker}
                 />
                 <div
                   className="fixed w-[min(260px,calc(100vw-16px))] bg-card border border-border rounded-md shadow-xl z-[101] overflow-hidden"
                   style={{
                     top: reviewersPickerPosition.top,
                     left: reviewersPickerPosition.left,
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      closeReviewersPicker();
+                    }
                   }}
                 >
                   <div className="px-3 py-2 border-b border-border space-y-2">
@@ -1600,42 +1718,56 @@ export const PROverview = memo(function PROverview() {
                     />
                   </div>
                   <div className="max-h-[300px] overflow-auto">
-                    {loadingCollaborators ? (
+                    {reviewerOptions
+                      .filter((option) =>
+                        option.login
+                          .toLowerCase()
+                          .includes(reviewerSearchQuery.toLowerCase())
+                      )
+                      .map((option) => {
+                        const selected = reviewerSelection.has(option.login);
+                        return (
+                          <button
+                            key={option.login}
+                            role="menuitemcheckbox"
+                            aria-checked={selected}
+                            onClick={() =>
+                              toggleReviewerSelection(option.login)
+                            }
+                            className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted transition-colors text-left"
+                          >
+                            <span
+                              className={cn(
+                                "size-4 shrink-0 rounded-[4px] border grid place-content-center",
+                                selected
+                                  ? "bg-primary border-primary text-primary-foreground"
+                                  : "border-input"
+                              )}
+                            >
+                              {selected && <Check className="size-3.5" />}
+                            </span>
+                            <img
+                              src={option.avatar_url}
+                              alt={option.login}
+                              className="w-5 h-5 rounded-full"
+                            />
+                            <span className="text-sm">{option.login}</span>
+                          </button>
+                        );
+                      })}
+                    {loadingCollaborators && (
                       <div className="p-4 text-center text-sm text-muted-foreground">
                         <Loader2 className="w-4 h-4 animate-spin mx-auto" />
                       </div>
-                    ) : (
-                      collaborators
-                        .filter(
-                          (c) =>
-                            c.login !== pr.user?.login &&
-                            !pr.requested_reviewers?.some(
-                              (r) => r.login === c.login
-                            ) &&
-                            c.login
-                              .toLowerCase()
-                              .includes(reviewerSearchQuery.toLowerCase())
-                        )
-                        .map((collaborator) => (
-                          <button
-                            key={collaborator.login}
-                            onClick={() => {
-                              handleRequestReviewer(collaborator.login);
-                              setShowReviewersPicker(false);
-                            }}
-                            className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted transition-colors text-left"
-                          >
-                            <img
-                              src={collaborator.avatar_url}
-                              alt={collaborator.login}
-                              className="w-5 h-5 rounded-full"
-                            />
-                            <span className="text-sm">
-                              {collaborator.login}
-                            </span>
-                          </button>
-                        ))
                     )}
+                  </div>
+                  <div className="px-3 py-2 border-t border-border flex justify-end">
+                    <button
+                      onClick={closeReviewersPicker}
+                      className="px-3 py-1 bg-green-600 text-white rounded-md hover:bg-green-700 transition-colors text-sm font-medium"
+                    >
+                      Done
+                    </button>
                   </div>
                 </div>
               </>

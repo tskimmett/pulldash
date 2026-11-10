@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-10-multi-reviewer-picker",
+    date: "2026-11-10",
+    title: "Request several reviewers at once",
+    description:
+      "The reviewer picker now has checkboxes. Check or uncheck people, and the changes apply when the picker closes.",
+  },
+  {
     id: "2026-11-05-image-viewer-paging",
     date: "2026-11-05",
     title: "Page through screenshots",
