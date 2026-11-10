@@ -255,6 +255,17 @@
   background: var(--scrollbar-thumb-hover);
 }
 
+/* Minimal scrollbar: transparent track, thumb darkens on hover */
+.subtle-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklch, var(--scrollbar-thumb) 70%, transparent)
+    transparent;
+}
+
+.subtle-scrollbar:hover {
+  scrollbar-color: var(--scrollbar-thumb-hover) transparent;
+}
+
 /* Hide scrollbar utility */
 .hide-scrollbar {
   scrollbar-width: none;

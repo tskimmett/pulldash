@@ -56,7 +56,7 @@ export function WhatsNewButton() {
           <DialogDescription className="sr-only">
             Recent changes to better pr.
           </DialogDescription>
-          <ul className="space-y-4 max-h-[60vh] overflow-y-auto">
+          <ul className="space-y-4 max-h-[60vh] overflow-y-auto subtle-scrollbar -mr-2 pr-4">
             {CHANGELOG.map((entry) => (
               <li key={entry.id}>
                 <div className="flex items-baseline gap-2">
