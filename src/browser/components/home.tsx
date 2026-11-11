@@ -771,7 +771,9 @@ export function Home() {
           {/* PR List */}
           <div className="flex-1 overflow-auto">
             {loadingPrs ||
-            (config.repos.length > 0 && prs.length === 0 && !prList.error) ? (
+            (config.repos.length > 0 &&
+              !prList.lastFetchedAt &&
+              !prList.error) ? (
               <PRListSkeleton count={8} />
             ) : prs.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center">
