@@ -18,6 +18,7 @@ import {
   MinusCircle,
   AlertCircle,
   ChevronDown,
+  ChevronRight,
   Clock,
   GitCommit,
   Copy,
@@ -129,6 +130,10 @@ export const PROverview = memo(function PROverview() {
   // Read PR data from store
   const reviews = usePRReviewSelector((s) => s.reviews);
   const reviewThreads = usePRReviewSelector((s) => s.reviewThreads);
+  const unresolvedCount = useMemo(
+    () => reviewThreads.filter((t) => !t.isResolved).length,
+    [reviewThreads]
+  );
   const checks = usePRReviewSelector((s) => s.checks);
   const checksLastUpdated = usePRReviewSelector((s) => s.checksLastUpdated);
   const loadingChecks = usePRReviewSelector((s) => s.loadingChecks);
@@ -165,6 +170,20 @@ export const PROverview = memo(function PROverview() {
 
   // Local UI state (not in store)
   const [activeTab, setActiveTab] = useState<TabType>("conversation");
+  const conversationFilterRef = useRef<HTMLDivElement>(null);
+  const [scrollToFilter, setScrollToFilter] = useState(0);
+  const showUnresolved = useCallback(() => {
+    setActiveTab("conversation");
+    setConversationFilter("unresolved");
+    setScrollToFilter((n) => n + 1);
+  }, []);
+  useEffect(() => {
+    if (!scrollToFilter) return;
+    conversationFilterRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "start",
+    });
+  }, [scrollToFilter]);
   const [expandedChecks, setExpandedChecks] = useState<Set<string>>(
     () => new Set()
   );
@@ -1171,7 +1190,10 @@ export const PROverview = memo(function PROverview() {
                   isFocused={focusedOverviewItemId === "pr-description"}
                 />
 
-                <div className="flex justify-end">
+                <div
+                  ref={conversationFilterRef}
+                  className="flex justify-end scroll-mt-4"
+                >
                   <ConversationFilterToggle
                     value={conversationFilter}
                     onChange={setConversationFilter}
@@ -1872,6 +1894,8 @@ export const PROverview = memo(function PROverview() {
                   approvingWorkflows={approvingWorkflows}
                   onApproveWorkflows={handleApproveWorkflows}
                   canBypassBranchProtections={viewerCanMergeAsAdmin}
+                  unresolvedCount={unresolvedCount}
+                  onShowUnresolved={showUnresolved}
                 />
                 {/* Still in progress - only show if NOT a draft and user can merge */}
                 {canMergeRepo && !pr.draft && (
@@ -3044,6 +3068,8 @@ function MergeSection({
   approvingWorkflows,
   onApproveWorkflows,
   canBypassBranchProtections,
+  unresolvedCount,
+  onShowUnresolved,
 }: {
   pr: {
     draft?: boolean;
@@ -3080,6 +3106,8 @@ function MergeSection({
   approvingWorkflows?: boolean;
   onApproveWorkflows?: () => void;
   canBypassBranchProtections?: boolean;
+  unresolvedCount: number;
+  onShowUnresolved: () => void;
 }) {
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [dropdownPosition, setDropdownPosition] = useState({
@@ -3206,11 +3234,21 @@ function MergeSection({
     conflictStatus === "success" &&
     (behindBlocksMerge || !!autoMerge?.canUpdateBranch);
 
+  // GitHub doesn't say why a PR is "blocked". With reviews, checks, and
+  // conflicts all clear, unresolved comments are the likely culprit.
+  const blockedByComments =
+    unresolvedCount > 0 &&
+    pr.mergeable_state === "blocked" &&
+    reviewStatus === "success" &&
+    checkStatus === "success" &&
+    conflictStatus === "success";
+
   // Overall border color based on status
   const overallStatus =
     conflictStatus === "failure" ||
     checkStatus === "failure" ||
-    reviewStatus === "failure"
+    reviewStatus === "failure" ||
+    blockedByComments
       ? "failure"
       : conflictStatus === "pending" ||
           checkStatus === "pending" ||
@@ -3314,6 +3352,35 @@ function MergeSection({
           </div>
         )}
       </div>
+
+      {/* Unresolved comments - jumps to the filtered conversation */}
+      {unresolvedCount > 0 && (
+        <div className="border-b border-border">
+          <button
+            onClick={onShowUnresolved}
+            className="w-full flex items-center gap-3 p-4 hover:bg-card/30 transition-colors"
+          >
+            <MessageSquare
+              className={cn(
+                "w-5 h-5 shrink-0",
+                blockedByComments ? "text-red-500" : "text-yellow-500"
+              )}
+            />
+            <div className="flex-1 text-left">
+              <p className="font-medium text-sm">
+                {unresolvedCount} unresolved comment
+                {unresolvedCount !== 1 ? "s" : ""}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {blockedByComments
+                  ? "Must be resolved before merging"
+                  : "View unresolved comments"}
+              </p>
+            </div>
+            <ChevronRight className="w-4 h-4 text-muted-foreground" />
+          </button>
+        </div>
+      )}
 
       {/* Workflow Approval Section - shows when fork PR needs workflow approval */}
       {workflowRunsAwaitingApproval &&

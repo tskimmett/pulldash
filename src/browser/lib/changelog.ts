@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-12-unresolved-comments-merge-box",
+    date: "2026-11-12",
+    title: "Unresolved comments in the merge box",
+    description:
+      "The merge box shows how many review comments are still unresolved, and turns red when they're what's blocking the merge. Click it to jump to the conversation filtered to Unresolved.",
+  },
+  {
     id: "2026-11-10-conversation-filter",
     date: "2026-11-10",
     title: "Filter the conversation",
