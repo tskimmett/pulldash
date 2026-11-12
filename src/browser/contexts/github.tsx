@@ -51,6 +51,7 @@ import {
   type PRFingerprintResponse,
 } from "../lib/pr-fingerprint";
 import { addConditionalRequests, hasStatus } from "../lib/conditional-requests";
+import { normalizeCopilotLogins, toApiLogin } from "../lib/copilot";
 
 // Re-export types
 // Extended PullRequest with body_html from GitHub's HTML media type
@@ -702,6 +703,12 @@ function createGitHubStore() {
       }
     });
     addConditionalRequests(octokitInstance, persistent);
+    // Outermost, so replayed 304 bodies are normalized too.
+    octokitInstance.hook.wrap("request", async (request, options) => {
+      const response = await request(options);
+      normalizeCopilotLogins(response.data);
+      return response;
+    });
   }
 
   function getState() {
@@ -2242,7 +2249,7 @@ function createGitHubStore() {
         owner,
         repo,
         pull_number: number,
-        reviewers,
+        reviewers: reviewers.map(toApiLogin),
       }
     );
 
@@ -2264,7 +2271,7 @@ function createGitHubStore() {
         owner,
         repo,
         pull_number: number,
-        reviewers,
+        reviewers: reviewers.map(toApiLogin),
       }
     );
 
@@ -3547,7 +3554,7 @@ function createGitHubStore() {
     if (pending) return pending;
 
     const promise = octokit
-      .request("GET /users/{username}", { username: login })
+      .request("GET /users/{username}", { username: toApiLogin(login) })
       .then((res) => {
         cache.set(cacheKey, res.data);
         return res.data as UserProfile;

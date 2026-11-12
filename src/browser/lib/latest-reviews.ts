@@ -1,4 +1,14 @@
 import type { Review } from "@/browser/contexts/github";
+import { COPILOT_LOGIN } from "@/browser/lib/copilot";
+
+/** Whether a review's author can be re-requested from the sidebar. */
+export function canRerequestReview(
+  user: { login: string; type?: string },
+  prAuthor: string
+): boolean {
+  if (user.login === COPILOT_LOGIN) return true;
+  return user.type !== "Bot" && user.login !== prAuthor;
+}
 
 /**
  * One review per user, matching GitHub's sidebar: the user's latest

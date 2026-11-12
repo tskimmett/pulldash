@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import type { Review } from "@/browser/contexts/github";
-import { getLatestReviewsByUser } from "./latest-reviews";
+import { COPILOT_LOGIN } from "./copilot";
+import { canRerequestReview, getLatestReviewsByUser } from "./latest-reviews";
 
 function review(id: number, login: string, state: string, minute: number) {
   return {
@@ -47,4 +48,17 @@ test("keeps dismissed reviewers listed when asked", () => {
   expect(getLatestReviewsByUser(reviews, [], true).map((r) => r.id)).toEqual([
     2, 4,
   ]);
+});
+
+test("allows re-requesting humans and Copilot, but not other bots or the author", () => {
+  expect(canRerequestReview({ login: "alice", type: "User" }, "bob")).toBe(
+    true
+  );
+  expect(canRerequestReview({ login: "bob", type: "User" }, "bob")).toBe(false);
+  expect(canRerequestReview({ login: "ci[bot]", type: "Bot" }, "bob")).toBe(
+    false
+  );
+  expect(canRerequestReview({ login: COPILOT_LOGIN, type: "Bot" }, "bob")).toBe(
+    true
+  );
 });

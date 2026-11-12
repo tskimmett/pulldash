@@ -61,7 +61,11 @@ import {
 } from "../contexts/pr-review";
 import { parseDiffCached, type ParsedDiff } from "../lib/diff";
 import { commentContextLines } from "../lib/comment-context";
-import { getLatestReviewsByUser } from "../lib/latest-reviews";
+import { COPILOT_LOGIN } from "../lib/copilot";
+import {
+  canRerequestReview,
+  getLatestReviewsByUser,
+} from "../lib/latest-reviews";
 import {
   buildConversationEntries,
   navigableEntryIds,
@@ -514,6 +518,7 @@ export const PROverview = memo(function PROverview() {
         await github.requestReviewers(owner, repo, pr.number, [login]);
 
         // 2. Update our state with the known change
+        const isCopilot = login === COPILOT_LOGIN;
         const newReviewer = {
           login,
           avatar_url: knownAvatarUrl ?? collaborator?.avatar_url ?? "",
@@ -531,7 +536,7 @@ export const PROverview = memo(function PROverview() {
           repos_url: "",
           events_url: "",
           received_events_url: "",
-          type: "User" as const,
+          type: isCopilot ? ("Bot" as const) : ("User" as const),
           site_admin: false,
           user_view_type: "public" as const,
         };
@@ -1514,8 +1519,7 @@ export const PROverview = memo(function PROverview() {
                             canMergeRepo &&
                             pr.state === "open" &&
                             !pr.merged &&
-                            review.user.type !== "Bot" &&
-                            review.user.login !== pr.user.login && (
+                            canRerequestReview(review.user, pr.user.login) && (
                               <Tooltip>
                                 <TooltipTrigger asChild>
                                   <button
