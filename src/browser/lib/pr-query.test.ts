@@ -3,6 +3,7 @@ import {
   buildTextSearchQueries,
   extractRepoFromUrl,
   mergeSearchResults,
+  parseDroppedPR,
   parsePRQuery,
   resolveBareNumberRepo,
 } from "./pr-query";
@@ -72,4 +73,18 @@ test("pr-query: extracts repo from API url", () => {
     repo: "b",
   });
   expect(extractRepoFromUrl("nope")).toBeNull();
+});
+
+test("pr-query: reads a dropped PR link from uri-list, then plain text", () => {
+  const pr = { owner: "acme", repo: "web", number: 12 };
+  expect(
+    parseDroppedPR(
+      "# comment\r\nhttps://github.com/acme/web/pull/12/files#diff-1",
+      ""
+    )
+  ).toEqual(pr);
+  expect(parseDroppedPR("", "acme/web#12")).toEqual(pr);
+  expect(parseDroppedPR("https://github.com/acme/web/issues/3", "12")).toBe(
+    null
+  );
 });

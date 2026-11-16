@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-16-drop-pr-link",
+    date: "2026-11-16",
+    title: "Drop a PR link to open it",
+    description:
+      "Drag a GitHub pull request link from another window onto better pr to open it in a tab.",
+  },
+  {
     id: "2026-11-16-markdown-preview",
     date: "2026-11-16",
     title: "Preview markdown files",

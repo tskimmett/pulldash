@@ -26,6 +26,26 @@ export function parsePRQuery(input: string): ParsedPRQuery {
   return { kind: "text", text };
 }
 
+// Reads a PR from dropped link data. text/uri-list may hold several URLs and
+// "#" comment lines; text/plain is the fallback (e.g. dragged selected text).
+export function parseDroppedPR(
+  uriList: string,
+  text: string
+): { owner: string; repo: string; number: number } | null {
+  const urls = uriList
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("#"));
+  for (const candidate of [...urls, text]) {
+    const parsed = parsePRQuery(candidate);
+    if (parsed.kind === "pr") {
+      const { owner, repo, number } = parsed;
+      return { owner, repo, number };
+    }
+  }
+  return null;
+}
+
 // A bare PR number has no repo: prefer the repo of the PR being viewed, then
 // the feed's only specific repo. Ambiguous or empty feeds resolve to null.
 export function resolveBareNumberRepo(

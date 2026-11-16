@@ -16,6 +16,7 @@ import {
   type TabStatus,
 } from "../contexts/tabs";
 import { withClosedTab } from "../lib/tab-state";
+import { parseDroppedPR } from "../lib/pr-query";
 import { Home } from "./home";
 import { PRSearchInput } from "./pr-search-input";
 import { PRReviewContent } from "./pr-review";
@@ -34,6 +35,81 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu";
 import { version } from "../../../package.json";
+
+// ============================================================================
+// PR link drop - drag a GitHub PR link from another window to open it
+// ============================================================================
+
+function isEditable(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null;
+  return (
+    el?.tagName === "INPUT" ||
+    el?.tagName === "TEXTAREA" ||
+    !!el?.isContentEditable
+  );
+}
+
+function PRLinkDropZone() {
+  const openPRReviewTab = useOpenPRReviewTab();
+  const [over, setOver] = useState(false);
+
+  useEffect(() => {
+    // Drags that start inside the app (e.g. the bookmarklet) aren't ours
+    let internal = false;
+    // Link drags only; inputs keep their native drop (inserting the URL)
+    const accepts = (e: DragEvent) =>
+      !internal &&
+      !!e.dataTransfer?.types.includes("text/uri-list") &&
+      !isEditable(e.target);
+
+    const onDragStart = () => (internal = true);
+    const onDragEnd = () => (internal = false);
+    const onDragOver = (e: DragEvent) => {
+      const ok = accepts(e);
+      setOver(ok);
+      if (!ok) return;
+      // Without this the browser navigates away to the dropped link
+      e.preventDefault();
+      e.dataTransfer!.dropEffect = "link";
+    };
+    const onDragLeave = (e: DragEvent) => {
+      if (!e.relatedTarget) setOver(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      setOver(false);
+      if (!accepts(e)) return;
+      e.preventDefault();
+      const pr = parseDroppedPR(
+        e.dataTransfer!.getData("text/uri-list"),
+        e.dataTransfer!.getData("text/plain")
+      );
+      if (pr) openPRReviewTab(pr.owner, pr.repo, pr.number);
+    };
+
+    window.addEventListener("dragstart", onDragStart);
+    window.addEventListener("dragend", onDragEnd);
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragleave", onDragLeave);
+    window.addEventListener("drop", onDrop);
+    return () => {
+      window.removeEventListener("dragstart", onDragStart);
+      window.removeEventListener("dragend", onDragEnd);
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragleave", onDragLeave);
+      window.removeEventListener("drop", onDrop);
+    };
+  }, [openPRReviewTab]);
+
+  if (!over) return null;
+  return (
+    <div className="fixed inset-0 z-[100] pointer-events-none flex items-center justify-center bg-background/60 ring-2 ring-inset ring-primary">
+      <div className="flex items-center gap-2 rounded-md border border-border bg-background px-4 py-2 text-sm shadow-lg">
+        <GitPullRequest className="w-4 h-4" />
+        Drop a GitHub PR link to open it
+      </div>
+    </div>
+  );
+}
 
 // ============================================================================
 // App Shell - Tab-based Layout
@@ -170,6 +246,7 @@ export function AppShell() {
 
   return (
     <div className="h-dvh flex flex-col overflow-hidden bg-background">
+      <PRLinkDropZone />
       {/* Native-style Tab Bar */}
       <div className="h-9 bg-muted/40 dark:bg-[#1a1a1a] flex items-center shrink-0 border-b border-border/50">
         {/* Logo with tooltip */}
