@@ -73,6 +73,8 @@ import {
 import { htmlLineWidth } from "@/browser/lib/line-width";
 import { useWidthCssVar } from "@/browser/lib/use-width-css-var";
 import { FileHeader } from "./file-header";
+import { MarkdownFilePreview } from "./markdown-file-preview";
+import { isMarkdownFile } from "@/browser/lib/markdown-file";
 import { AllFilesDiff } from "./all-files-diff";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import {
@@ -854,6 +856,23 @@ const DiffPanel = memo(function DiffPanel() {
   const parsedDiff = useCurrentDiff();
   const isLoading = useIsCurrentFileLoading();
 
+  // Markdown files the user switched to the rendered preview this session.
+  const [previewFiles, setPreviewFiles] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+  const canPreview =
+    !!currentFile &&
+    currentFile.status !== "removed" &&
+    isMarkdownFile(currentFile.filename);
+  const showPreview = canPreview && previewFiles.has(currentFile.filename);
+  const togglePreview = useCallback((filename: string) => {
+    setPreviewFiles((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(filename)) next.add(filename);
+      return next;
+    });
+  }, []);
+
   // In semantic mode the arrows walk the selected layer's files, so the
   // "N / M" counter should count within that layer rather than the whole PR.
   const selectedLayerId = usePRReviewSelector((s) => s.selectedLayerId);
@@ -930,13 +949,21 @@ const DiffPanel = memo(function DiffPanel() {
                 hasResolvedComments={hasResolvedComments}
                 hideResolvedComments={hideResolvedComments}
                 onToggleHideResolved={() => store.toggleHideResolvedComments()}
+                markdownPreview={showPreview}
+                onToggleMarkdownPreview={
+                  canPreview
+                    ? () => togglePreview(currentFile.filename)
+                    : undefined
+                }
               />
             </div>
           </div>
 
           {/* Scrollable diff content - DiffViewer handles its own virtualized scroll */}
           <div className="flex-1 min-h-0 flex flex-col">
-            {parsedDiff && parsedDiff.hunks.length > 0 ? (
+            {showPreview ? (
+              <MarkdownFilePreview filename={currentFile.filename} />
+            ) : parsedDiff && parsedDiff.hunks.length > 0 ? (
               <DiffViewer diff={parsedDiff} viewMode={diffViewMode} />
             ) : isLoading || (currentFile.patch && !parsedDiff) ? (
               // Show skeleton if loading OR if file has patch but diff isn't ready yet

@@ -12,6 +12,13 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    id: "2026-11-16-markdown-preview",
+    date: "2026-11-16",
+    title: "Preview markdown files",
+    description:
+      "Markdown files get a Diff / Preview toggle in the file header. Preview renders the file as it reads at the head of the PR.",
+  },
+  {
     id: "2026-11-12-unresolved-comments-merge-box",
     date: "2026-11-12",
     title: "Unresolved comments in the merge box",

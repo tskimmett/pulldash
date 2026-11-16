@@ -13,6 +13,8 @@ import {
   CircleCheckBig,
   UnfoldVertical,
   FoldVertical,
+  Eye,
+  Code2,
 } from "lucide-react";
 import {
   Tooltip,
@@ -49,6 +51,9 @@ interface FileHeaderProps {
   hasResolvedComments?: boolean;
   hideResolvedComments?: boolean;
   onToggleHideResolved?: () => void;
+  /** Set for markdown files: whether the rendered preview is shown instead of the diff */
+  markdownPreview?: boolean;
+  onToggleMarkdownPreview?: () => void;
 }
 
 export const FileHeader = memo(function FileHeader({
@@ -68,6 +73,8 @@ export const FileHeader = memo(function FileHeader({
   hasResolvedComments,
   hideResolvedComments,
   onToggleHideResolved,
+  markdownPreview,
+  onToggleMarkdownPreview,
 }: FileHeaderProps) {
   const store = usePRReviewStore();
   const isFullyExpanded = usePRReviewSelector((s) =>
@@ -340,8 +347,42 @@ export const FileHeader = memo(function FileHeader({
             </TooltipProvider>
           )}
 
+        {/* Diff/Preview toggle for markdown files */}
+        {onToggleMarkdownPreview && (
+          <div className="flex items-center rounded-md border border-border bg-muted/30 p-0.5">
+            <button
+              onClick={() => markdownPreview && onToggleMarkdownPreview()}
+              aria-pressed={!markdownPreview}
+              className={cn(
+                "flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors",
+                !markdownPreview
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              title="Show diff"
+            >
+              <Code2 className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Diff</span>
+            </button>
+            <button
+              onClick={() => !markdownPreview && onToggleMarkdownPreview()}
+              aria-pressed={markdownPreview}
+              className={cn(
+                "flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors",
+                markdownPreview
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              )}
+              title="Show rendered markdown"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Preview</span>
+            </button>
+          </div>
+        )}
+
         {/* Split/Unified toggle */}
-        {onToggleDiffViewMode && (
+        {onToggleDiffViewMode && !markdownPreview && (
           <div className="flex items-center rounded-md border border-border bg-muted/30 p-0.5">
             <button
               onClick={() =>
