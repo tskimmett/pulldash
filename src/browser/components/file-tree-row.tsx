@@ -52,8 +52,12 @@ export function DiffStat({
   if (additions === 0 && deletions === 0) return null;
   return (
     <span className="flex items-center gap-1 text-[11px] tabular-nums shrink-0 leading-none">
-      {additions > 0 && <span className="text-green-500">+{additions}</span>}
-      {deletions > 0 && <span className="text-red-500">−{deletions}</span>}
+      {additions > 0 && (
+        <span className="text-green-500">+{additions.toLocaleString()}</span>
+      )}
+      {deletions > 0 && (
+        <span className="text-red-500">−{deletions.toLocaleString()}</span>
+      )}
     </span>
   );
 }

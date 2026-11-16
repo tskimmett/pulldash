@@ -457,21 +457,21 @@ const FileItem = memo(function FileItem({
       <div className="flex items-center gap-2 text-xs shrink-0">
         {file.status === "added" && (
           <span className="text-green-500 group-data-[selected=true]:text-green-300">
-            +{file.additions}
+            +{file.additions.toLocaleString()}
           </span>
         )}
         {file.status === "removed" && (
           <span className="text-red-500 group-data-[selected=true]:text-red-300">
-            −{file.deletions}
+            −{file.deletions.toLocaleString()}
           </span>
         )}
         {file.status === "modified" && (
           <>
             <span className="text-green-500 group-data-[selected=true]:text-green-300">
-              +{file.additions}
+              +{file.additions.toLocaleString()}
             </span>
             <span className="text-red-500 group-data-[selected=true]:text-red-300">
-              −{file.deletions}
+              −{file.deletions.toLocaleString()}
             </span>
           </>
         )}

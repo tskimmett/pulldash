@@ -151,8 +151,10 @@ export const PRHeader = memo(function PRHeader({
         <div className="flex items-center gap-1.5 sm:gap-3 shrink-0">
           {/* Line diff stats */}
           <span className="text-xs hidden sm:inline">
-            <span className="text-green-500">+{additions}</span>{" "}
-            <span className="text-red-500">−{deletions}</span>
+            <span className="text-green-500">
+              +{additions.toLocaleString()}
+            </span>{" "}
+            <span className="text-red-500">−{deletions.toLocaleString()}</span>
           </span>
 
           {/* Right content slot (e.g., Submit Review button) */}

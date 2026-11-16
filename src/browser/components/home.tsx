@@ -1451,8 +1451,12 @@ function PRListItem({ pr, onSelect }: PRListItemProps) {
             <>
               <span className="hidden sm:inline">•</span>
               <span className="hidden sm:inline">
-                <span className="text-green-500">+{pr.additions || 0}</span>{" "}
-                <span className="text-red-500">−{pr.deletions || 0}</span>
+                <span className="text-green-500">
+                  +{(pr.additions || 0).toLocaleString()}
+                </span>{" "}
+                <span className="text-red-500">
+                  −{(pr.deletions || 0).toLocaleString()}
+                </span>
               </span>
             </>
           )}

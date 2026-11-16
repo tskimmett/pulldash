@@ -157,8 +157,12 @@ export const FileHeader = memo(function FileHeader({
             </span>
           ))}
         <span className="text-xs text-muted-foreground shrink-0">
-          <span className="text-green-500">+{file.additions}</span>{" "}
-          <span className="text-red-500">−{file.deletions}</span>
+          <span className="text-green-500">
+            +{file.additions.toLocaleString()}
+          </span>{" "}
+          <span className="text-red-500">
+            −{file.deletions.toLocaleString()}
+          </span>
         </span>
         {/* Navigation buttons */}
         {showNavigation && (
