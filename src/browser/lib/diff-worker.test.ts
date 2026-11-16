@@ -21,3 +21,31 @@ test("ignores file content that does not match the patch", () => {
 
   expect(text).toEqual(["removed();", "kept();"]);
 });
+
+test("highlights Vue SFC markup and TypeScript script blocks", () => {
+  const content =
+    '<template>\n  <div class="a">{{ msg }}</div>\n</template>\n<script lang="ts">\nconst x: number = 1;\n</script>\n';
+  const patch =
+    "@@ -0,0 +1,6 @@\n" +
+    content
+      .trimEnd()
+      .split("\n")
+      .map((l) => `+${l}`)
+      .join("\n");
+
+  const diff = parseDiffWithHighlighting(
+    patch,
+    "Comp.vue",
+    undefined,
+    "",
+    content
+  );
+  const hunk = diff.hunks.find((h): h is DiffHunk => h.type === "hunk")!;
+  const html = hunk.lines.map((line) =>
+    line.content.map((seg) => seg.html).join("")
+  );
+
+  expect(html[0]).toContain('class="token tag"');
+  expect(html[4]).toContain('class="token keyword"');
+  expect(html[4]).toContain('class="token builtin">number');
+});

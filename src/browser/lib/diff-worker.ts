@@ -200,7 +200,33 @@ const extToLang: Record<string, string> = {
   proto: "protobuf",
   vim: "vim",
   zig: "zig",
+  vue: "vue",
+  svelte: "vue",
 };
+
+// Vue/Svelte single-file components: HTML whose <script lang="ts"> blocks
+// are TypeScript. Markup alone highlights <script> as JavaScript and
+// <style> as CSS; the tsx fallback renders the whole file as plain text.
+function vue(Prism: any) {
+  Prism.languages.vue = Prism.languages.extend("markup", {});
+  Prism.languages.insertBefore("vue", "script", {
+    "script-ts": {
+      pattern:
+        /(<script\b[^>]*\blang=["']tsx?["'][^>]*>)[\s\S]*?(?=<\/script>)/i,
+      lookbehind: true,
+      greedy: true,
+      inside: {
+        "language-typescript": {
+          pattern: /[\s\S]+/,
+          inside: Prism.languages.typescript,
+        },
+      },
+    },
+  });
+}
+vue.displayName = "vue";
+vue.aliases = [] as string[];
+refractor.register(vue);
 
 function guessLang(filename?: string): string {
   const ext = filename?.split(".").pop()?.toLowerCase() ?? "";
