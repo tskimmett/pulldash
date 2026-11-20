@@ -21,6 +21,7 @@ test("test-file: matches common test naming conventions", () => {
     "test_utils.py",
     "conftest.py",
     "cypress/fixtures/user.json",
+    "src/parser/__fixtures__/input.ts",
     "src/components/CardList.unit.ts",
     "ClientApp/scripts/grid.unit.js",
     "MyProject.Tests/FooFixture.cs",

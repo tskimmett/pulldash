@@ -11,6 +11,7 @@ const TEST_DIRS = new Set([
   "__tests__",
   "__mocks__",
   "__snapshots__",
+  "__fixtures__",
   "testdata",
   "test",
   "tests",
