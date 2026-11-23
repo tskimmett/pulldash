@@ -49,6 +49,7 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
   );
   const selectedFile = usePRReviewSelector((s) => s.selectedFile);
   const viewedFiles = usePRReviewSelector((s) => s.viewedFiles);
+  const hideViewed = usePRReviewSelector((s) => s.hideViewed);
   const scrollRef = useRef<HTMLDivElement>(null);
   const findInputRef = useRef<HTMLInputElement>(null);
   const [findOpen, setFindOpen] = useState(false);
@@ -88,14 +89,14 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
     () =>
       findOpen
         ? files.map((file) =>
-            viewedFiles.has(file.filename)
+            hideViewed && viewedFiles.has(file.filename)
               ? []
               : parsePatchLines(file.patch ?? "").map((line) =>
                   line.content.toLocaleLowerCase()
                 )
           )
         : [],
-    [files, viewedFiles, findOpen]
+    [files, viewedFiles, hideViewed, findOpen]
   );
 
   const matches = useMemo(() => {
@@ -122,11 +123,11 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
   const estimatedHeights = useMemo(
     () =>
       files.map((file) =>
-        viewedFiles.has(file.filename)
+        hideViewed && viewedFiles.has(file.filename)
           ? 60
           : 90 + Math.min(file.patch?.split("\n").length ?? 1, 500) * 20
       ),
-    [files, viewedFiles]
+    [files, viewedFiles, hideViewed]
   );
 
   const virtualizer = useVirtualizer({
@@ -254,6 +255,8 @@ export const AllFilesDiff = memo(function AllFilesDiff() {
                 <AllFileSection
                   file={file}
                   isViewed={viewedFiles.has(file.filename)}
+                  // Viewed files collapse only while the hide-viewed filter is on
+                  collapsed={hideViewed && viewedFiles.has(file.filename)}
                   fileIndex={item.index}
                   activeLine={
                     activeMatch?.fileIndex === item.index
@@ -331,11 +334,13 @@ function FileBar({
 const AllFileSection = memo(function AllFileSection({
   file,
   isViewed,
+  collapsed,
   fileIndex,
   activeLine,
 }: {
   file: PullRequestFile;
   isViewed: boolean;
+  collapsed: boolean;
   fileIndex: number;
   activeLine: number | null;
 }) {
@@ -343,8 +348,8 @@ const AllFileSection = memo(function AllFileSection({
   const hScrollRef = useRef<HTMLDivElement>(null);
   useWidthCssVar(hScrollRef, "--diff-visible-w");
   const lines = useMemo(
-    () => (isViewed ? [] : parsePatchLines(file.patch ?? "")),
-    [file.patch, isViewed]
+    () => (collapsed ? [] : parsePatchLines(file.patch ?? "")),
+    [file.patch, collapsed]
   );
   const allComments = usePRReviewSelector((s) => s.comments);
   const allPending = usePRReviewSelector((s) => s.pendingComments);
@@ -411,7 +416,7 @@ const AllFileSection = memo(function AllFileSection({
       setHighlighted({ file, lines: cached });
       return;
     }
-    if (isViewed || !lines.length) return;
+    if (collapsed || !lines.length) return;
 
     let active = true;
     const codeLines = lines.filter((line) => line.type !== "hunk");
@@ -434,14 +439,14 @@ const AllFileSection = memo(function AllFileSection({
     return () => {
       active = false;
     };
-  }, [file, isViewed, lines]);
+  }, [file, collapsed, lines]);
 
   let codeLineIndex = 0;
 
   return (
     <section className="border border-foreground/15 rounded-lg overflow-hidden">
       <FileBar file={file} isViewed={isViewed} />
-      {isViewed ? null : lines.length ? (
+      {collapsed ? null : lines.length ? (
         <div
           ref={hScrollRef}
           className={cn(
@@ -526,7 +531,7 @@ const AllFileSection = memo(function AllFileSection({
           Binary file or file too large to display
         </div>
       )}
-      {!isViewed && lines.length >= FOOTER_MIN_LINES && (
+      {!collapsed && lines.length >= FOOTER_MIN_LINES && (
         <FileBar file={file} isViewed={isViewed} footer />
       )}
     </section>
