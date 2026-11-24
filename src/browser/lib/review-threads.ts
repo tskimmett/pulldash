@@ -38,3 +38,49 @@ export function enrichCommentsWithThreads(
     };
   });
 }
+
+type Side = "LEFT" | "RIGHT";
+
+/** Lookup key for comments anchored to `line` on one side of the diff. */
+export function sideLineKey(side: Side, line: number): string {
+  return `${side}:${line}`;
+}
+
+/**
+ * Keys a diff line answers to. Deleted lines live on LEFT, added lines on
+ * RIGHT, and context lines on both. Line numbers alone collide: old line 10
+ * and new line 10 are usually different lines.
+ */
+export function diffLineKeys(line: {
+  type: "insert" | "delete" | "normal";
+  oldLineNumber?: number;
+  newLineNumber?: number;
+}): string[] {
+  const keys: string[] = [];
+  if (line.type !== "insert" && line.oldLineNumber)
+    keys.push(sideLineKey("LEFT", line.oldLineNumber));
+  if (line.type !== "delete" && line.newLineNumber)
+    keys.push(sideLineKey("RIGHT", line.newLineNumber));
+  return keys;
+}
+
+/** Group comments into threads (root first, replies after), keyed by side and line. */
+export function groupThreadsBySideLine(
+  comments: ReviewComment[]
+): Map<string, ReviewComment[][]> {
+  const roots = new Map<number, ReviewComment[]>();
+  const result = new Map<string, ReviewComment[][]>();
+  for (const c of comments) {
+    if (c.in_reply_to_id) continue;
+    const line = c.line ?? c.original_line;
+    if (!line) continue;
+    const thread = [c];
+    roots.set(c.id, thread);
+    const key = sideLineKey(c.side === "LEFT" ? "LEFT" : "RIGHT", line);
+    result.set(key, [...(result.get(key) ?? []), thread]);
+  }
+  for (const c of comments) {
+    if (c.in_reply_to_id) roots.get(c.in_reply_to_id)?.push(c);
+  }
+  return result;
+}

@@ -75,6 +75,11 @@ import { useWidthCssVar } from "@/browser/lib/use-width-css-var";
 import { FileHeader } from "./file-header";
 import { MarkdownFilePreview } from "./markdown-file-preview";
 import { isMarkdownFile } from "@/browser/lib/markdown-file";
+import {
+  diffLineKeys,
+  groupThreadsBySideLine,
+  sideLineKey,
+} from "@/browser/lib/review-threads";
 import { AllFilesDiff } from "./all-files-diff";
 import type { PullRequest, PullRequestFile, ReviewComment } from "@/api/types";
 import {
@@ -1538,57 +1543,21 @@ const DiffViewer = memo(function DiffViewer({
   const handledByMouseEventsRef = useRef(false);
   const [isDraggingState, setIsDraggingState] = useState(false);
 
-  // Pre-compute comment lookup maps for O(1) access
-  const commentsByLine = useMemo(() => {
-    const map = new Map<number, ReviewComment[]>();
-    for (const comment of comments) {
-      const line = comment.line ?? comment.original_line;
-      if (line) {
-        const existing = map.get(line) || [];
-        existing.push(comment);
-        map.set(line, existing);
-      }
-    }
-    return map;
-  }, [comments]);
-
-  const pendingCommentsByLine = useMemo(() => {
-    const map = new Map<number, LocalPendingComment[]>();
+  // Keyed by side and line so a comment on new line N doesn't also show
+  // under deleted old line N.
+  const pendingCommentsByKey = useMemo(() => {
+    const map = new Map<string, LocalPendingComment[]>();
     for (const comment of pendingComments) {
-      const existing = map.get(comment.line) || [];
-      existing.push(comment);
-      map.set(comment.line, existing);
+      const key = sideLineKey(comment.side ?? "RIGHT", comment.line);
+      map.set(key, [...(map.get(key) ?? []), comment]);
     }
     return map;
   }, [pendingComments]);
 
-  // Group comments into threads (pre-computed)
-  const threadsByLine = useMemo(() => {
-    const result = new Map<number, ReviewComment[][]>();
-
-    for (const [lineNum, lineComments] of commentsByLine) {
-      const threadMap = new Map<number, ReviewComment[]>();
-
-      for (const comment of lineComments) {
-        if (!comment.in_reply_to_id) {
-          threadMap.set(comment.id, [comment]);
-        }
-      }
-
-      for (const comment of lineComments) {
-        if (comment.in_reply_to_id) {
-          const thread = threadMap.get(comment.in_reply_to_id);
-          if (thread) {
-            thread.push(comment);
-          }
-        }
-      }
-
-      result.set(lineNum, [...threadMap.values()]);
-    }
-
-    return result;
-  }, [commentsByLine]);
+  const threadsByKey = useMemo(
+    () => groupThreadsBySideLine(comments),
+    [comments]
+  );
 
   // Pre-compute skip block start lines by looking at adjacent hunks, plus
   // where the file continues after the last hunk (the end-of-file gap).
@@ -1683,13 +1652,18 @@ const DiffViewer = memo(function DiffViewer({
     let index = 0;
     let skipIndex = 0;
 
-    // Helper to add comments after a line
-    const addCommentsForLine = (lineNum: number | undefined) => {
+    // Helper to add comments after a diff row
+    const addCommentsForLines = (
+      lineNum: number | undefined,
+      ...lines: (DiffLine | null)[]
+    ) => {
       if (!lineNum) return;
+      const keys = new Set(
+        lines.flatMap((line) => (line ? diffLineKeys(line) : []))
+      );
 
-      const linePending = pendingCommentsByLine.get(lineNum);
-      if (linePending) {
-        for (const pending of linePending) {
+      for (const key of keys) {
+        for (const pending of pendingCommentsByKey.get(key) ?? []) {
           rows.push({
             type: "pending-comment",
             comment: pending,
@@ -1698,9 +1672,8 @@ const DiffViewer = memo(function DiffViewer({
         }
       }
 
-      const threads = threadsByLine.get(lineNum);
-      if (threads) {
-        for (const thread of threads) {
+      for (const key of keys) {
+        for (const thread of threadsByKey.get(key) ?? []) {
           rows.push({
             type: "comment-thread",
             comments: thread,
@@ -1717,13 +1690,13 @@ const DiffViewer = memo(function DiffViewer({
         const pairs = convertToSplitPairs(lines);
         for (const pair of pairs) {
           rows.push({ type: "split-line", pair, index: index++ });
-          addCommentsForLine(pair.lineNum);
+          addCommentsForLines(pair.lineNum, pair.left, pair.right);
         }
       } else {
         for (const line of lines) {
           const lineNum = line.newLineNumber || line.oldLineNumber;
           rows.push({ type: "line", line, lineNum, index: index++ });
-          addCommentsForLine(lineNum);
+          addCommentsForLines(lineNum, line);
         }
       }
     };
@@ -1766,14 +1739,14 @@ const DiffViewer = memo(function DiffViewer({
           const pairs = convertToSplitPairs(hunk.lines);
           for (const pair of pairs) {
             rows.push({ type: "split-line", pair, index: index++ });
-            addCommentsForLine(pair.lineNum);
+            addCommentsForLines(pair.lineNum, pair.left, pair.right);
           }
         } else {
           // Unified view - sequential lines
           for (const line of hunk.lines) {
             const lineNum = line.newLineNumber || line.oldLineNumber;
             rows.push({ type: "line", line, lineNum, index: index++ });
-            addCommentsForLine(lineNum);
+            addCommentsForLines(lineNum, line);
           }
         }
       }
@@ -1816,8 +1789,8 @@ const DiffViewer = memo(function DiffViewer({
     trailingStart,
     totalFileLines,
     mayHaveTrailingGap,
-    pendingCommentsByLine,
-    threadsByLine,
+    pendingCommentsByKey,
+    threadsByKey,
     getExpandedLines,
     viewMode,
     convertToSplitPairs,
@@ -1829,12 +1802,16 @@ const DiffViewer = memo(function DiffViewer({
 
     // Find where to insert the comment form
     const targetLine = commentingOnLine.line;
+    const targetKey = sideLineKey(commentingOnLine.side, targetLine);
     const insertIndex = staticRows.findIndex((row) => {
-      if (row.type === "line" && row.lineNum === targetLine) {
-        return true;
+      if (row.type === "line") {
+        return diffLineKeys(row.line).includes(targetKey);
       }
-      if (row.type === "split-line" && row.pair.lineNum === targetLine) {
-        return true;
+      if (row.type === "split-line") {
+        const { left, right } = row.pair;
+        return [left, right].some(
+          (line) => line && diffLineKeys(line).includes(targetKey)
+        );
       }
       return false;
     });
